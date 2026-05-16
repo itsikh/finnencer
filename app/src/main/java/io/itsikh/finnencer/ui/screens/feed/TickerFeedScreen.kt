@@ -3,8 +3,7 @@ package io.itsikh.finnencer.ui.screens.feed
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +26,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +39,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -399,6 +402,11 @@ private fun fmtMoney(d: Double?): String? {
 private val EARN_FMT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("MMM d, yyyy").withZone(ZoneId.systemDefault())
 
+/**
+ * Compact filter row: two dropdown buttons, "Score: …" and "Type: …". Replaces
+ * the older horizontally-scrollable FilterChip row which spilled off-screen
+ * on tall phones and didn't fit all 10 article categories (issue #7).
+ */
 @Composable
 private fun FilterRow(
     minScore: Int,
@@ -406,51 +414,127 @@ private fun FilterRow(
     category: ArticleCategory?,
     onCategory: (ArticleCategory?) -> Unit,
 ) {
-    // Horizontally scrollable so all chips remain reachable on narrow phones
-    // (Samsung S23 Ultra reported the row spilling off-screen at v0.0.7).
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Score thresholds — taps cycle between 0 / 7 / 9
-        val nextMin = when (minScore) { 0 -> 7; 7 -> 9; else -> 0 }
-        FilterChip(
-            selected = minScore > 0,
-            onClick = { onMinScore(nextMin) },
-            label = { Text(if (minScore == 0) "All scores" else "≥$minScore") },
-            colors = chipColors(minScore > 0),
-        )
-        FilterChip(
-            selected = category == ArticleCategory.EARNINGS,
-            onClick = { onCategory(if (category == ArticleCategory.EARNINGS) null else ArticleCategory.EARNINGS) },
-            label = { Text("Earnings") },
-            colors = chipColors(category == ArticleCategory.EARNINGS),
-        )
-        FilterChip(
-            selected = category == ArticleCategory.REGULATORY,
-            onClick = { onCategory(if (category == ArticleCategory.REGULATORY) null else ArticleCategory.REGULATORY) },
-            label = { Text("Regulatory") },
-            colors = chipColors(category == ArticleCategory.REGULATORY),
-        )
-        FilterChip(
-            selected = category == ArticleCategory.MANAGEMENT,
-            onClick = { onCategory(if (category == ArticleCategory.MANAGEMENT) null else ArticleCategory.MANAGEMENT) },
-            label = { Text("Management") },
-            colors = chipColors(category == ArticleCategory.MANAGEMENT),
-        )
+        ScoreDropdown(minScore = minScore, onPick = onMinScore)
+        TypeDropdown(category = category, onPick = onCategory)
     }
 }
 
 @Composable
-private fun chipColors(selected: Boolean) = FilterChipDefaults.filterChipColors(
-    containerColor = FinnencerColors.SurfaceGlass,
-    labelColor = FinnencerColors.TextSecondary,
-    selectedContainerColor = FinnencerColors.Violet.copy(alpha = 0.25f),
-    selectedLabelColor = FinnencerColors.TextPrimary,
-)
+private fun ScoreDropdown(minScore: Int, onPick: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = if (minScore == 0) "All scores" else "≥$minScore"
+    val active = minScore > 0
+    Box {
+        DropdownButton(
+            label = "Score: $label",
+            active = active,
+            onClick = { expanded = true },
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            // Score thresholds — 0 means "show everything"; 4/5/6/7/8/9 floor
+            // articles below that score from the feed.
+            listOf(0, 4, 5, 6, 7, 8, 9).forEach { v ->
+                DropdownMenuItem(
+                    text = {
+                        Text(if (v == 0) "All scores" else "≥ $v")
+                    },
+                    onClick = {
+                        onPick(v)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TypeDropdown(category: ArticleCategory?, onPick: (ArticleCategory?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = category?.let { categoryLabel(it) } ?: "All"
+    val active = category != null
+    Box {
+        DropdownButton(
+            label = "Type: $label",
+            active = active,
+            onClick = { expanded = true },
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("All types") },
+                onClick = { onPick(null); expanded = false },
+            )
+            ArticleCategory.entries
+                .filterNot { it == ArticleCategory.OTHER } // tag noise — never useful to filter by
+                .forEach { cat ->
+                    DropdownMenuItem(
+                        text = { Text(categoryLabel(cat)) },
+                        onClick = { onPick(cat); expanded = false },
+                    )
+                }
+        }
+    }
+}
+
+@Composable
+private fun DropdownButton(label: String, active: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                if (active) FinnencerColors.Violet.copy(alpha = 0.25f)
+                else FinnencerColors.SurfaceGlass
+            )
+            .border(
+                1.dp,
+                if (active) FinnencerColors.Violet.copy(alpha = 0.55f)
+                else FinnencerColors.SurfaceBorder,
+                RoundedCornerShape(20.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (active) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        Icon(
+            Icons.Default.ArrowDropDown,
+            contentDescription = null,
+            tint = if (active) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+private fun categoryLabel(c: ArticleCategory): String = when (c) {
+    ArticleCategory.EARNINGS -> "Earnings"
+    ArticleCategory.M_AND_A -> "M&A"
+    ArticleCategory.REGULATORY -> "Regulatory"
+    ArticleCategory.MANAGEMENT -> "Management"
+    ArticleCategory.MACRO -> "Macro"
+    ArticleCategory.LEGAL -> "Legal"
+    ArticleCategory.PRODUCT -> "Product"
+    ArticleCategory.ANALYST -> "Analyst"
+    ArticleCategory.INSIDER -> "Insider"
+    ArticleCategory.OTHER -> "Other"
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

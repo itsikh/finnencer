@@ -7,6 +7,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
@@ -36,4 +37,5 @@ object DatabaseModule {
     @Provides fun provideEarningsDao(db: FinnencerDatabase): EarningsDao = db.earningsDao()
     @Provides fun providePodcastDao(db: FinnencerDatabase): PodcastDao = db.podcastDao()
     @Provides fun provideApiUsageDao(db: FinnencerDatabase): ApiUsageDao = db.apiUsageDao()
+    @Provides fun provideAiJobDao(db: FinnencerDatabase): AiJobDao = db.aiJobDao()
 }

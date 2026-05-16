@@ -16,6 +16,7 @@ import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.data.repo.FeedPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import io.itsikh.finnencer.logging.AppLogger
@@ -75,6 +76,7 @@ class TickerFeedViewModel @Inject constructor(
     private val feedPrefs: FeedPreferences,
     private val bundleSummarizer: BundleSummarizer,
     private val scorer: ImportanceScorer,
+    private val aiJobs: AiJobsRepository,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -144,22 +146,18 @@ class TickerFeedViewModel @Inject constructor(
     fun summarizeBatch(pages: BundleSummarizer.Pages, customPrompt: String?) {
         val ids = _selection.value.toList()
         if (ids.isEmpty()) return
-        _batchSheet.value = _batchSheet.value.copy(working = true, error = null)
         viewModelScope.launch {
-            runCatching { bundleSummarizer.summarizeText(ids, pages, customPrompt) }
-                .onSuccess { text ->
-                    _batchSheet.value = _batchSheet.value.copy(
-                        working = false,
-                        producedText = text,
-                    )
-                }
-                .onFailure { t ->
-                    AppLogger.e(TAG, "batch summary failed", t)
-                    _batchSheet.value = _batchSheet.value.copy(
-                        working = false,
-                        error = t.message ?: "Summary failed",
-                    )
-                }
+            aiJobs.enqueueBatchSummary(
+                tickerSymbol = symbol,
+                articleIds = ids,
+                pages = pages,
+                customPrompt = customPrompt,
+            )
+            // Close the sheet immediately — the user follows progress in
+            // the Tasks tab (badge on the watchlist top bar). This is the
+            // whole point of moving these calls to the background.
+            _batchSheet.value = BatchActionState()
+            _selection.value = emptySet()
         }
     }
 
@@ -240,23 +238,15 @@ class TickerFeedViewModel @Inject constructor(
     fun summarizeBatchToPodcast(minutes: BundleSummarizer.PodcastMinutes, customPrompt: String?) {
         val ids = _selection.value.toList()
         if (ids.isEmpty()) return
-        _batchSheet.value = _batchSheet.value.copy(working = true, error = null)
         viewModelScope.launch {
-            runCatching { bundleSummarizer.summarizeToPodcast(ids, minutes, customPrompt) }
-                .onSuccess { podcastId ->
-                    _batchSheet.value = _batchSheet.value.copy(
-                        working = false,
-                        producedPodcastId = podcastId,
-                    )
-                    _selection.value = emptySet()
-                }
-                .onFailure { t ->
-                    AppLogger.e(TAG, "batch podcast failed", t)
-                    _batchSheet.value = _batchSheet.value.copy(
-                        working = false,
-                        error = t.message ?: "Podcast failed",
-                    )
-                }
+            aiJobs.enqueueBatchPodcast(
+                tickerSymbol = symbol,
+                articleIds = ids,
+                minutes = minutes,
+                customPrompt = customPrompt,
+            )
+            _batchSheet.value = BatchActionState()
+            _selection.value = emptySet()
         }
     }
 

@@ -13,6 +13,9 @@ object NotificationChannels {
     /** Less urgent informational pushes (e.g. weekly digest). Reserved for later. */
     const val DIGEST = "finnencer.digest"
 
+    /** AI jobs in flight + completion + failure pings. */
+    const val AI_JOBS = "finnencer.ai_jobs"
+
     fun ensureCreated(context: Context) {
         val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val alerts = NotificationChannel(
@@ -33,8 +36,18 @@ object NotificationChannels {
             enableVibration(false)
             setShowBadge(false)
         }
+        val aiJobs = NotificationChannel(
+            AI_JOBS,
+            "AI tasks",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            description = "Background AI summaries, podcasts, and reports"
+            enableVibration(false)
+            setShowBadge(true)
+        }
         mgr.createNotificationChannel(alerts)
         mgr.createNotificationChannel(digest)
+        mgr.createNotificationChannel(aiJobs)
     }
 
     fun areAlertsEnabled(context: Context): Boolean {

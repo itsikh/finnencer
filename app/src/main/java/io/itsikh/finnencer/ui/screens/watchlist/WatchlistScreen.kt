@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Headphones
@@ -55,12 +56,14 @@ fun WatchlistScreen(
     onOpenSettings: () -> Unit,
     onOpenEarnings: () -> Unit,
     onOpenPodcasts: () -> Unit,
+    onOpenTasks: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
     val tickers by vm.tickers.collectAsState()
     val addSheet by vm.addSheet.collectAsState()
     val settingsSheet by vm.settingsSheet.collectAsState()
+    val activeJobs by vm.activeJobCount.collectAsState()
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -81,6 +84,31 @@ fun WatchlistScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenTasks) {
+                        Box {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Assignment,
+                                contentDescription = "Tasks",
+                                tint = if (activeJobs > 0) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                            )
+                            if (activeJobs > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .clip(CircleShape)
+                                        .background(FinnencerColors.Coral)
+                                        .padding(horizontal = 4.dp),
+                                ) {
+                                    Text(
+                                        activeJobs.toString(),
+                                        color = FinnencerColors.TextOnAccent,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+                    }
                     IconButton(onClick = onOpenEarnings) {
                         Icon(
                             Icons.Default.EventNote,

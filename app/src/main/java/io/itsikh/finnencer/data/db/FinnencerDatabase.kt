@@ -2,12 +2,14 @@ package io.itsikh.finnencer.data.db
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.dao.TickerDao
+import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.ApiUsage
 import io.itsikh.finnencer.data.entity.ArticleScore
 import io.itsikh.finnencer.data.entity.ArticleSummary
@@ -33,8 +35,9 @@ import io.itsikh.finnencer.data.entity.Ticker
         EarningsReport::class,
         Podcast::class,
         ApiUsage::class,
+        AiJob::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {
@@ -44,6 +47,7 @@ abstract class FinnencerDatabase : RoomDatabase() {
     abstract fun earningsDao(): EarningsDao
     abstract fun podcastDao(): PodcastDao
     abstract fun apiUsageDao(): ApiUsageDao
+    abstract fun aiJobDao(): AiJobDao
 
     companion object {
         const val NAME = "finnencer.db"

@@ -60,6 +60,34 @@ enum class AiProvider { ANTHROPIC, GEMINI }
 
 enum class AiTier { FAST_CHEAP, BALANCED, LARGE }
 
+/**
+ * Routable model option. Either a hard-coded [AiModel] enum entry (shipped
+ * with the app) or a [Custom] entry discovered at runtime from a provider's
+ * ListModels endpoint (used to surface Gemini models that came out after we
+ * cut a release, e.g. gemini-3.x-pro). Both flow through [AiRouter] the
+ * same way — only [provider] decides which client handles the call.
+ */
+sealed class AiModelOption {
+    abstract val id: String
+    abstract val displayName: String
+    abstract val provider: AiProvider
+    abstract val tier: AiTier
+
+    data class Builtin(val model: AiModel) : AiModelOption() {
+        override val id: String get() = model.id
+        override val displayName: String get() = model.displayName
+        override val provider: AiProvider get() = model.provider
+        override val tier: AiTier get() = model.tier
+    }
+
+    data class Custom(
+        override val id: String,
+        override val displayName: String,
+        override val provider: AiProvider,
+        override val tier: AiTier,
+    ) : AiModelOption()
+}
+
 /** Initial default model per usage. */
 val AiUsage.defaultModel: AiModel
     get() = when (this) {

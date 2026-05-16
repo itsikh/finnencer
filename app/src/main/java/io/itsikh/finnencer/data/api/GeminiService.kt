@@ -28,6 +28,10 @@ data class GeminiModelsResponse(
 data class GeminiModelInfo(
     val name: String? = null,
     val displayName: String? = null,
+    val description: String? = null,
+    val supportedGenerationMethods: List<String>? = null,
+    val inputTokenLimit: Int? = null,
+    val outputTokenLimit: Int? = null,
 )
 
 data class GeminiGenerateRequest(

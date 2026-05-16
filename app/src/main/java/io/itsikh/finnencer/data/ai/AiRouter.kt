@@ -15,10 +15,6 @@ class AiRouter @Inject constructor(
     private val gemini: GeminiTextClient,
 ) {
 
-    /**
-     * Resolve the model for [usage] and run the completion. Returns the raw
-     * text response.
-     */
     suspend fun complete(
         usage: AiUsage,
         system: String?,
@@ -26,19 +22,8 @@ class AiRouter @Inject constructor(
         maxTokens: Int,
         temperature: Double? = null,
     ): AiCompletion {
-        val model = prefs.get(usage)
-        val client: AiTextClient = when (model.provider) {
-            AiProvider.ANTHROPIC -> anthropic
-            AiProvider.GEMINI -> gemini
-        }
-        val text = client.complete(
-            model = model.id,
-            system = system,
-            userMessage = userMessage,
-            maxTokens = maxTokens,
-            temperature = temperature,
-        )
-        return AiCompletion(text = text, modelUsed = model)
+        val option = prefs.get(usage)
+        return run(option, system, userMessage, maxTokens, temperature)
     }
 
     /** Direct model override (used when a feature needs a specific tier regardless of prefs). */
@@ -48,19 +33,27 @@ class AiRouter @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double? = null,
+    ): AiCompletion = run(AiModelOption.Builtin(model), system, userMessage, maxTokens, temperature)
+
+    private suspend fun run(
+        option: AiModelOption,
+        system: String?,
+        userMessage: String,
+        maxTokens: Int,
+        temperature: Double?,
     ): AiCompletion {
-        val client: AiTextClient = when (model.provider) {
+        val client: AiTextClient = when (option.provider) {
             AiProvider.ANTHROPIC -> anthropic
             AiProvider.GEMINI -> gemini
         }
         val text = client.complete(
-            model = model.id,
+            model = option.id,
             system = system,
             userMessage = userMessage,
             maxTokens = maxTokens,
             temperature = temperature,
         )
-        return AiCompletion(text = text, modelUsed = model)
+        return AiCompletion(text = text, modelUsed = option)
     }
 
     /**
@@ -71,4 +64,4 @@ class AiRouter @Inject constructor(
     fun extractJson(s: String): String? = anthropic.extractJson(s)
 }
 
-data class AiCompletion(val text: String, val modelUsed: AiModel)
+data class AiCompletion(val text: String, val modelUsed: AiModelOption)
