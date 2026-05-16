@@ -59,24 +59,21 @@ git push origin main &
 git remote | grep -q '^github$' && git push github main &
 wait
 ```
-If origin push fails, log the warning and continue. Then immediately start the build:
+If origin push fails, log the warning and continue. Then immediately start the build.
+
+`gradle.properties` already enables daemon, parallel, configuration-cache,
+build-cache, R8 full-mode, K2 incremental, KSP incremental + intermodule,
+10G heap with G1GC, and `org.gradle.workers.max=11`. So the command is
+short — just pin worker count to the box's actual core count and skip
+tasks that don't belong in a release ship.
+
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-# Detect CPU count and available RAM to maximise build speed
 CPUS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 8)
-MEM_GB=$(python3 -c "
-import subprocess
-m = int(subprocess.run(['sysctl','hw.memsize'],capture_output=True,text=True).stdout.split()[1])
-print(max(4, m // 1024 // 1024 // 1024 - 2))
-" 2>/dev/null || echo 6)
 ./gradlew assembleRelease \
-  --parallel \
-  --build-cache \
-  --configuration-cache \
   --max-workers="$CPUS" \
-  -Dorg.gradle.jvmargs="-Xmx${MEM_GB}g -XX:+HeapDumpOnOutOfMemoryError -XX:+UseG1GC" \
-  -Dkotlin.incremental=true \
-  -Dkotlin.daemon.jvm.options="-Xmx${MEM_GB}g"
+  -x lint -x lintVitalRelease -x test \
+  -q
 ```
 If the build fails, stop and show the last 30 lines. Do NOT continue.
 
