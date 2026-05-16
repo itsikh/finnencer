@@ -93,7 +93,12 @@ class GitHubIssuesClient(
 
                 val body = mapOf(
                     "message" to "bug report screenshot",
-                    "content" to base64Content
+                    "content" to base64Content,
+                    // Park screenshots on a dedicated orphan branch so they
+                    // never pollute `main`'s commit history. The branch is
+                    // expected to exist; if it doesn't, the GitHub Contents
+                    // API will create it provided the parent SHA isn't given.
+                    "branch" to SCREENSHOT_BRANCH,
                 )
 
                 val jsonBody = gson.toJson(body)
@@ -240,6 +245,17 @@ class GitHubIssuesClient(
     companion object {
         private const val TAG = "GitHubIssuesClient"
         private const val GITHUB_API_URL = "https://api.github.com"
+
+        /**
+         * Bug-report screenshots upload to this branch instead of `main` so the
+         * canonical code history stays clean. Must exist on the repo; created
+         * once during bootstrap via:
+         *   git checkout --orphan bug-screenshots
+         *   git rm -rf .
+         *   git commit --allow-empty -m "init bug-screenshots branch"
+         *   git push github bug-screenshots
+         */
+        private const val SCREENSHOT_BRANCH = "bug-screenshots"
 
         /**
          * Key used with [SecureKeyManager] to store and retrieve the GitHub PAT.
