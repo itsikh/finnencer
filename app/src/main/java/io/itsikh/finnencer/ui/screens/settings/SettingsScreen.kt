@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.AppConfig
+import io.itsikh.finnencer.BuildConfig
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.ui.screens.bugreport.ReportMode
@@ -327,7 +328,7 @@ private fun AboutSection(adminMode: Boolean, onTapVersion: () -> Unit) {
     SettingsSection(title = "About") {
         SettingsRow(
             title = AppConfig.APP_NAME,
-            subtitle = "Version 0.0.2 · build 2",
+            subtitle = "Version ${BuildConfig.VERSION_NAME} · build ${BuildConfig.VERSION_CODE}",
             icon = Icons.Default.Info,
             onClick = onTapVersion,
         )
