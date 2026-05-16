@@ -17,7 +17,8 @@ import io.itsikh.finnencer.ui.screens.bugreport.BugReportScreen
 import io.itsikh.finnencer.ui.screens.bugreport.ReportMode
 import io.itsikh.finnencer.ui.screens.home.HomeScreen
 import io.itsikh.finnencer.ui.screens.keys.ApiKeysScreen
-import io.itsikh.finnencer.ui.screens.keys.QrPlaceholderScreen
+import io.itsikh.finnencer.ui.screens.keys.QrScanScreen
+import io.itsikh.finnencer.ui.screens.keys.QrShareScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
 
 /**
@@ -78,8 +79,15 @@ fun AppNavHost() {
                     onOpenShare = { navController.navigate("keys/share") },
                 )
             }
-            composable("keys/scan") { QrPlaceholderScreen("Scan QR") }
-            composable("keys/share") { QrPlaceholderScreen("Share QR") }
+            composable("keys/scan") {
+                QrScanScreen(
+                    onBack = { navController.popBackStack() },
+                    onImported = { navController.popBackStack() },
+                )
+            }
+            composable("keys/share") {
+                QrShareScreen(onBack = { navController.popBackStack() })
+            }
             composable("bug_report/{mode}") { backStackEntry ->
                 val modeName = backStackEntry.arguments?.getString("mode")
                 val mode = modeName?.let { runCatching { ReportMode.valueOf(it) }.getOrNull() }
