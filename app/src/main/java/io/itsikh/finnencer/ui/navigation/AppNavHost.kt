@@ -19,6 +19,7 @@ import io.itsikh.finnencer.ui.screens.home.HomeScreen
 import io.itsikh.finnencer.ui.screens.keys.ApiKeysScreen
 import io.itsikh.finnencer.ui.screens.keys.QrScanScreen
 import io.itsikh.finnencer.ui.screens.keys.QrShareScreen
+import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
 
 /**
@@ -57,7 +58,22 @@ fun AppNavHost() {
     val showBugButton by overlayVm.showBugButton.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        NavHost(navController = navController, startDestination = "home") {
+        NavHost(navController = navController, startDestination = "watchlist") {
+            composable("watchlist") {
+                WatchlistScreen(
+                    onOpenKeys = { navController.navigate("keys") },
+                    onOpenTickerFeed = { symbol ->
+                        navController.navigate("ticker/$symbol")
+                    },
+                )
+            }
+            composable("ticker/{symbol}") { backStack ->
+                val symbol = backStack.arguments?.getString("symbol") ?: ""
+                io.itsikh.finnencer.ui.components.Placeholder(
+                    label = "$symbol feed",
+                    hint = "Per-ticker news feed lands in Build A·11",
+                )
+            }
             composable("home") {
                 HomeScreen(
                     onOpenSettings = { navController.navigate("settings") },
