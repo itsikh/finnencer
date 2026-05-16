@@ -1,66 +1,101 @@
 package io.itsikh.finnencer.ui.screens.home
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import io.itsikh.finnencer.R
+import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 /**
- * Template placeholder for the main/home screen.
+ * Placeholder home screen. Replaced by the Watchlist screen in Build A·6.
  *
- * This is the `startDestination` in [ui.navigation.AppNavHost] and the first screen
- * users see when they open the app. It is intentionally minimal — replace the content
- * inside the [Scaffold] with whatever your app's main UI should be.
- *
- * ## What's here by default
- * - A [TopAppBar] showing the app name from `strings.xml` and a settings icon button.
- * - A centered "Hello, World!" text placeholder.
- *
- * ## How to replace
- * 1. Replace the [Box] / [Text] content with your actual screen layout.
- * 2. Add ViewModel injection if needed: `val vm: MyViewModel = hiltViewModel()`.
- * 3. Add navigation callbacks as parameters if this screen needs to navigate elsewhere,
- *    and wire them up in [ui.navigation.AppNavHost].
- *
- * @param onOpenSettings Called when the user taps the settings icon in the top bar.
+ * Temporary entry points so the rest of A.x routes are reachable on a debug
+ * install while the watchlist UI is being built.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenSettings: () -> Unit = {}) {
+fun HomeScreen(
+    onOpenSettings: () -> Unit = {},
+    onOpenKeys: () -> Unit = {},
+) {
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = {
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        color = FinnencerColors.TextPrimary,
+                        style = MaterialTheme.typography.headlineMedium,
+                    )
+                },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
+                            contentDescription = "Settings",
+                            tint = FinnencerColors.TextSecondary,
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
-        }
-    ) { innerPadding ->
-        Box(
+        },
+    ) { padding ->
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.Center
+                .padding(padding)
+                .padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Hello, World!")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Watchlist coming up in Build A·6.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = FinnencerColors.TextSecondary,
+            )
+            Text(
+                text = "Start by configuring your API keys.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FinnencerColors.TextTertiary,
+            )
+            FilledTonalButton(
+                onClick = onOpenKeys,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = FinnencerColors.Violet.copy(alpha = 0.22f),
+                    contentColor = FinnencerColors.TextPrimary,
+                ),
+            ) {
+                Icon(Icons.Default.VpnKey, contentDescription = null)
+                Spacer(Modifier.height(0.dp))
+                Text("  Manage API Keys", style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }
