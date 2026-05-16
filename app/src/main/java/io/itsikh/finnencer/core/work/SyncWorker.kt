@@ -1,7 +1,7 @@
 package io.itsikh.finnencer.core.work
 
 import android.content.Context
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -48,7 +48,7 @@ class SyncWorker @AssistedInject constructor(
         // Stage 1b — earnings calendar (cheap; same Finnhub key).
         if (apiKeys.isConfigured(ApiKey.FINNHUB)) {
             val earningsInserted = runCatching { earningsSync.runOnce() }
-                .onFailure { Log.w(TAG, "earnings sync failed", it) }
+                .onFailure { Log.e(TAG, "earnings sync failed", it) }
                 .getOrDefault(0)
             Log.i(TAG, "earnings calendar: $earningsInserted new rows")
         }

@@ -2,6 +2,7 @@ package io.itsikh.finnencer.data.providers
 
 import com.google.gson.Gson
 import io.itsikh.finnencer.data.api.SecEdgarService
+import io.itsikh.finnencer.logging.AppLogger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -35,8 +36,11 @@ class EdgarCikLookup @Inject constructor(
         cache?.let { return it }
         mutex.withLock {
             cache?.let { return it }
-            val raw = runCatching { service.tickerCikMap() }.getOrNull() ?: return null
+            val raw = runCatching { service.tickerCikMap() }
+                .onFailure { AppLogger.e(TAG, "ticker->CIK map fetch failed", it) }
+                .getOrNull() ?: return null
             cache = parse(raw)
+            AppLogger.i(TAG, "ticker->CIK map loaded: ${cache?.size ?: 0} symbols")
         }
         return cache
     }
@@ -60,4 +64,6 @@ class EdgarCikLookup @Inject constructor(
         }
         return out
     }
+
+    private companion object { const val TAG = "EdgarCikLookup" }
 }

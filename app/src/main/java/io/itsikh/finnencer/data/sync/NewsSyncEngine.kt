@@ -1,6 +1,6 @@
 package io.itsikh.finnencer.data.sync
 
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.ArticleTickerXref

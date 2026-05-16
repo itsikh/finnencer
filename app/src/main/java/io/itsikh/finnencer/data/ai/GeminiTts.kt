@@ -1,7 +1,7 @@
 package io.itsikh.finnencer.data.ai
 
 import android.util.Base64
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import io.itsikh.finnencer.data.api.GeminiContent
 import io.itsikh.finnencer.data.api.GeminiGenerateRequest
 import io.itsikh.finnencer.data.api.GeminiGenerationConfig
