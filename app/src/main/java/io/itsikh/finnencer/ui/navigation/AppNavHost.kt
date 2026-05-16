@@ -115,6 +115,7 @@ fun AppNavHost() {
                 TickerFeedScreen(
                     onBack = { navController.popBackStack() },
                     onOpenArticle = { articleId -> navController.navigate("article/$articleId") },
+                    onOpenReport = { reportId -> navController.navigate("report/$reportId") },
                 )
             }
             composable("article/{articleId}") {

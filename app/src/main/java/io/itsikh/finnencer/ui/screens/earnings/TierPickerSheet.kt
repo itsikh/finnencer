@@ -26,6 +26,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.gestures.detectTapGestures
+import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
@@ -37,6 +38,28 @@ fun TierPickerSheet(
     onPick: (ReportTier) -> Unit,
 ) {
     val event = state.event ?: return
+    TierPickerSheetCore(
+        event = event,
+        generating = state.generating,
+        error = state.error,
+        onClose = onClose,
+        onPick = onPick,
+    )
+}
+
+/**
+ * Stateless sheet used by both the global Earnings screen and the per-
+ * ticker feed. Caller manages event + generating + error state.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TierPickerSheetCore(
+    event: EarningsEvent,
+    generating: Boolean,
+    error: String?,
+    onClose: () -> Unit,
+    onPick: (ReportTier) -> Unit,
+) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -62,7 +85,7 @@ fun TierPickerSheet(
                 color = FinnencerColors.TextSecondary,
             )
 
-            if (state.generating) {
+            if (generating) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(vertical = 12.dp),
@@ -85,7 +108,7 @@ fun TierPickerSheet(
                     subtitle = "~2 pages · Sonnet · executive read",
                     detail = "Headline, numbers vs consensus, what matters, next catalyst.",
                     accent = FinnencerColors.Mint,
-                    enabled = !state.generating,
+                    enabled = !generating,
                     onClick = { onPick(ReportTier.BRIEF) },
                 )
                 TierOption(
@@ -93,7 +116,7 @@ fun TierPickerSheet(
                     subtitle = "~5 pages · Sonnet · standard read",
                     detail = "BRIEF + guidance commentary + segment detail + analyst reaction + risks.",
                     accent = FinnencerColors.Violet,
-                    enabled = !state.generating,
+                    enabled = !generating,
                     onClick = { onPick(ReportTier.STANDARD) },
                 )
                 TierOption(
@@ -101,12 +124,12 @@ fun TierPickerSheet(
                     subtitle = "~10 pages · Opus 4.7 (1M ctx) · deep dive",
                     detail = "STANDARD + explicit bull/bear, risk factors, comparables, next-quarter watchlist.",
                     accent = FinnencerColors.Amber,
-                    enabled = !state.generating,
+                    enabled = !generating,
                     onClick = { onPick(ReportTier.DEEP) },
                 )
             }
 
-            state.error?.let { err ->
+            error?.let { err ->
                 Text(err, color = FinnencerColors.Coral, style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(Modifier.height(20.dp))

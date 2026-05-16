@@ -50,6 +50,18 @@ interface EarningsDao {
     @Query("SELECT * FROM earnings_events WHERE id = :id")
     suspend fun getEvent(id: Long): EarningsEvent?
 
+    /** Past earnings events for a ticker, most-recent first. */
+    @Query(
+        """
+        SELECT * FROM earnings_events
+        WHERE ticker_symbol = :symbol
+          AND scheduled_at_millis <= :nowMillis
+        ORDER BY scheduled_at_millis DESC
+        LIMIT :limit
+        """
+    )
+    fun observePastForTicker(symbol: String, nowMillis: Long, limit: Int = 2): Flow<List<EarningsEvent>>
+
     // ───────── reports ─────────
 
     @Insert
