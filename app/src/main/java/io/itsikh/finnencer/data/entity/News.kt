@@ -10,7 +10,17 @@ import androidx.room.PrimaryKey
  * Enum-as-String columns. Storing the `name` (not ordinal) so reordering the
  * enum doesn't corrupt the DB.
  */
-enum class NewsProvider { FINNHUB, RSS_NASDAQ, RSS_SEEKING_ALPHA, SEC_EDGAR, MARKETAUX }
+enum class NewsProvider {
+    // Free, in active use
+    RSS_GOOGLE_NEWS,
+    RSS_YAHOO_FINANCE,
+    RSS_NASDAQ,
+    RSS_SEEKING_ALPHA,
+    SEC_EDGAR,
+    // Legacy / inactive (kept so old rows still parse)
+    FINNHUB,
+    MARKETAUX,
+}
 
 enum class ArticleCategory {
     EARNINGS, M_AND_A, REGULATORY, MANAGEMENT, MACRO, LEGAL,

@@ -116,6 +116,7 @@ fun AppNavHost() {
                     onBack = { navController.popBackStack() },
                     onOpenArticle = { articleId -> navController.navigate("article/$articleId") },
                     onOpenReport = { reportId -> navController.navigate("report/$reportId") },
+                    onOpenPodcast = { podcastId -> navController.navigate("podcast/$podcastId") },
                 )
             }
             composable("article/{articleId}") {
@@ -135,6 +136,12 @@ fun AppNavHost() {
                     },
                     onOpenKeys = { navController.navigate("keys") },
                     onOpenCost = { navController.navigate("cost") },
+                    onOpenAiPrefs = { navController.navigate("ai_prefs") },
+                )
+            }
+            composable("ai_prefs") {
+                io.itsikh.finnencer.ui.screens.settings.AiPrefsScreen(
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable("keys") {

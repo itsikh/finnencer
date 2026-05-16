@@ -1,7 +1,9 @@
 package io.itsikh.finnencer.ui.screens.feed
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,11 +62,21 @@ fun TickerFeedScreen(
     onBack: () -> Unit,
     onOpenArticle: (articleId: String) -> Unit,
     onOpenReport: (reportId: Long) -> Unit,
+    onOpenPodcast: (podcastId: Long) -> Unit,
 ) {
     val vm: TickerFeedViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val pastEarnings by vm.pastEarnings.collectAsState()
     val picker by vm.picker.collectAsState()
+    val selection by vm.selection.collectAsState()
+    val batchSheet by vm.batchSheet.collectAsState()
+
+    LaunchedEffect(batchSheet.producedPodcastId) {
+        batchSheet.producedPodcastId?.let { pid ->
+            vm.closeBatchSheet()
+            onOpenPodcast(pid)
+        }
+    }
 
     LaunchedEffect(picker.producedReportId) {
         picker.producedReportId?.let { id ->
@@ -76,6 +88,15 @@ fun TickerFeedScreen(
 
     Scaffold(
         containerColor = Color.Transparent,
+        bottomBar = {
+            if (selection.isNotEmpty()) {
+                SelectionActionBar(
+                    count = selection.size,
+                    onCancel = vm::clearSelection,
+                    onSummarize = vm::openBatchSheet,
+                )
+            }
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -156,7 +177,18 @@ fun TickerFeedScreen(
                     item { EmptyFeedInline() }
                 } else {
                     items(rows, key = { "art-${it.id}" }) { row ->
-                        ArticleRowCard(row = row, onTap = { onOpenArticle(row.id) })
+                        val isSelected = row.id in selection
+                        val inSelectMode = selection.isNotEmpty()
+                        ArticleRowCard(
+                            row = row,
+                            selected = isSelected,
+                            inSelectMode = inSelectMode,
+                            onTap = {
+                                if (inSelectMode) vm.toggleSelect(row.id)
+                                else onOpenArticle(row.id)
+                            },
+                            onLongPress = { vm.toggleSelect(row.id) },
+                        )
                     }
                 }
                 item { Spacer(Modifier.height(40.dp)) }
@@ -172,6 +204,55 @@ fun TickerFeedScreen(
             onClose = vm::closePicker,
             onPick = vm::generateReport,
         )
+    }
+
+    if (batchSheet.open) {
+        BatchActionSheet(
+            state = batchSheet,
+            selectionSize = selection.size,
+            onClose = vm::closeBatchSheet,
+            onSummarize = { pages, prompt -> vm.summarizeBatch(pages, prompt) },
+            onPodcast = { mins, prompt -> vm.summarizeBatchToPodcast(mins, prompt) },
+        )
+    }
+}
+
+@Composable
+private fun SelectionActionBar(count: Int, onCancel: () -> Unit, onSummarize: () -> Unit) {
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(FinnencerColors.BgTop.copy(alpha = 0.92f))
+            .border(
+                width = 1.dp,
+                color = FinnencerColors.SurfaceBorder,
+                shape = RoundedCornerShape(0.dp),
+            )
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "$count selected",
+                color = FinnencerColors.TextPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            androidx.compose.material3.TextButton(onClick = onCancel) {
+                Text("Cancel", color = FinnencerColors.TextSecondary)
+            }
+            androidx.compose.material3.FilledTonalButton(
+                onClick = onSummarize,
+                colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                    containerColor = FinnencerColors.Violet,
+                    contentColor = FinnencerColors.TextOnAccent,
+                ),
+                shape = RoundedCornerShape(12.dp),
+            ) { Text("Summarize", fontWeight = FontWeight.SemiBold) }
+        }
     }
 }
 
@@ -334,47 +415,97 @@ private fun chipColors(selected: Boolean) = FilterChipDefaults.filterChipColors(
     selectedLabelColor = FinnencerColors.TextPrimary,
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ArticleRowCard(row: ScoredArticleRow, onTap: () -> Unit) {
-    GlassCard(onClick = onTap) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ScoreBadge(score = row.score)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = row.source_name,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = FinnencerColors.TextTertiary,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = formatRelative(row.published_at_millis),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = FinnencerColors.TextTertiary,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = row.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = FinnencerColors.TextPrimary,
-                fontWeight = FontWeight.Medium,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
+private fun ArticleRowCard(
+    row: ScoredArticleRow,
+    selected: Boolean = false,
+    inSelectMode: Boolean = false,
+    onTap: () -> Unit = {},
+    onLongPress: () -> Unit = {},
+) {
+    val accent = if (selected) FinnencerColors.Mint else Color.Transparent
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .border(
+                width = if (selected) 2.dp else 0.dp,
+                color = accent,
+                shape = RoundedCornerShape(20.dp),
             )
-            if (!row.reason.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
+            .combinedClickable(onClick = onTap, onLongClick = onLongPress),
+    ) {
+        GlassCard {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (inSelectMode) {
+                        // Selection checkmark slot replaces the score badge when
+                        // the row is selected; otherwise an empty circle hints at
+                        // tappability.
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected) FinnencerColors.Mint.copy(alpha = 0.25f)
+                                    else FinnencerColors.SurfaceGlass
+                                )
+                                .border(
+                                    1.dp,
+                                    if (selected) FinnencerColors.Mint else FinnencerColors.SurfaceBorder,
+                                    CircleShape,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (selected) {
+                                Text(
+                                    "✓",
+                                    color = FinnencerColors.Mint,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    ScoreBadge(score = row.score)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = row.source_name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = formatRelative(row.published_at_millis),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    text = row.reason,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FinnencerColors.TextSecondary,
-                    maxLines = 2,
+                    text = row.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            if (!row.category.isNullOrBlank() && row.category != ArticleCategory.OTHER.name) {
-                Spacer(Modifier.height(6.dp))
-                CategoryChip(category = row.category)
+                if (!row.reason.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = row.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinnencerColors.TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (!row.category.isNullOrBlank() && row.category != ArticleCategory.OTHER.name) {
+                    Spacer(Modifier.height(6.dp))
+                    CategoryChip(category = row.category)
+                }
             }
         }
     }
