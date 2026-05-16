@@ -3,6 +3,8 @@ package io.itsikh.finnencer.ui.screens.feed
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,6 +74,7 @@ fun TickerFeedScreen(
     val selection by vm.selection.collectAsState()
     val batchSheet by vm.batchSheet.collectAsState()
     val articleAction by vm.action.collectAsState()
+    val syncRunning by vm.syncRunning.collectAsState()
 
     LaunchedEffect(batchSheet.producedPodcastId) {
         batchSheet.producedPodcastId?.let { pid ->
@@ -141,6 +144,18 @@ fun TickerFeedScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Top-of-screen sync indicator. Shows whenever the periodic
+            // or one-off sync worker is RUNNING — so the toolbar refresh
+            // button has visible effect.
+            if (syncRunning) {
+                androidx.compose.material3.LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = FinnencerColors.Violet,
+                    trackColor = FinnencerColors.SurfaceGlass,
+                )
+            } else {
+                Spacer(Modifier.height(2.dp)) // reserve same vertical slot
+            }
             FilterRow(
                 minScore = state.filters.minScore,
                 onMinScore = vm::setMinScore,
@@ -385,9 +400,12 @@ private fun FilterRow(
     category: ArticleCategory?,
     onCategory: (ArticleCategory?) -> Unit,
 ) {
+    // Horizontally scrollable so all chips remain reachable on narrow phones
+    // (Samsung S23 Ultra reported the row spilling off-screen at v0.0.7).
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

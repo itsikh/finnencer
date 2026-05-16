@@ -260,6 +260,11 @@ class TickerFeedViewModel @Inject constructor(
         }
     }
 
+    /** True while a sync worker is RUNNING — drives the top-of-screen
+     *  progress bar so the user knows when the refresh button has effect. */
+    val syncRunning: StateFlow<Boolean> = scheduler.isSyncRunning
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     fun setMinScore(min: Int) { _filters.value = _filters.value.copy(minScore = min.coerceIn(0, 10)) }
     fun setCategory(c: ArticleCategory?) { _filters.value = _filters.value.copy(category = c) }
     fun refresh() = scheduler.runOnceNow()
