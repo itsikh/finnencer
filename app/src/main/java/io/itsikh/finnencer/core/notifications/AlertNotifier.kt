@@ -20,6 +20,7 @@ import io.itsikh.finnencer.data.entity.ArticleScore
 import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.entity.NotificationLog
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.logging.AppLogger
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -59,10 +60,12 @@ class AlertNotifier @Inject constructor(
     suspend fun fanout(newScores: List<ArticleScore>): FanoutStats {
         if (newScores.isEmpty()) return FanoutStats(0, 0, 0, 0, 0, 0, 0)
         if (!hasNotificationPermission()) {
+            AppLogger.w(TAG, "fanout: notifications permission not granted; suppressing ${newScores.size}")
             return FanoutStats(newScores.size, newScores.size, 0, 0, 0, 0, 0)
         }
         NotificationChannels.ensureCreated(context)
         if (!NotificationChannels.areAlertsEnabled(context)) {
+            AppLogger.w(TAG, "fanout: alerts channel disabled by user; suppressing ${newScores.size}")
             return FanoutStats(newScores.size, newScores.size, 0, 0, 0, 0, 0)
         }
 
@@ -116,9 +119,11 @@ class AlertNotifier @Inject constructor(
                     sentAtMillis = now,
                 )
             )
+            AppLogger.i(TAG, "posted $${ticker.symbol} score=${score.score} cat=${score.category}")
             posted++
         }
 
+        AppLogger.i(TAG, "fanout: candidates=${newScores.size} posted=$posted thr=$thrSup mute=$muteSup quiet=$quietSup cap=$capSup cluster=$clusterSup")
         return FanoutStats(
             candidates = newScores.size,
             suppressedByThreshold = thrSup,
@@ -173,8 +178,10 @@ class AlertNotifier @Inject constructor(
 
         runCatching {
             NotificationManagerCompat.from(context).notify(article.id.hashCode(), notif)
-        }
+        }.onFailure { AppLogger.e(TAG, "notify() threw for ${article.id}", it) }
     }
+
+    private companion object { const val TAG = "AlertNotifier" }
 
     private fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true

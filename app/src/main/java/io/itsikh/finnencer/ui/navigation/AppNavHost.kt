@@ -134,7 +134,6 @@ fun AppNavHost() {
                     },
                     onOpenKeys = { navController.navigate("keys") },
                     onOpenCost = { navController.navigate("cost") },
-                    onOpenPodcasts = { navController.navigate("podcasts") },
                 )
             }
             composable("keys") {

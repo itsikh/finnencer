@@ -15,7 +15,20 @@ interface GeminiService {
         @Path("model") model: String,
         @Body request: GeminiGenerateRequest,
     ): GeminiGenerateResponse
+
+    /** Cheap auth-only call; used by KeyValidator to verify the API key. */
+    @retrofit2.http.GET("v1beta/models")
+    suspend fun listModels(): GeminiModelsResponse
 }
+
+data class GeminiModelsResponse(
+    val models: List<GeminiModelInfo> = emptyList(),
+)
+
+data class GeminiModelInfo(
+    val name: String? = null,
+    val displayName: String? = null,
+)
 
 data class GeminiGenerateRequest(
     val contents: List<GeminiContent>,

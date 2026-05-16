@@ -1,7 +1,7 @@
 package io.itsikh.finnencer.data.ai
 
 import android.content.Context
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.PodcastDao

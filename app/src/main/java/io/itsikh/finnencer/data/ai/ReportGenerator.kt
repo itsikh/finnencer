@@ -1,6 +1,6 @@
 package io.itsikh.finnencer.data.ai
 
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import com.google.gson.Gson
 import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.dao.EarningsDao

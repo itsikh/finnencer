@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
@@ -72,7 +71,6 @@ fun SettingsScreen(
     onOpenBugReport: (ReportMode) -> Unit,
     onOpenKeys: () -> Unit = {},
     onOpenCost: () -> Unit = {},
-    onOpenPodcasts: () -> Unit = {},
 ) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
@@ -146,13 +144,6 @@ fun SettingsScreen(
                     icon = Icons.Default.AttachMoney,
                     iconTint = FinnencerColors.Mint,
                     onClick = onOpenCost,
-                )
-                SettingsRow(
-                    title = "Podcasts library",
-                    subtitle = "Generated podcasts and playback history",
-                    icon = Icons.Default.Headphones,
-                    iconTint = FinnencerColors.Amber,
-                    onClick = onOpenPodcasts,
                 )
             }
 

@@ -1,6 +1,6 @@
 package io.itsikh.finnencer.data.ai
 
-import android.util.Log
+import io.itsikh.finnencer.logging.AppLogger as Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import io.itsikh.finnencer.data.dao.NewsDao
@@ -46,7 +46,7 @@ class ImportanceScorer @Inject constructor(
 
             batches++
             val results = runCatching { scoreBatch(articles) }
-                .onFailure { Log.w(TAG, "batch failed", it) }
+                .onFailure { Log.e(TAG, "batch failed", it) }
                 .getOrElse { emptyList() }
 
             if (results.isEmpty()) {
