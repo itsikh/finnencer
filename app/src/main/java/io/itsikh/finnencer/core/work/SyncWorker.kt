@@ -7,6 +7,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import io.itsikh.finnencer.core.notifications.AlertNotifier
+import io.itsikh.finnencer.data.ai.ImportanceScorer
+import io.itsikh.finnencer.data.repo.ApiKey
+import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.data.sync.NewsSyncEngine
 
 /**
@@ -21,17 +25,37 @@ class SyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val engine: NewsSyncEngine,
+    private val scorer: ImportanceScorer,
+    private val notifier: AlertNotifier,
+    private val apiKeys: ApiKeysRepository,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
-        val stats = engine.runOnce()
-        Log.i(TAG, "sync done: $stats")
+        runPipeline()
         Result.success()
     } catch (t: Throwable) {
         Log.e(TAG, "sync failed", t)
-        // Soft-failure: retry, but bounded — WorkManager applies exponential
-        // backoff capped at the next scheduled period anyway.
         Result.retry()
+    }
+
+    private suspend fun runPipeline() {
+        // Stage 1 — ingest from all news providers.
+        val ingestStats = engine.runOnce()
+        Log.i(TAG, "ingest done: $ingestStats")
+
+        // Stage 2 — score newly-ingested articles with Claude Haiku. Skipped
+        // entirely if the user hasn't pasted an Anthropic key yet.
+        if (!apiKeys.isConfigured(ApiKey.ANTHROPIC)) {
+            Log.i(TAG, "scoring skipped: ANTHROPIC key not configured")
+            return
+        }
+        val scorerStats = scorer.scoreUnscored()
+        Log.i(TAG, "scoring done: $scorerStats")
+
+        // Stage 3 — fan notifications out for any newly-scored items that
+        // pass per-ticker threshold + quiet hours + dedup gates.
+        val fanout = notifier.fanout(scorerStats.newScores)
+        Log.i(TAG, "fanout: $fanout")
     }
 
     private companion object {

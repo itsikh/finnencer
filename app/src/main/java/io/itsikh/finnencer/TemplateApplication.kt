@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
@@ -63,5 +64,7 @@ class TemplateApplication : Application(), Configuration.Provider {
                 description = "Notifications for completed backups that are ready to save"
             }
         )
+        // finnencer's own channels (alerts + digest).
+        NotificationChannels.ensureCreated(this)
     }
 }
