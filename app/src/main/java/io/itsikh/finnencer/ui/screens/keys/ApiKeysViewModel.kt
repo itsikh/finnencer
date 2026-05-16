@@ -7,6 +7,7 @@ import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.data.repo.KeyTestResult
 import io.itsikh.finnencer.data.repo.KeyValidator
+import io.itsikh.finnencer.util.AppSigningInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +29,7 @@ data class KeyCardState(
 class ApiKeysViewModel @Inject constructor(
     private val repo: ApiKeysRepository,
     private val validator: KeyValidator,
+    val signingInfo: AppSigningInfo,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(initialState())

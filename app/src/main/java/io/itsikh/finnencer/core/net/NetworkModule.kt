@@ -12,6 +12,7 @@ import io.itsikh.finnencer.data.api.RssService
 import io.itsikh.finnencer.data.api.SecEdgarService
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.util.AppSigningInfo
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -46,6 +47,27 @@ class AuthHeaderInterceptor(
             chain.request().newBuilder().header(h, v).build()
         } else chain.request()
         return chain.proceed(req)
+    }
+}
+
+/**
+ * Adds the two headers Google checks when a Cloud API key has Android-app
+ * restrictions configured in GCP Console:
+ *  - `X-Android-Package` = applicationId
+ *  - `X-Android-Cert`    = SHA-1 of the APK signing cert, uppercase hex,
+ *                           no separators
+ *
+ * Without these headers, a restricted key returns HTTP 403 even with valid
+ * auth.
+ */
+class AndroidAttributionInterceptor(
+    private val info: AppSigningInfo,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+        val b = chain.request().newBuilder()
+            .header("X-Android-Package", info.packageName)
+        info.signingCertSha1Hex?.let { b.header("X-Android-Cert", it) }
+        return chain.proceed(b.build())
     }
 }
 
@@ -137,13 +159,18 @@ object NetworkModule {
     // ───────── Gemini ─────────
 
     @Provides @Singleton @GeminiRetrofit
-    fun provideGeminiRetrofit(gson: Gson, repo: ApiKeysRepository): Retrofit {
+    fun provideGeminiRetrofit(
+        gson: Gson,
+        repo: ApiKeysRepository,
+        signingInfo: AppSigningInfo,
+    ): Retrofit {
         val client = OkHttpClient.Builder()
             .addInterceptor(
                 AuthHeaderInterceptor(repo, ApiKey.GEMINI) { token ->
                     "x-goog-api-key" to token
                 }
             )
+            .addInterceptor(AndroidAttributionInterceptor(signingInfo))
             .addInterceptor(logging())
             .build()
         return Retrofit.Builder()
