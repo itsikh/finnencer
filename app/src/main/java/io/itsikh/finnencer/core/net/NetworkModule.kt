@@ -19,6 +19,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.converter.scalars.ScalarsConverterFactory
+import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
@@ -96,6 +97,20 @@ object NetworkModule {
     private fun logging(): HttpLoggingInterceptor =
         HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
 
+    /**
+     * AI text-generation calls (Claude messages, Gemini generateContent) can
+     * easily take 60-120s when the user asks for a 5-page summary or a 10-min
+     * podcast transcript. OkHttp's defaults (10s read, 10s write, no call
+     * timeout) cause `SocketTimeoutException` mid-stream and the UI showed
+     * "Summary failed" almost immediately. These limits leave plenty of room
+     * for slow models without making genuinely-stuck calls hang forever.
+     */
+    private fun longLivedTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(240, TimeUnit.SECONDS)
+
     @Provides @Singleton
     fun provideBaseOkHttp(): OkHttpClient =
         OkHttpClient.Builder()
@@ -129,7 +144,7 @@ object NetworkModule {
 
     @Provides @Singleton @AnthropicRetrofit
     fun provideAnthropicRetrofit(gson: Gson, repo: ApiKeysRepository): Retrofit {
-        val client = OkHttpClient.Builder()
+        val client = longLivedTimeouts(OkHttpClient.Builder())
             .addInterceptor(
                 AuthHeaderInterceptor(repo, ApiKey.ANTHROPIC) { token ->
                     "x-api-key" to token
@@ -164,7 +179,7 @@ object NetworkModule {
         repo: ApiKeysRepository,
         signingInfo: AppSigningInfo,
     ): Retrofit {
-        val client = OkHttpClient.Builder()
+        val client = longLivedTimeouts(OkHttpClient.Builder())
             .addInterceptor(
                 AuthHeaderInterceptor(repo, ApiKey.GEMINI) { token ->
                     "x-goog-api-key" to token
