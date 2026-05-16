@@ -5,7 +5,6 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import io.itsikh.finnencer.core.notifications.AiJobNotifier
@@ -72,7 +71,7 @@ class AiJobWorker @AssistedInject constructor(
     }
 
     private suspend fun runSummary(jobId: String, tickerSymbol: String?, json: String, title: String) {
-        val input = gson.fromJson<SummaryInput>(json, SummaryInput.typeToken)
+        val input = gson.fromJson(json, SummaryInput::class.java)
         val text = bundle.summarizeText(input.articleIds, input.pages, input.customPrompt)
         dao.markCompleted(
             id = jobId,
@@ -107,11 +106,7 @@ class AiJobWorker @AssistedInject constructor(
         val articleIds: List<String>,
         val pages: BundleSummarizer.Pages,
         val customPrompt: String?,
-    ) {
-        companion object {
-            val typeToken = object : TypeToken<SummaryInput>() {}.type
-        }
-    }
+    )
 
     data class PodcastInput(
         val articleIds: List<String>,

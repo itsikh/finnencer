@@ -18,13 +18,14 @@ private val Context.aiPrefsDataStore by preferencesDataStore(name = "ai_preferen
  * User-configurable model selection for each [AiUsage]. DataStore-backed
  * (not encrypted — these are preferences, not secrets).
  *
- * Resolution order at request time:
- *  1. Saved override id for the usage — matched against built-in [AiModel]
- *     entries, then against runtime-discovered models in [DiscoveredModels]
- *  2. [AiUsage.defaultModel] (always a built-in)
+ * Per [AiUsage] the user persists an ORDERED list of up to [MAX_RANK]
+ * model IDs. Position 0 is the primary; positions 1..N are sequential
+ * fallbacks the router tries on failure. Stored as a single comma-joined
+ * string so a v1 single-id value still resolves cleanly.
  *
- * Returns are wrapped in [AiModelOption] so callers don't branch on
- * builtin-vs-discovered.
+ * Resolution at request time produces a list of length ≥ 1; if nothing
+ * was saved (or every saved id became unknown), the list is just
+ * [AiUsage.defaultModel].
  */
 @Singleton
 class AiPreferences @Inject constructor(
@@ -35,37 +36,58 @@ class AiPreferences @Inject constructor(
     private fun keyFor(usage: AiUsage): Preferences.Key<String> =
         stringPreferencesKey("model_for_${usage.name}")
 
-    fun observe(usage: AiUsage): Flow<AiModelOption> =
+    /** Ranked list flow: primary first, fallbacks after. Always non-empty. */
+    fun observeRanked(usage: AiUsage): Flow<List<AiModelOption>> =
         combine(context.aiPrefsDataStore.data, discovered.observe()) { prefs, customs ->
             resolve(prefs[keyFor(usage)], customs, usage)
         }
 
-    suspend fun get(usage: AiUsage): AiModelOption {
+    suspend fun getRanked(usage: AiUsage): List<AiModelOption> {
         val prefs = context.aiPrefsDataStore.data.first()
         val customs = discovered.snapshot()
         return resolve(prefs[keyFor(usage)], customs, usage)
     }
 
-    suspend fun set(usage: AiUsage, model: AiModelOption) {
+    /** Persists an ordered list (deduped, capped at [MAX_RANK]). Empty → reset to default. */
+    suspend fun setRanked(usage: AiUsage, options: List<AiModelOption>) {
+        val cleaned = options
+            .distinctBy { it.id }
+            .take(MAX_RANK)
         context.aiPrefsDataStore.edit { prefs ->
-            prefs[keyFor(usage)] = model.id
+            if (cleaned.isEmpty()) {
+                prefs.remove(keyFor(usage))
+            } else {
+                prefs[keyFor(usage)] = cleaned.joinToString(SEPARATOR) { it.id }
+            }
         }
     }
 
     suspend fun reset(usage: AiUsage) {
-        context.aiPrefsDataStore.edit { prefs ->
-            prefs.remove(keyFor(usage))
-        }
+        context.aiPrefsDataStore.edit { prefs -> prefs.remove(keyFor(usage)) }
     }
 
     private fun resolve(
-        savedId: String?,
+        saved: String?,
         customs: List<AiModelOption.Custom>,
         usage: AiUsage,
-    ): AiModelOption {
-        if (savedId == null) return AiModelOption.Builtin(usage.defaultModel)
-        AiModel.byId(savedId)?.let { return AiModelOption.Builtin(it) }
-        customs.firstOrNull { it.id == savedId }?.let { return it }
-        return AiModelOption.Builtin(usage.defaultModel)
+    ): List<AiModelOption> {
+        if (saved.isNullOrBlank()) return listOf(AiModelOption.Builtin(usage.defaultModel))
+        val resolved = saved.split(SEPARATOR)
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .mapNotNull { id ->
+                AiModel.byId(id)?.let { AiModelOption.Builtin(it) }
+                    ?: customs.firstOrNull { it.id == id }
+            }
+            .take(MAX_RANK)
+            .toList()
+        return resolved.ifEmpty { listOf(AiModelOption.Builtin(usage.defaultModel)) }
+    }
+
+    companion object {
+        const val MAX_RANK = 3
+        private const val SEPARATOR = ","
     }
 }
