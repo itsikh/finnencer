@@ -37,7 +37,10 @@ enum class ApiKey(
         signupUrl = "https://aistudio.google.com/",
     ),
     GITHUB_PAT(
-        alias = "key_github_pat",
+        // Must match the alias used by GitHubIssuesClient.KEY_GITHUB_TOKEN
+        // and AppUpdateManager.KEY_GITHUB_TOKEN. Renaming this string
+        // breaks the in-app bug reporter and the auto-updater.
+        alias = "github_token",
         displayName = "GitHub Token",
         purpose = "In-app bug reports + app self-update.",
         signupUrl = "https://github.com/settings/tokens",
@@ -68,6 +71,25 @@ sealed interface KeyTestResult {
 class ApiKeysRepository @Inject constructor(
     private val secureKeyManager: SecureKeyManager,
 ) {
+
+    init {
+        // One-time migration: earlier builds stored the GitHub PAT under
+        // "key_github_pat". The template's bug-reporter + updater always
+        // read from "github_token". Copy across so anything already saved
+        // continues to work.
+        migrateLegacyAlias(from = "key_github_pat", to = "github_token")
+    }
+
+    private fun migrateLegacyAlias(from: String, to: String) {
+        if (secureKeyManager.hasKey(from) && !secureKeyManager.hasKey(to)) {
+            secureKeyManager.getKey(from)?.let { v ->
+                secureKeyManager.saveKey(to, v)
+            }
+        }
+        if (secureKeyManager.hasKey(from)) {
+            secureKeyManager.deleteKey(from)
+        }
+    }
 
     private val _configured = MutableStateFlow(snapshot())
     val configured: StateFlow<Map<ApiKey, Boolean>> = _configured.asStateFlow()

@@ -4,6 +4,8 @@ import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.Ticker
 import kotlinx.coroutines.flow.Flow
+import retrofit2.HttpException
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +17,7 @@ import javax.inject.Singleton
 class WatchlistRepository @Inject constructor(
     private val tickerDao: TickerDao,
     private val finnhub: FinnhubService,
+    private val apiKeys: ApiKeysRepository,
 ) {
 
     fun observeAll(): Flow<List<Ticker>> = tickerDao.observeAll()
@@ -41,7 +44,25 @@ class WatchlistRepository @Inject constructor(
 
     suspend fun search(query: String): List<TickerSearchResult> {
         if (query.isBlank()) return emptyList()
-        val resp = finnhub.search(query.trim())
+        if (!apiKeys.isConfigured(ApiKey.FINNHUB)) {
+            throw IllegalStateException(
+                "Finnhub API key not set. Add it in Settings → API Keys."
+            )
+        }
+        val resp = try {
+            finnhub.search(query.trim())
+        } catch (e: HttpException) {
+            val code = e.code()
+            val hint = when (code) {
+                401, 403 -> "Finnhub rejected the key — check it in Settings → API Keys."
+                429 -> "Finnhub rate-limited the request. Try again in a minute."
+                in 500..599 -> "Finnhub server error ($code). Try again shortly."
+                else -> "Finnhub returned HTTP $code."
+            }
+            throw IllegalStateException(hint, e)
+        } catch (e: IOException) {
+            throw IllegalStateException("Network error reaching Finnhub.", e)
+        }
         return resp.result
             .asSequence()
             .filter { it.symbol != null && it.description != null }
