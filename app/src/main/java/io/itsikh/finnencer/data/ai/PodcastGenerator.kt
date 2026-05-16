@@ -25,7 +25,7 @@ import javax.inject.Singleton
 @Singleton
 class PodcastGenerator @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val claude: ClaudeClient,
+    private val router: AiRouter,
     private val tts: GeminiTts,
     private val podcastDao: PodcastDao,
     private val earningsDao: EarningsDao,
@@ -58,13 +58,13 @@ class PodcastGenerator @Inject constructor(
             podcastDao.update(podcastDao.get(id)!!.copy(status = PodcastGenerationStatus.GENERATING.name))
 
             // 1. Dialogue script
-            val script = claude.complete(
-                model = ClaudeModels.OPUS,
+            val script = router.complete(
+                usage = AiUsage.PODCAST_SCRIPT,
                 system = DIALOGUE_SYSTEM,
                 userMessage = report.contentMarkdown,
                 maxTokens = 4500,
                 temperature = 0.6,
-            )
+            ).text
 
             // 2. TTS
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }

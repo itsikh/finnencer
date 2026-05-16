@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -71,6 +72,7 @@ fun SettingsScreen(
     onOpenBugReport: (ReportMode) -> Unit,
     onOpenKeys: () -> Unit = {},
     onOpenCost: () -> Unit = {},
+    onOpenAiPrefs: () -> Unit = {},
 ) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
@@ -125,6 +127,17 @@ fun SettingsScreen(
                     subtitle = "$keysConfigured of ${ApiKey.entries.size} configured · Claude · Finnhub · Gemini · GitHub · EDGAR",
                     icon = Icons.Default.VpnKey,
                     onClick = onOpenKeys,
+                )
+            }
+
+            // ───────── AI ─────────
+            SettingsSection(title = "AI") {
+                SettingsRow(
+                    title = "Model preferences",
+                    subtitle = "Pick which model runs each workload (scoring, summary, reports, podcast script)",
+                    icon = Icons.Default.AutoAwesome,
+                    iconTint = FinnencerColors.Violet,
+                    onClick = onOpenAiPrefs,
                 )
             }
 

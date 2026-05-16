@@ -12,7 +12,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class ArticleSummarizer @Inject constructor(
-    private val claude: ClaudeClient,
+    private val router: AiRouter,
     private val newsDao: NewsDao,
 ) {
 
@@ -32,19 +32,20 @@ class ArticleSummarizer @Inject constructor(
             append("Source publication: ").append(article.sourceName).append('\n')
         }
 
-        val text = claude.complete(
-            model = ClaudeModels.SONNET,
+        val completion = router.complete(
+            usage = AiUsage.SUMMARY,
             system = SYSTEM_PROMPT,
             userMessage = prompt,
             maxTokens = 600,
             temperature = 0.2,
-        ).trim()
+        )
+        val text = completion.text.trim()
 
         newsDao.insertSummary(
             ArticleSummary(
                 articleId = article.id,
                 summary = text,
-                model = ClaudeModels.SONNET,
+                model = completion.modelUsed.id,
                 generatedAtMillis = System.currentTimeMillis(),
             )
         )

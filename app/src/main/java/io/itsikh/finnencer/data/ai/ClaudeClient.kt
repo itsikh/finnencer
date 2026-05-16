@@ -36,14 +36,14 @@ class ClaudeClient @Inject constructor(
     private val service: AnthropicService,
     private val apiUsageDao: ApiUsageDao,
     private val gson: Gson,
-) {
+) : AiTextClient {
 
-    suspend fun complete(
+    override suspend fun complete(
         model: String,
         system: String?,
         userMessage: String,
         maxTokens: Int,
-        temperature: Double? = null,
+        temperature: Double?,
     ): String {
         val request = AnthropicRequest(
             model = model,

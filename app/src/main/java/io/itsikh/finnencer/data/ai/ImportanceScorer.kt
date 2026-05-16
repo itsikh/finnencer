@@ -21,7 +21,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class ImportanceScorer @Inject constructor(
-    private val claude: ClaudeClient,
+    private val router: AiRouter,
     private val newsDao: NewsDao,
     private val gson: Gson,
 ) {
@@ -83,14 +83,15 @@ class ImportanceScorer @Inject constructor(
             }
         }
 
-        val raw = claude.complete(
-            model = ClaudeModels.HAIKU,
+        val completion = router.complete(
+            usage = AiUsage.SCORING,
             system = SYSTEM_PROMPT,
             userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
             maxTokens = 1200,
             temperature = 0.0,
         )
-        val json = claude.extractJson(raw) ?: return emptyList()
+        val raw = completion.text
+        val json = router.extractJson(raw) ?: return emptyList()
         val parsed = runCatching { gson.fromJson(json, JsonObject::class.java) }
             .getOrNull() ?: return emptyList()
         val arr = parsed["scores"]?.asJsonArray ?: return emptyList()
@@ -113,7 +114,7 @@ class ImportanceScorer @Inject constructor(
                 score = score,
                 category = category.name,
                 reason = reason,
-                model = ClaudeModels.HAIKU,
+                model = completion.modelUsed.id,
                 scoredAtMillis = now,
             )
         }

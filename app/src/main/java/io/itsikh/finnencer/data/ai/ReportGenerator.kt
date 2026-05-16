@@ -27,7 +27,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class ReportGenerator @Inject constructor(
-    private val claude: ClaudeClient,
+    private val router: AiRouter,
     private val finnhub: FinnhubService,
     private val tickerDao: TickerDao,
     private val newsDao: NewsDao,
@@ -83,20 +83,21 @@ class ReportGenerator @Inject constructor(
         }
 
         // ───────── Prompt template ─────────
-        val (model, system, maxTokens) = when (tier) {
-            ReportTier.BRIEF -> Triple(ClaudeModels.SONNET, BRIEF_PROMPT, 1500)
-            ReportTier.STANDARD -> Triple(ClaudeModels.SONNET, STANDARD_PROMPT, 3500)
-            ReportTier.DEEP -> Triple(ClaudeModels.OPUS, DEEP_PROMPT, 6500)
+        val (usage, system, maxTokens) = when (tier) {
+            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, BRIEF_PROMPT, 1500)
+            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, STANDARD_PROMPT, 3500)
+            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DEEP_PROMPT, 6500)
         }
 
-        Log.i(TAG, "generating ${tier.name} report for ${ticker.symbol} with $model")
-        val text = claude.complete(
-            model = model,
+        Log.i(TAG, "generating ${tier.name} report for ${ticker.symbol}")
+        val completion = router.complete(
+            usage = usage,
             system = system,
             userMessage = bundle.toString(),
             maxTokens = maxTokens,
             temperature = 0.4,
         )
+        val text = completion.text
 
         val title = "${ticker.symbol} · Q${event.fiscalQuarter} ${event.fiscalYear} · ${tier.name.lowercase().replaceFirstChar { it.uppercase() }}"
         val id = earningsDao.insertReport(
@@ -106,8 +107,8 @@ class ReportGenerator @Inject constructor(
                 tier = tier.name,
                 title = title,
                 contentMarkdown = text,
-                model = model,
-                inputTokens = 0, // tracked in ApiUsage by ClaudeClient
+                model = completion.modelUsed.id,
+                inputTokens = 0, // tracked in ApiUsage by the client
                 outputTokens = 0,
                 sourcesUsedJson = "[]",
                 generatedAtMillis = System.currentTimeMillis(),

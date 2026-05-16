@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.core.work.SyncScheduler
+import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
@@ -13,6 +14,7 @@ import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.data.repo.FeedPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import io.itsikh.finnencer.logging.AppLogger
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +44,15 @@ data class FeedTierPickerState(
     val producedReportId: Long? = null,
 )
 
+/** Bottom-sheet state for the batch (multi-select) summarize-or-podcast flow. */
+data class BatchActionState(
+    val open: Boolean = false,
+    val working: Boolean = false,
+    val producedText: String? = null,
+    val producedPodcastId: Long? = null,
+    val error: String? = null,
+)
+
 @HiltViewModel
 class TickerFeedViewModel @Inject constructor(
     savedState: SavedStateHandle,
@@ -50,6 +61,8 @@ class TickerFeedViewModel @Inject constructor(
     private val earningsDao: EarningsDao,
     private val scheduler: SyncScheduler,
     private val reportGenerator: ReportGenerator,
+    private val feedPrefs: FeedPreferences,
+    private val bundleSummarizer: BundleSummarizer,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -63,12 +76,28 @@ class TickerFeedViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TickerFeedState())
 
     val rows: StateFlow<List<ScoredArticleRow>> = combine(
-        newsDao.observeTickerFeed(symbol, limit = 300),
+        newsDao.observeTickerFeed(symbol, limit = 500),
         _filters,
-    ) { list, filters ->
+        feedPrefs.minScoreFloor,
+        watchlist.observe(symbol),
+    ) { list, filters, globalFloor, ticker ->
+        // Per-ticker override takes precedence over the global floor.
+        val effectiveFloor = (ticker?.notificationThreshold ?: globalFloor).coerceAtLeast(filters.minScore)
         list.asSequence()
-            .filter { (it.score ?: 0) >= filters.minScore }
+            // Unscored articles (score == null) bubble to the bottom but
+            // aren't blocked by the floor — they show as "?" so the user
+            // sees scoring is still in flight.
+            .filter { row ->
+                val s = row.score
+                s == null || s >= effectiveFloor
+            }
             .filter { filters.category == null || it.category == filters.category.name }
+            // Rank by score descending; null scores last. Within a score,
+            // most-recent-first.
+            .sortedWith(
+                compareByDescending<ScoredArticleRow> { it.score ?: -1 }
+                    .thenByDescending { it.published_at_millis }
+            )
             .toList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -79,6 +108,71 @@ class TickerFeedViewModel @Inject constructor(
 
     private val _picker = MutableStateFlow(FeedTierPickerState())
     val picker: StateFlow<FeedTierPickerState> = _picker.asStateFlow()
+
+    // ── Multi-select + batch summary/podcast ───────────────────────────
+    private val _selection = MutableStateFlow<Set<String>>(emptySet())
+    val selection: StateFlow<Set<String>> = _selection.asStateFlow()
+
+    /** Bottom-sheet visible state when the user taps "Summarize N". */
+    private val _batchSheet = MutableStateFlow(BatchActionState())
+    val batchSheet: StateFlow<BatchActionState> = _batchSheet.asStateFlow()
+
+    fun toggleSelect(articleId: String) {
+        _selection.value = _selection.value.toMutableSet().also {
+            if (!it.add(articleId)) it.remove(articleId)
+        }
+    }
+    fun clearSelection() { _selection.value = emptySet() }
+    fun openBatchSheet() {
+        if (_selection.value.isEmpty()) return
+        _batchSheet.value = BatchActionState(open = true)
+    }
+    fun closeBatchSheet() { _batchSheet.value = BatchActionState() }
+
+    fun summarizeBatch(pages: BundleSummarizer.Pages, customPrompt: String?) {
+        val ids = _selection.value.toList()
+        if (ids.isEmpty()) return
+        _batchSheet.value = _batchSheet.value.copy(working = true, error = null)
+        viewModelScope.launch {
+            runCatching { bundleSummarizer.summarizeText(ids, pages, customPrompt) }
+                .onSuccess { text ->
+                    _batchSheet.value = _batchSheet.value.copy(
+                        working = false,
+                        producedText = text,
+                    )
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "batch summary failed", t)
+                    _batchSheet.value = _batchSheet.value.copy(
+                        working = false,
+                        error = t.message ?: "Summary failed",
+                    )
+                }
+        }
+    }
+
+    fun summarizeBatchToPodcast(minutes: BundleSummarizer.PodcastMinutes, customPrompt: String?) {
+        val ids = _selection.value.toList()
+        if (ids.isEmpty()) return
+        _batchSheet.value = _batchSheet.value.copy(working = true, error = null)
+        viewModelScope.launch {
+            runCatching { bundleSummarizer.summarizeToPodcast(ids, minutes, customPrompt) }
+                .onSuccess { podcastId ->
+                    _batchSheet.value = _batchSheet.value.copy(
+                        working = false,
+                        producedPodcastId = podcastId,
+                    )
+                    _selection.value = emptySet()
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "batch podcast failed", t)
+                    _batchSheet.value = _batchSheet.value.copy(
+                        working = false,
+                        error = t.message ?: "Podcast failed",
+                    )
+                }
+        }
+    }
 
     fun setMinScore(min: Int) { _filters.value = _filters.value.copy(minScore = min.coerceIn(0, 10)) }
     fun setCategory(c: ArticleCategory?) { _filters.value = _filters.value.copy(category = c) }
