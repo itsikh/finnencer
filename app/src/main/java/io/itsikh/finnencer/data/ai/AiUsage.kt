@@ -44,10 +44,18 @@ enum class AiModel(
     val maxContextTokens: Int,
     val supportsLongOutput: Boolean,
     val tier: AiTier,
+    /**
+     * Whether the model accepts the `temperature` request parameter.
+     * Anthropic deprecated `temperature` on Opus 4.x (server returns
+     * HTTP 400 `"\`temperature\` is deprecated for this model."` if
+     * the field is present). The router strips temperature for any
+     * model where this is false.
+     */
+    val supportsTemperature: Boolean = true,
 ) {
     CLAUDE_HAIKU_4_5("claude-haiku-4-5-20251001", "Claude Haiku 4.5", AiProvider.ANTHROPIC, 200_000, false, AiTier.FAST_CHEAP),
     CLAUDE_SONNET_4_6("claude-sonnet-4-6", "Claude Sonnet 4.6", AiProvider.ANTHROPIC, 200_000, true, AiTier.BALANCED),
-    CLAUDE_OPUS_4_7("claude-opus-4-7", "Claude Opus 4.7 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE),
+    CLAUDE_OPUS_4_7("claude-opus-4-7", "Claude Opus 4.7 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE, supportsTemperature = false),
     GEMINI_2_5_FLASH("gemini-2.5-flash", "Gemini 2.5 Flash", AiProvider.GEMINI, 1_000_000, true, AiTier.FAST_CHEAP),
     GEMINI_2_5_PRO("gemini-2.5-pro", "Gemini 2.5 Pro", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE);
 

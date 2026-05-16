@@ -45,18 +45,23 @@ class ClaudeClient @Inject constructor(
         maxTokens: Int,
         temperature: Double?,
     ): String {
+        val entry = AiModel.byId(model)
+        // Strip temperature for models that no longer accept it (Opus 4.x).
+        // Unknown ids default to "supports it" so we don't silently change
+        // behaviour for newly-discovered Gemini models.
+        val effectiveTemperature = if (entry?.supportsTemperature == false) null else temperature
         val request = AnthropicRequest(
             model = model,
             maxTokens = maxTokens,
             system = system,
             messages = listOf(AnthropicMessage(role = "user", content = userMessage)),
-            temperature = temperature,
+            temperature = effectiveTemperature,
         )
         // The 1M-context variant of Opus 4.x requires the per-request
         // `anthropic-beta` header; without it the server returns HTTP 400.
         // Decide based on the catalog entry's declared context window so
         // future models inherit the right behavior automatically.
-        val beta = AiModel.byId(model)
+        val beta = entry
             ?.takeIf { it.provider == AiProvider.ANTHROPIC && it.maxContextTokens > 200_000 }
             ?.let { "context-1m-2025-08-07" }
         val started = System.currentTimeMillis()
