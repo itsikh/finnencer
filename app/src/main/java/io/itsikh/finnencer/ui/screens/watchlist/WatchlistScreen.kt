@@ -19,13 +19,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -55,9 +52,8 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchlistScreen(
-    onOpenKeys: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenEarnings: () -> Unit,
-    onOpenCost: () -> Unit,
     onOpenPodcasts: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
@@ -99,17 +95,10 @@ fun WatchlistScreen(
                             tint = FinnencerColors.TextSecondary,
                         )
                     }
-                    IconButton(onClick = onOpenCost) {
+                    IconButton(onClick = onOpenSettings) {
                         Icon(
-                            Icons.Default.AttachMoney,
-                            contentDescription = "Cost",
-                            tint = FinnencerColors.TextSecondary,
-                        )
-                    }
-                    IconButton(onClick = onOpenKeys) {
-                        Icon(
-                            Icons.Default.VpnKey,
-                            contentDescription = "API Keys",
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
                             tint = FinnencerColors.TextSecondary,
                         )
                     }

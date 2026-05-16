@@ -69,9 +69,8 @@ fun AppNavHost() {
         NavHost(navController = navController, startDestination = "watchlist") {
             composable("watchlist") {
                 WatchlistScreen(
-                    onOpenKeys = { navController.navigate("keys") },
+                    onOpenSettings = { navController.navigate("settings") },
                     onOpenEarnings = { navController.navigate("earnings") },
-                    onOpenCost = { navController.navigate("cost") },
                     onOpenPodcasts = { navController.navigate("podcasts") },
                     onOpenTickerFeed = { symbol ->
                         navController.navigate("ticker/$symbol")
@@ -132,7 +131,10 @@ fun AppNavHost() {
                     onBack = { navController.popBackStack() },
                     onOpenBugReport = { mode ->
                         navController.navigate("bug_report/${mode.name}")
-                    }
+                    },
+                    onOpenKeys = { navController.navigate("keys") },
+                    onOpenCost = { navController.navigate("cost") },
+                    onOpenPodcasts = { navController.navigate("podcasts") },
                 )
             }
             composable("keys") {

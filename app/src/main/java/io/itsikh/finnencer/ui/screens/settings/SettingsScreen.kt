@@ -12,559 +12,381 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Feedback
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestoreFromTrash
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.AppConfig
-import io.itsikh.finnencer.BuildConfig
-import io.itsikh.finnencer.ui.components.SectionHeader
-import io.itsikh.finnencer.ui.components.SettingsScaffold
+import io.itsikh.finnencer.data.repo.ApiKey
+import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.ui.screens.bugreport.ReportMode
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 /**
- * Full-featured settings screen for the template app.
+ * Finnencer's single Settings hub.
  *
- * ## Sections
- * | Section | Purpose |
- * |---------|---------|
- * | **GitHub Token** | Configure the PAT used for bug reports and update checks |
- * | **Auto-Update** | Check for and install a new release from GitHub Releases |
- * | **Backup** | Export all data to any storage (local / Google Drive / Dropbox) and restore |
- * | **Support** | Open the bug report screen, send feedback, clear logs |
- * | **Debug** | Admin-only: log level toggle, bug button visibility (via [SettingsScaffold]) |
- * | **About** | App name and version (tap 7× to unlock admin mode) |
- *
- * ## Backup
- * The Export and Restore buttons use [ActivityResultContracts.CreateDocument] and
- * [ActivityResultContracts.OpenDocument] respectively. Android's Storage Access Framework
- * automatically presents all available storage providers — including Google Drive, Dropbox,
- * and local filesystem — without any extra SDK integration.
- *
- * To wire in your actual data, edit [SettingsViewModel.exportBackupToUri] and
- * [SettingsViewModel.restoreFromBackup] to call your concrete [backup.BaseBackupManager].
- *
- * @param onBack Called when the user taps the back arrow.
- * @param onOpenBugReport Called when the user taps "Report a Bug" or "Send Feedback",
- *                        with the appropriate [ReportMode].
- * @param viewModel Injected by Hilt via `hiltViewModel()`.
+ * Sectioned Glass-Modern layout that wraps the template's
+ * [SettingsViewModel] for Auto-Update + Backup logic, and surfaces
+ * everything else the user might need to configure or diagnose.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenBugReport: (ReportMode) -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel()
+    onOpenKeys: () -> Unit = {},
+    onOpenCost: () -> Unit = {},
+    onOpenPodcasts: () -> Unit = {},
 ) {
-    val adminMode       by viewModel.adminMode.collectAsState()
-    val logLevel        by viewModel.logLevel.collectAsState()
-    val showBugButton   by viewModel.showBugButton.collectAsState()
-    val autoUpdate      by viewModel.autoUpdateEnabled.collectAsState()
-    val autoBackup      by viewModel.autoBackupEnabled.collectAsState()
-    val updateState     by viewModel.updateState.collectAsState()
-    val exportState     by viewModel.exportState.collectAsState()
-    val restoreState    by viewModel.restoreState.collectAsState()
+    val viewModel: SettingsViewModel = hiltViewModel()
+    val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
 
-    // SAF launchers — CreateDocument shows all providers including Google Drive
+    val autoUpdate by viewModel.autoUpdateEnabled.collectAsState()
+    val autoBackup by viewModel.autoBackupEnabled.collectAsState()
+    val showBugButton by viewModel.showBugButton.collectAsState()
+    val adminMode by viewModel.adminMode.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
+    val exportState by viewModel.exportState.collectAsState()
+    val restoreState by viewModel.restoreState.collectAsState()
+    val configuredMap by keysRepo.configured.collectAsState()
+    val keysConfigured = configuredMap.count { it.value }
+
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip")
+        ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? -> if (uri != null) viewModel.exportBackupToUri(uri) }
 
     val restoreLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
+        ActivityResultContracts.GetContent(),
     ) { uri: Uri? -> if (uri != null) viewModel.restoreFromBackup(uri) }
 
-    // Local UI state
-    var githubToken           by remember { mutableStateOf("") }
-    var tokenVisible          by remember { mutableStateOf(false) }
-    var hasToken              by remember { mutableStateOf(viewModel.hasGitHubToken) }
-    var showRestoreDialog     by remember { mutableStateOf(false) }
-    var showClearLogsDialog   by remember { mutableStateOf(false) }
-    var logsCleared           by remember { mutableStateOf(false) }
-
     Scaffold(
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = {
+                    Text("Settings", style = MaterialTheme.typography.headlineMedium, color = FinnencerColors.TextPrimary)
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
-        }
-    ) { paddingValues ->
+        },
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            SettingsScaffold(
-                appName = AppConfig.APP_NAME,
-                versionName = BuildConfig.VERSION_NAME,
-                adminMode = adminMode,
-                logLevel = logLevel,
-                showBugButton = showBugButton,
-                onAdminModeToggle = { viewModel.setAdminMode(it) },
-                onDetailedLoggingToggle = { viewModel.setDetailedLogging(it) },
-                onShowBugButtonToggle = { viewModel.setShowBugButton(it) }
-            ) {
 
-                // ── GitHub Token ──────────────────────────────────────────────
-                SectionHeader("GitHub Token")
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = if (!hasToken)
-                        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                    else
-                        CardDefaults.cardColors()
+            // ───────── Credentials ─────────
+            SettingsSection(title = "Credentials") {
+                SettingsRow(
+                    title = "API Keys",
+                    subtitle = "$keysConfigured of ${ApiKey.entries.size} configured · Claude · Finnhub · Gemini · GitHub · EDGAR",
+                    icon = Icons.Default.VpnKey,
+                    onClick = onOpenKeys,
+                )
+            }
+
+            // ───────── App ─────────
+            SettingsSection(title = "App") {
+                AutoUpdateRow(
+                    enabled = autoUpdate,
+                    updateState = updateState,
+                    onToggle = viewModel::setAutoUpdateEnabled,
+                    onCheckNow = viewModel::checkForUpdate,
+                    onInstall = viewModel::downloadAndInstall,
+                    onReset = viewModel::resetUpdateState,
+                )
+                SettingsRow(
+                    title = "Cost meter",
+                    subtitle = "Per-provider API spend (Anthropic / Gemini)",
+                    icon = Icons.Default.AttachMoney,
+                    iconTint = FinnencerColors.Mint,
+                    onClick = onOpenCost,
+                )
+                SettingsRow(
+                    title = "Podcasts library",
+                    subtitle = "Generated podcasts and playback history",
+                    icon = Icons.Default.Headphones,
+                    iconTint = FinnencerColors.Amber,
+                    onClick = onOpenPodcasts,
+                )
+            }
+
+            // ───────── Backup & Restore ─────────
+            SettingsSection(title = "Backup & Restore") {
+                SettingsRow(
+                    title = "Auto-backup",
+                    subtitle = "Back up the local DB after every sync cycle",
+                    icon = Icons.Default.Storage,
+                    iconTint = FinnencerColors.Violet,
+                    trailing = {
+                        Switch(
+                            checked = autoBackup,
+                            onCheckedChange = viewModel::setAutoBackupEnabled,
+                            colors = switchColors(),
+                        )
+                    },
+                )
+                SettingsRow(
+                    title = "Export backup…",
+                    subtitle = backupSubtitle(exportState, restoreState, isExport = true),
+                    icon = Icons.Default.CloudUpload,
+                    iconTint = FinnencerColors.Mint,
+                    onClick = { exportLauncher.launch("finnencer-backup.zip") },
+                )
+                SettingsRow(
+                    title = "Restore from backup…",
+                    subtitle = backupSubtitle(exportState, restoreState, isExport = false),
+                    icon = Icons.Default.RestoreFromTrash,
+                    iconTint = FinnencerColors.Amber,
+                    onClick = { restoreLauncher.launch("application/zip") },
+                )
+            }
+
+            // ───────── Diagnostics ─────────
+            SettingsSection(title = "Diagnostics") {
+                SettingsRow(
+                    title = "Report a bug",
+                    subtitle = "Files a GitHub issue with device + log info",
+                    icon = Icons.Default.BugReport,
+                    iconTint = FinnencerColors.Coral,
+                    onClick = { onOpenBugReport(ReportMode.BUG_REPORT) },
+                )
+                SettingsRow(
+                    title = "Send feedback",
+                    subtitle = "Suggestion or feature request",
+                    icon = Icons.Default.Info,
+                    onClick = { onOpenBugReport(ReportMode.USER_FEEDBACK) },
+                )
+                if (adminMode) {
+                    SettingsRow(
+                        title = "Floating bug button",
+                        subtitle = "Drag-and-drop FAB visible across screens",
+                        icon = Icons.Default.BugReport,
+                        trailing = {
+                            Switch(
+                                checked = showBugButton,
+                                onCheckedChange = viewModel::setShowBugButton,
+                                colors = switchColors(),
+                            )
+                        },
+                    )
+                    SettingsRow(
+                        title = "Clear all logs",
+                        icon = Icons.Default.DeleteSweep,
+                        iconTint = FinnencerColors.Coral,
+                        onClick = viewModel::clearAllLogs,
+                    )
+                }
+            }
+
+            // ───────── About ─────────
+            AboutSection(adminMode = adminMode, onTapVersion = { viewModel.setAdminMode(!adminMode) })
+
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun AutoUpdateRow(
+    enabled: Boolean,
+    updateState: SettingsViewModel.UpdateState,
+    onToggle: (Boolean) -> Unit,
+    onCheckNow: () -> Unit,
+    onInstall: (io.itsikh.finnencer.update.UpdateInfo) -> Unit,
+    onReset: () -> Unit,
+) {
+    SettingsRow(
+        title = "Auto-update",
+        subtitle = updateSubtitle(updateState),
+        icon = Icons.Default.SystemUpdate,
+        iconTint = FinnencerColors.Mint,
+        trailing = {
+            Switch(checked = enabled, onCheckedChange = onToggle, colors = switchColors())
+        },
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when (updateState) {
+            is SettingsViewModel.UpdateState.Idle, is SettingsViewModel.UpdateState.UpToDate -> {
+                FilledTonalButton(
+                    onClick = onCheckNow,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = FinnencerColors.SurfaceGlass,
+                        contentColor = FinnencerColors.TextPrimary,
+                    ),
                 ) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                if (hasToken) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = if (hasToken) MaterialTheme.colorScheme.tertiary
-                                       else MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                if (hasToken) "Token configured — updates and bug reports enabled"
-                                else "Token required for updates and bug reports",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (hasToken) MaterialTheme.colorScheme.tertiary
-                                        else MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                        Text(
-                            "A GitHub Personal Access Token with the \"repo\" scope is required to check for updates and submit bug reports. Generate one at: github.com → Settings → Developer settings → Personal access tokens",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (hasToken) MaterialTheme.colorScheme.onSurfaceVariant
-                                    else MaterialTheme.colorScheme.onErrorContainer
-                        )
-                        OutlinedTextField(
-                            value = githubToken,
-                            onValueChange = { githubToken = it },
-                            label = { Text("Personal Access Token") },
-                            placeholder = { Text("ghp_...") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = if (tokenVisible) VisualTransformation.None
-                                                   else PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            trailingIcon = {
-                                IconButton(onClick = { tokenVisible = !tokenVisible }) {
-                                    Icon(
-                                        if (tokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = "Toggle visibility"
-                                    )
-                                }
-                            }
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    viewModel.saveGitHubToken(githubToken)
-                                    hasToken = viewModel.hasGitHubToken
-                                    githubToken = ""
-                                    tokenVisible = false
-                                },
-                                enabled = githubToken.isNotBlank(),
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Save Token") }
-
-                            if (hasToken) {
-                                OutlinedButton(
-                                    onClick = {
-                                        viewModel.clearGitHubToken()
-                                        hasToken = false
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Clear") }
-                            }
-                        }
-                    }
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Check now")
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ── Auto-Update ───────────────────────────────────────────────
-                SectionHeader("Auto-Update")
-                Spacer(Modifier.height(8.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Check for Updates", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Fetch latest release from GitHub on launch",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(checked = autoUpdate, onCheckedChange = { viewModel.setAutoUpdateEnabled(it) })
-                        }
-
-                        when (val state = updateState) {
-                            is SettingsViewModel.UpdateState.Idle -> {
-                                Button(
-                                    onClick = { viewModel.checkForUpdate() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(Icons.Default.Refresh, null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Check Now")
-                                }
-                            }
-                            is SettingsViewModel.UpdateState.Checking -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    CircularProgressIndicator(Modifier.size(20.dp))
-                                    Text("Checking for updates…")
-                                }
-                            }
-                            is SettingsViewModel.UpdateState.UpToDate -> {
-                                Text("App is up to date", color = MaterialTheme.colorScheme.tertiary)
-                                TextButton(
-                                    onClick = { viewModel.resetUpdateState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Check Again") }
-                            }
-                            is SettingsViewModel.UpdateState.UpdateAvailable -> {
-                                Text(
-                                    "Update available: v${state.info.version}",
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Button(
-                                    onClick = { viewModel.downloadAndInstall(state.info) },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(Icons.Default.Download, null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Download & Install v${state.info.version}")
-                                }
-                            }
-                            is SettingsViewModel.UpdateState.Downloading -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    CircularProgressIndicator(Modifier.size(20.dp))
-                                    Text("Downloading update…")
-                                }
-                            }
-                            is SettingsViewModel.UpdateState.ReadyToInstall ->
-                                Text("Installation started…", color = MaterialTheme.colorScheme.tertiary)
-                            is SettingsViewModel.UpdateState.Error -> {
-                                Text(
-                                    state.message,
-                                    color = MaterialTheme.colorScheme.error,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                TextButton(onClick = { viewModel.resetUpdateState() }) { Text("Dismiss") }
-                            }
-                        }
-                    }
+            }
+            is SettingsViewModel.UpdateState.Checking -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = FinnencerColors.Violet,
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text("Checking…", color = FinnencerColors.TextSecondary, style = MaterialTheme.typography.bodyMedium)
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ── Backup ────────────────────────────────────────────────────
-                SectionHeader("Backup & Restore")
-                Spacer(Modifier.height(8.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Auto-backup toggle
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Auto Backup", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Automatically create a backup after key events. A notification lets you save it anywhere — Google Drive, Dropbox, or local storage.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Switch(checked = autoBackup, onCheckedChange = { viewModel.setAutoBackupEnabled(it) })
-                        }
-
-                        HorizontalDivider()
-
-                        // Manual export
-                        Text("Export to Any Location", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "Save a backup ZIP to any location — Google Drive, Dropbox, USB, or local storage. Android's file picker handles all providers automatically.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        when (val state = exportState) {
-                            is SettingsViewModel.ExportState.Exporting -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    CircularProgressIndicator(Modifier.size(20.dp))
-                                    Text("Exporting…", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            is SettingsViewModel.ExportState.Done -> {
-                                Text(
-                                    "Backup exported (${state.itemCount} items)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                                TextButton(
-                                    onClick = { viewModel.resetExportState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Export Again") }
-                            }
-                            is SettingsViewModel.ExportState.Error -> {
-                                Text(
-                                    "Export failed: ${state.message}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                TextButton(
-                                    onClick = { viewModel.resetExportState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Dismiss") }
-                            }
-                            else -> {
-                                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                                Button(
-                                    onClick = {
-                                        exportLauncher.launch("${AppConfig.APP_NAME.lowercase()}_backup_$ts.zip")
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(Icons.Default.CloudUpload, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Export Backup Now")
-                                }
-                            }
-                        }
-
-                        HorizontalDivider()
-
-                        // Restore
-                        Text("Restore from Backup", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "Restore from a previously exported backup ZIP. Existing data will be replaced.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        when (val state = restoreState) {
-                            is SettingsViewModel.RestoreState.Restoring -> {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    CircularProgressIndicator(Modifier.size(20.dp))
-                                    Text("Restoring…", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            is SettingsViewModel.RestoreState.Done -> {
-                                Text(
-                                    "Restored successfully (${state.itemCount} items)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                                TextButton(
-                                    onClick = { viewModel.resetRestoreState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Dismiss") }
-                            }
-                            is SettingsViewModel.RestoreState.Error -> {
-                                Text(
-                                    "Restore failed: ${state.message}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                TextButton(
-                                    onClick = { viewModel.resetRestoreState() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text("Dismiss") }
-                            }
-                            else -> {
-                                OutlinedButton(
-                                    onClick = { showRestoreDialog = true },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.error
-                                    )
-                                ) {
-                                    Icon(Icons.Default.RestoreFromTrash, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Restore from Backup…")
-                                }
-                            }
-                        }
-                    }
+            }
+            is SettingsViewModel.UpdateState.UpdateAvailable -> {
+                FilledTonalButton(
+                    onClick = { onInstall(updateState.info) },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = FinnencerColors.Violet,
+                        contentColor = FinnencerColors.TextOnAccent,
+                    ),
+                ) {
+                    Text("Update to v${updateState.info.version}", fontWeight = FontWeight.SemiBold)
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ── Support ───────────────────────────────────────────────────
-                SectionHeader("Support")
-                Spacer(Modifier.height(8.dp))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { onOpenBugReport(ReportMode.BUG_REPORT) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.BugReport, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Report a Bug")
-                        }
-                        OutlinedButton(
-                            onClick = { onOpenBugReport(ReportMode.USER_FEEDBACK) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Feedback, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Send Feedback")
-                        }
-                        OutlinedButton(
-                            onClick = { showClearLogsDialog = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Icon(Icons.Default.DeleteSweep, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Clear Logs")
-                        }
-                        if (logsCleared) {
-                            Text(
-                                "Logs cleared. Future reports will only include new activity.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+            }
+            is SettingsViewModel.UpdateState.ReadyToInstall -> {
+                Text(
+                    "APK downloaded — installer should open.",
+                    color = FinnencerColors.Mint,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            is SettingsViewModel.UpdateState.Downloading -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = FinnencerColors.Violet,
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text("Downloading…", color = FinnencerColors.TextSecondary, style = MaterialTheme.typography.bodyMedium)
                 }
-
-                Spacer(Modifier.height(24.dp))
+            }
+            is SettingsViewModel.UpdateState.Error -> {
+                Column {
+                    Text(
+                        updateState.message,
+                        color = FinnencerColors.Coral,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    FilledTonalButton(onClick = onReset) { Text("Reset") }
+                }
             }
         }
     }
+}
 
-    // Restore confirmation dialog
-    if (showRestoreDialog) {
-        AlertDialog(
-            onDismissRequest = { showRestoreDialog = false },
-            title = { Text("Restore Backup") },
-            text = {
-                Text(
-                    "This will permanently replace all current data with the contents of the selected backup. This cannot be undone."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRestoreDialog = false
-                        restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-                    }
-                ) {
-                    Text("Choose Backup File", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRestoreDialog = false }) { Text("Cancel") }
-            }
+@Composable
+private fun AboutSection(adminMode: Boolean, onTapVersion: () -> Unit) {
+    val context = LocalContext.current
+    SettingsSection(title = "About") {
+        SettingsRow(
+            title = AppConfig.APP_NAME,
+            subtitle = "Version 0.0.2 · build 2",
+            icon = Icons.Default.Info,
+            onClick = onTapVersion,
         )
+        SettingsRow(
+            title = "Source code",
+            subtitle = "github.com/itsikh/finnencer",
+            icon = Icons.Default.OpenInNew,
+            onClick = {
+                val intent = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://github.com/${AppConfig.GITHUB_RELEASES_REPO_OWNER}/${AppConfig.GITHUB_RELEASES_REPO_NAME}"),
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { context.startActivity(intent) }
+            },
+        )
+        if (adminMode) {
+            SettingsRow(
+                title = "Admin mode ON",
+                subtitle = "Tap version above to toggle",
+                icon = Icons.Default.Info,
+                iconTint = FinnencerColors.Amber,
+            )
+        }
     }
+}
 
-    // Clear logs confirmation dialog
-    if (showClearLogsDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearLogsDialog = false },
-            title = { Text("Clear Logs") },
-            text = {
-                Text("This removes all stored log history. Future bug reports will only include activity after this point.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.clearAllLogs()
-                        showClearLogsDialog = false
-                        logsCleared = true
-                    }
-                ) { Text("Clear", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearLogsDialog = false }) { Text("Cancel") }
-            }
-        )
+@Composable
+private fun switchColors() = SwitchDefaults.colors(
+    checkedThumbColor = FinnencerColors.TextOnAccent,
+    checkedTrackColor = FinnencerColors.Violet,
+    uncheckedThumbColor = FinnencerColors.TextTertiary,
+    uncheckedTrackColor = FinnencerColors.SurfaceGlass,
+)
+
+private fun backupSubtitle(
+    export: SettingsViewModel.ExportState,
+    restore: SettingsViewModel.RestoreState,
+    isExport: Boolean,
+): String {
+    if (isExport) return when (export) {
+        is SettingsViewModel.ExportState.Idle -> "Save app data to a file you choose"
+        is SettingsViewModel.ExportState.Exporting -> "Exporting…"
+        is SettingsViewModel.ExportState.Done -> "Last export OK · ${export.itemCount} items"
+        is SettingsViewModel.ExportState.Error -> "Last export failed: ${export.message}"
     }
+    return when (restore) {
+        is SettingsViewModel.RestoreState.Idle -> "Replace local data from a backup file"
+        is SettingsViewModel.RestoreState.Restoring -> "Restoring…"
+        is SettingsViewModel.RestoreState.Done -> "Last restore OK · ${restore.itemCount} items"
+        is SettingsViewModel.RestoreState.Error -> "Last restore failed: ${restore.message}"
+    }
+}
+
+private fun updateSubtitle(state: SettingsViewModel.UpdateState): String = when (state) {
+    is SettingsViewModel.UpdateState.Idle -> "Check GitHub Releases on app launch"
+    is SettingsViewModel.UpdateState.Checking -> "Checking GitHub…"
+    is SettingsViewModel.UpdateState.UpToDate -> "You are on the latest version"
+    is SettingsViewModel.UpdateState.UpdateAvailable -> "Update available: v${state.info.version}"
+    is SettingsViewModel.UpdateState.Downloading -> "Downloading update…"
+    is SettingsViewModel.UpdateState.ReadyToInstall -> "Ready to install"
+    is SettingsViewModel.UpdateState.Error -> "Error: ${state.message}"
 }
