@@ -3,8 +3,12 @@ package io.itsikh.finnencer
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
+import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 /**
  * Application entry point for the template app.
@@ -27,7 +31,15 @@ import dagger.hilt.android.HiltAndroidApp
  * component hierarchy. All [@Singleton] scoped objects live as long as this Application.
  */
 @HiltAndroidApp
-class TemplateApplication : Application() {
+class TemplateApplication : Application(), Configuration.Provider {
+
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var syncScheduler: SyncScheduler
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     override fun onCreate() {
         super.onCreate()
@@ -35,6 +47,9 @@ class TemplateApplication : Application() {
             GlobalExceptionHandler(this, Thread.getDefaultUncaughtExceptionHandler())
         )
         createNotificationChannels()
+        // Idempotent: WorkManager keeps the existing periodic request if one
+        // already exists with the same unique name and interval.
+        syncScheduler.schedulePeriodic()
     }
 
     private fun createNotificationChannels() {
