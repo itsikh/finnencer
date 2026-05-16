@@ -122,4 +122,15 @@ interface NewsDao {
 
     @Query("DELETE FROM news_articles WHERE fetched_at_millis < :beforeMillis")
     suspend fun pruneOlderThan(beforeMillis: Long): Int
+
+    @Query(
+        """
+        SELECT a.* FROM news_articles a
+        INNER JOIN article_ticker_xref x ON x.article_id = a.id
+        WHERE x.ticker_symbol = :symbol
+        ORDER BY a.published_at_millis DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun recentForTicker(symbol: String, limit: Int): List<io.itsikh.finnencer.data.entity.NewsArticle>
 }

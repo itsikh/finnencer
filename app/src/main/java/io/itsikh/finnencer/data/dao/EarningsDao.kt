@@ -47,6 +47,9 @@ interface EarningsDao {
     )
     suspend fun findFiscal(symbol: String, year: Int, quarter: Int): EarningsEvent?
 
+    @Query("SELECT * FROM earnings_events WHERE id = :id")
+    suspend fun getEvent(id: Long): EarningsEvent?
+
     // ───────── reports ─────────
 
     @Insert

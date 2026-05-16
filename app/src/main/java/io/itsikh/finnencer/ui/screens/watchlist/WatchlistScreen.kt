@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeOff
@@ -53,6 +54,7 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @Composable
 fun WatchlistScreen(
     onOpenKeys: () -> Unit,
+    onOpenEarnings: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
@@ -79,17 +81,17 @@ fun WatchlistScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenEarnings) {
+                        Icon(
+                            Icons.Default.EventNote,
+                            contentDescription = "Earnings",
+                            tint = FinnencerColors.TextSecondary,
+                        )
+                    }
                     IconButton(onClick = onOpenKeys) {
                         Icon(
                             Icons.Default.VpnKey,
                             contentDescription = "API Keys",
-                            tint = FinnencerColors.TextSecondary,
-                        )
-                    }
-                    IconButton(onClick = { /* TODO: open settings */ }) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
                             tint = FinnencerColors.TextSecondary,
                         )
                     }

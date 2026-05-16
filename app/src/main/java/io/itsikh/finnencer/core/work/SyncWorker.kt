@@ -11,6 +11,7 @@ import io.itsikh.finnencer.core.notifications.AlertNotifier
 import io.itsikh.finnencer.data.ai.ImportanceScorer
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.data.sync.EarningsCalendarSync
 import io.itsikh.finnencer.data.sync.NewsSyncEngine
 
 /**
@@ -25,6 +26,7 @@ class SyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val engine: NewsSyncEngine,
+    private val earningsSync: EarningsCalendarSync,
     private val scorer: ImportanceScorer,
     private val notifier: AlertNotifier,
     private val apiKeys: ApiKeysRepository,
@@ -42,6 +44,14 @@ class SyncWorker @AssistedInject constructor(
         // Stage 1 — ingest from all news providers.
         val ingestStats = engine.runOnce()
         Log.i(TAG, "ingest done: $ingestStats")
+
+        // Stage 1b — earnings calendar (cheap; same Finnhub key).
+        if (apiKeys.isConfigured(ApiKey.FINNHUB)) {
+            val earningsInserted = runCatching { earningsSync.runOnce() }
+                .onFailure { Log.w(TAG, "earnings sync failed", it) }
+                .getOrDefault(0)
+            Log.i(TAG, "earnings calendar: $earningsInserted new rows")
+        }
 
         // Stage 2 — score newly-ingested articles with Claude Haiku. Skipped
         // entirely if the user hasn't pasted an Anthropic key yet.

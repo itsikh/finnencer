@@ -20,6 +20,8 @@ import io.itsikh.finnencer.ui.screens.keys.ApiKeysScreen
 import io.itsikh.finnencer.ui.screens.keys.QrScanScreen
 import io.itsikh.finnencer.ui.screens.keys.QrShareScreen
 import io.itsikh.finnencer.ui.screens.article.ArticleDetailScreen
+import io.itsikh.finnencer.ui.screens.earnings.EarningsScreen
+import io.itsikh.finnencer.ui.screens.earnings.ReportViewerScreen
 import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
 import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
@@ -64,9 +66,28 @@ fun AppNavHost() {
             composable("watchlist") {
                 WatchlistScreen(
                     onOpenKeys = { navController.navigate("keys") },
+                    onOpenEarnings = { navController.navigate("earnings") },
                     onOpenTickerFeed = { symbol ->
                         navController.navigate("ticker/$symbol")
                     },
+                )
+            }
+            composable("earnings") {
+                EarningsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenReport = { id -> navController.navigate("report/$id") },
+                )
+            }
+            composable("report/{reportId}") {
+                ReportViewerScreen(
+                    onBack = { navController.popBackStack() },
+                    onListen = { id -> navController.navigate("podcast/from-report/$id") },
+                )
+            }
+            composable("podcast/from-report/{reportId}") {
+                io.itsikh.finnencer.ui.components.Placeholder(
+                    label = "Podcast",
+                    hint = "Multi-voice podcast generation lands in Build B",
                 )
             }
             composable("ticker/{symbol}") {
