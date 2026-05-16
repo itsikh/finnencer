@@ -48,7 +48,7 @@ class AiJobsRepository @Inject constructor(
         val id = UUID.randomUUID().toString()
         val title = "Summary · ${articleIds.size} articles · ${pages.target}-pg"
         val subtitle = customPrompt?.takeIf { it.isNotBlank() }
-        val input = AiJobWorker.SummaryInput(articleIds, pages, customPrompt)
+        val input = AiJobWorker.SummaryInput(articleIds, pages.target, customPrompt)
         return insertAndEnqueue(
             id = id,
             type = AiJobType.SUMMARY_BATCH,
@@ -68,7 +68,7 @@ class AiJobsRepository @Inject constructor(
         val id = UUID.randomUUID().toString()
         val title = "Podcast · ${articleIds.size} articles · ${minutes.minutes} min"
         val subtitle = customPrompt?.takeIf { it.isNotBlank() }
-        val input = AiJobWorker.PodcastInput(articleIds, minutes, customPrompt)
+        val input = AiJobWorker.PodcastInput(articleIds, minutes.minutes, customPrompt)
         return insertAndEnqueue(
             id = id,
             type = AiJobType.PODCAST_BATCH,

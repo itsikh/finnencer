@@ -30,7 +30,12 @@
 -keep class kotlin.Metadata { *; }
 
 # Keep enum value()/values() so name-based serialization works.
+# Also keep the enum's static constant fields by name — R8 full-mode
+# minifies these by default, which breaks Gson's name() round-trip for
+# any enum not otherwise -kept (symptom: Gson deserializes the enum field
+# to null → NPE on the accessor in the worker, see AiJobWorker$SummaryInput).
 -keepclassmembers enum * {
+    public static <fields>;
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }

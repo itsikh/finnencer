@@ -72,7 +72,9 @@ class AiJobWorker @AssistedInject constructor(
 
     private suspend fun runSummary(jobId: String, tickerSymbol: String?, json: String, title: String) {
         val input = gson.fromJson(json, SummaryInput::class.java)
-        val text = bundle.summarizeText(input.articleIds, input.pages, input.customPrompt)
+        val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
+            ?: BundleSummarizer.Pages.TWO
+        val text = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -86,9 +88,11 @@ class AiJobWorker @AssistedInject constructor(
 
     private suspend fun runPodcast(jobId: String, json: String) {
         val input = gson.fromJson(json, PodcastInput::class.java)
+        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
+            ?: BundleSummarizer.PodcastMinutes.FIVE
         val podcastId = bundle.summarizeToPodcast(
             articleIds = input.articleIds,
-            minutes = input.minutes,
+            minutes = minutes,
             customPrompt = input.customPrompt,
         )
         dao.markCompleted(
@@ -102,15 +106,25 @@ class AiJobWorker @AssistedInject constructor(
         notifier.notifyCompleted(jobId, "Podcast ready", "Open Tasks to listen")
     }
 
+    /**
+     * Cross-process JSON payload for the SUMMARY_BATCH job. Enums are
+     * intentionally serialized as their primitive int field instead of as
+     * the enum itself: R8 full-mode strips the field names on enums that
+     * aren't covered by a -keep rule (BundleSummarizer$Pages lives in
+     * data.ai, which isn't kept), which breaks Gson's name-based enum
+     * codec and deserializes `pages` to null. Storing the int is robust
+     * to any future R8 optimization pass.
+     */
     data class SummaryInput(
         val articleIds: List<String>,
-        val pages: BundleSummarizer.Pages,
+        val pagesTarget: Int,
         val customPrompt: String?,
     )
 
+    /** See [SummaryInput] for why this uses `Int` rather than [BundleSummarizer.PodcastMinutes]. */
     data class PodcastInput(
         val articleIds: List<String>,
-        val minutes: BundleSummarizer.PodcastMinutes,
+        val minutesValue: Int,
         val customPrompt: String?,
     )
 
