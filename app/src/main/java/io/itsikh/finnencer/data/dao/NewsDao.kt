@@ -9,6 +9,7 @@ import io.itsikh.finnencer.data.entity.ArticleScore
 import io.itsikh.finnencer.data.entity.ArticleSummary
 import io.itsikh.finnencer.data.entity.ArticleTickerXref
 import io.itsikh.finnencer.data.entity.NewsArticle
+import io.itsikh.finnencer.data.entity.SummaryVersion
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -78,7 +79,16 @@ interface NewsDao {
     @Query("SELECT * FROM article_scores WHERE article_id = :articleId")
     suspend fun scoresFor(articleId: String): List<ArticleScore>
 
-    // ───────── summaries ─────────
+    @Query(
+        """
+        UPDATE article_scores
+        SET user_override = :override
+        WHERE article_id = :articleId AND ticker_symbol = :ticker
+        """
+    )
+    suspend fun setUserOverride(articleId: String, ticker: String, override: Int?)
+
+    // ───────── summaries (legacy single-row table) ─────────
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSummary(summary: ArticleSummary)
@@ -86,14 +96,41 @@ interface NewsDao {
     @Query("SELECT * FROM article_summaries WHERE article_id = :articleId")
     suspend fun summaryFor(articleId: String): ArticleSummary?
 
+    // ───────── summaries (versioned) ─────────
+
+    @Insert
+    suspend fun insertSummaryVersion(version: SummaryVersion): Long
+
+    @Query(
+        """
+        SELECT * FROM summary_versions
+        WHERE article_id = :articleId
+        ORDER BY generated_at_millis DESC
+        """
+    )
+    fun observeSummaryVersions(articleId: String): Flow<List<SummaryVersion>>
+
+    @Query(
+        """
+        SELECT * FROM summary_versions
+        WHERE article_id = :articleId
+        ORDER BY generated_at_millis DESC
+        LIMIT 1
+        """
+    )
+    suspend fun latestSummaryVersion(articleId: String): SummaryVersion?
+
     // ───────── feed queries ─────────
+    // `score` in the projection prefers user_override when set, so all
+    // existing UI (filter chips, ordering, min-score gate) honors the
+    // override transparently.
 
     @Transaction
     @Query(
         """
         SELECT a.id, a.title, a.snippet, a.url, a.source_name, a.image_url,
                a.published_at_millis, a.primary_ticker_symbol, a.cluster_key,
-               s.score, s.category, s.reason
+               COALESCE(s.user_override, s.score) AS score, s.category, s.reason
         FROM news_articles a
         INNER JOIN article_ticker_xref x ON x.article_id = a.id
         LEFT JOIN article_scores s
@@ -110,7 +147,7 @@ interface NewsDao {
         """
         SELECT a.id, a.title, a.snippet, a.url, a.source_name, a.image_url,
                a.published_at_millis, a.primary_ticker_symbol, a.cluster_key,
-               MAX(s.score) AS score, s.category, s.reason
+               MAX(COALESCE(s.user_override, s.score)) AS score, s.category, s.reason
         FROM news_articles a
         LEFT JOIN article_scores s ON s.article_id = a.id
         GROUP BY a.id

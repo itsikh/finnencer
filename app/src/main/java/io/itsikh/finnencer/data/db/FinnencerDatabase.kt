@@ -17,6 +17,7 @@ import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.entity.NotificationLog
 import io.itsikh.finnencer.data.entity.Podcast
+import io.itsikh.finnencer.data.entity.SummaryVersion
 import io.itsikh.finnencer.data.entity.Ticker
 
 @Database(
@@ -26,13 +27,14 @@ import io.itsikh.finnencer.data.entity.Ticker
         ArticleTickerXref::class,
         ArticleScore::class,
         ArticleSummary::class,
+        SummaryVersion::class,
         NotificationLog::class,
         EarningsEvent::class,
         EarningsReport::class,
         Podcast::class,
         ApiUsage::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {

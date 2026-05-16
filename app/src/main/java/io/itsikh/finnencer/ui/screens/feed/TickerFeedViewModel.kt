@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.ImportanceScorer
 import io.itsikh.finnencer.data.ai.ReportGenerator
+import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.ScoredArticleRow
@@ -53,6 +55,15 @@ data class BatchActionState(
     val error: String? = null,
 )
 
+/** State for the per-article action sheet (score override + re-score-with-note). */
+data class ArticleActionState(
+    val article: NewsArticle? = null,
+    val aiScore: Int? = null,
+    val currentOverride: Int? = null,
+    val rescoring: Boolean = false,
+    val error: String? = null,
+)
+
 @HiltViewModel
 class TickerFeedViewModel @Inject constructor(
     savedState: SavedStateHandle,
@@ -63,6 +74,7 @@ class TickerFeedViewModel @Inject constructor(
     private val reportGenerator: ReportGenerator,
     private val feedPrefs: FeedPreferences,
     private val bundleSummarizer: BundleSummarizer,
+    private val scorer: ImportanceScorer,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -146,6 +158,80 @@ class TickerFeedViewModel @Inject constructor(
                     _batchSheet.value = _batchSheet.value.copy(
                         working = false,
                         error = t.message ?: "Summary failed",
+                    )
+                }
+        }
+    }
+
+    // ── Per-article action sheet ────────────────────────────────────────
+    private val _action = MutableStateFlow(ArticleActionState())
+    val action: StateFlow<ArticleActionState> = _action.asStateFlow()
+
+    fun openArticleAction(articleId: String) {
+        viewModelScope.launch {
+            val article = newsDao.getArticle(articleId) ?: return@launch
+            val scores = newsDao.scoresFor(articleId)
+            // Prefer the score row for THIS ticker; fall back to the first.
+            val score = scores.firstOrNull { it.tickerSymbol == symbol } ?: scores.firstOrNull()
+            _action.value = ArticleActionState(
+                article = article,
+                aiScore = score?.score,
+                currentOverride = score?.userOverride,
+            )
+        }
+    }
+
+    fun closeArticleAction() { _action.value = ArticleActionState() }
+
+    fun applyOverride(override: Int) {
+        val a = _action.value.article ?: return
+        viewModelScope.launch {
+            val existing = newsDao.scoresFor(a.id).firstOrNull { it.tickerSymbol == symbol }
+            if (existing == null) {
+                // No AI row yet — insert a manual one with the same value
+                // for both fields so existing queries don't go null.
+                newsDao.insertScores(listOf(
+                    io.itsikh.finnencer.data.entity.ArticleScore(
+                        articleId = a.id,
+                        tickerSymbol = symbol,
+                        score = override,
+                        category = io.itsikh.finnencer.data.entity.ArticleCategory.OTHER.name,
+                        reason = "User-set score (no AI score yet)",
+                        model = "user",
+                        scoredAtMillis = System.currentTimeMillis(),
+                        userOverride = override,
+                    )
+                ))
+            } else {
+                newsDao.setUserOverride(a.id, symbol, override)
+            }
+            _action.value = _action.value.copy(currentOverride = override)
+        }
+    }
+
+    fun clearOverride() {
+        val a = _action.value.article ?: return
+        viewModelScope.launch {
+            newsDao.setUserOverride(a.id, symbol, null)
+            _action.value = _action.value.copy(currentOverride = null)
+        }
+    }
+
+    fun rescoreWithNote(note: String) {
+        val a = _action.value.article ?: return
+        _action.value = _action.value.copy(rescoring = true, error = null)
+        viewModelScope.launch {
+            runCatching { scorer.rescoreSingle(a, note.ifBlank { null }) }
+                .onSuccess { newRows ->
+                    val newScore = newRows.firstOrNull { it.tickerSymbol == symbol }?.score
+                        ?: newRows.firstOrNull()?.score
+                    _action.value = _action.value.copy(rescoring = false, aiScore = newScore)
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "rescore failed", t)
+                    _action.value = _action.value.copy(
+                        rescoring = false,
+                        error = t.message ?: "Re-score failed",
                     )
                 }
         }

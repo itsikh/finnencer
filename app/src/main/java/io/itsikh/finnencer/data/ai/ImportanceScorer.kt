@@ -69,6 +69,60 @@ class ImportanceScorer @Inject constructor(
         )
     }
 
+    /**
+     * Single-article re-score with an optional user-supplied note appended
+     * to the system prompt. Replaces (or inserts) the [ArticleScore] row
+     * for every ticker the article references. Returns the new rows.
+     */
+    suspend fun rescoreSingle(article: NewsArticle, note: String?): List<ArticleScore> {
+        val noteBlock = note?.takeIf { it.isNotBlank() }?.let {
+            "\n\nAdditional reviewer note for this article (apply faithfully):\n${it.trim()}"
+        }.orEmpty()
+        val payload = buildString {
+            append("---\n")
+            append("idx: 0\n")
+            append("ticker: ").append(article.primaryTickerSymbol ?: "?").append('\n')
+            append("source: ").append(article.sourceName).append('\n')
+            append("headline: ").append(article.title).append('\n')
+            article.snippet?.takeIf { it.isNotBlank() }?.let {
+                append("snippet: ").append(it.take(280)).append('\n')
+            }
+        }
+        val completion = router.complete(
+            usage = AiUsage.SCORING,
+            system = SYSTEM_PROMPT + noteBlock,
+            userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
+            maxTokens = 600,
+            temperature = 0.0,
+        )
+        val json = router.extractJson(completion.text) ?: return emptyList()
+        val parsed = runCatching { gson.fromJson(json, JsonObject::class.java) }.getOrNull()
+            ?: return emptyList()
+        val arr = parsed["scores"]?.asJsonArray ?: return emptyList()
+        val now = System.currentTimeMillis()
+        val out = mutableListOf<ArticleScore>()
+        for (el in arr) {
+            val obj = el.asJsonObject
+            val ticker = article.primaryTickerSymbol ?: continue
+            val score = obj["score"]?.asInt?.coerceIn(1, 10) ?: continue
+            val rawCategory = obj["category"]?.asString?.uppercase() ?: ArticleCategory.OTHER.name
+            val category = ArticleCategory.entries.firstOrNull { it.name == rawCategory }
+                ?: ArticleCategory.OTHER
+            val reason = obj["reason"]?.asString?.trim().orEmpty().take(280)
+            out += ArticleScore(
+                articleId = article.id,
+                tickerSymbol = ticker,
+                score = score,
+                category = category.name,
+                reason = reason,
+                model = completion.modelUsed.id,
+                scoredAtMillis = now,
+            )
+        }
+        if (out.isNotEmpty()) newsDao.insertScores(out)
+        return out
+    }
+
     private suspend fun scoreBatch(articles: List<NewsArticle>): List<ArticleScore> {
         val payload = buildString {
             articles.forEachIndexed { idx, a ->

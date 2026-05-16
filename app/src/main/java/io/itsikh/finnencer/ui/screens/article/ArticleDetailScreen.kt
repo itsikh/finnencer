@@ -3,6 +3,7 @@ package io.itsikh.finnencer.ui.screens.article
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -196,7 +200,24 @@ fun ArticleDetailScreen(onBack: () -> Unit) {
             }
 
             // AI Summary block
-            SummaryBlock(state = state, onRequest = vm::requestSummary)
+            SummaryBlock(
+                state = state,
+                onRequest = vm::requestSummary,
+                onRegenerate = vm::openRegenerate,
+            )
+
+            val versions by vm.versions.collectAsState()
+            if (versions.size > 1) {
+                VersionsRow(versions = versions, onPick = vm::showVersion)
+            }
+
+            if (state.regenerateOpen) {
+                RegenerateSheet(
+                    state = state,
+                    onClose = vm::closeRegenerate,
+                    onSubmit = vm::regenerate,
+                )
+            }
 
             Spacer(Modifier.height(40.dp))
         }
@@ -204,7 +225,11 @@ fun ArticleDetailScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SummaryBlock(state: ArticleDetailState, onRequest: () -> Unit) {
+private fun SummaryBlock(
+    state: ArticleDetailState,
+    onRequest: () -> Unit,
+    onRegenerate: () -> Unit,
+) {
     GlassCard {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -263,6 +288,17 @@ private fun SummaryBlock(state: ArticleDetailState, onRequest: () -> Unit) {
                             color = FinnencerColors.TextTertiary,
                         )
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Spacer(Modifier.weight(1f))
+                        FilledTonalButton(
+                            onClick = onRegenerate,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = FinnencerColors.Violet,
+                                contentColor = FinnencerColors.TextOnAccent,
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Regenerate", fontWeight = FontWeight.SemiBold) }
+                    }
                 }
                 is SummaryState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -310,3 +346,202 @@ private fun ScoreNumber(score: Int) {
 }
 
 private val FMT = DateTimeFormatter.ofPattern("MMM d, yyyy · HH:mm").withZone(ZoneId.systemDefault())
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun RegenerateSheet(
+    state: ArticleDetailState,
+    onClose: () -> Unit,
+    onSubmit: (pagesTarget: Int?, customPrompt: String?) -> Unit,
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var pages by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Int?>(2) }
+    var note by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = sheetState,
+        containerColor = FinnencerColors.BgTop,
+        contentColor = FinnencerColors.TextPrimary,
+        scrimColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "Regenerate summary",
+                style = MaterialTheme.typography.titleLarge,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "New summary is saved as a new version — the previous ones stay available.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FinnencerColors.TextSecondary,
+            )
+
+            Text(
+                "TARGET LENGTH",
+                style = MaterialTheme.typography.labelSmall,
+                color = FinnencerColors.TextTertiary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val options: List<Pair<Int?, String>> = listOf(
+                    null to "Short",
+                    2 to "2 pp",
+                    5 to "5 pp",
+                    10 to "10 pp",
+                )
+                options.forEach { opt ->
+                    val value: Int? = opt.first
+                    val label: String = opt.second
+                    LenChip(label = label, selected = pages == value) { pages = value }
+                }
+            }
+
+            androidx.compose.material3.OutlinedTextField(
+                value = note,
+                onValueChange = { note = it },
+                label = { Text("Additional instructions (optional)") },
+                placeholder = {
+                    Text(
+                        "e.g. emphasize guidance, skip analyst opinion",
+                        color = FinnencerColors.TextTertiary,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                colors = androidx.compose.material3.TextFieldDefaults.colors(
+                    focusedTextColor = FinnencerColors.TextPrimary,
+                    unfocusedTextColor = FinnencerColors.TextPrimary,
+                    focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    focusedLabelColor = FinnencerColors.Violet,
+                    unfocusedLabelColor = FinnencerColors.TextTertiary,
+                    focusedIndicatorColor = FinnencerColors.Violet,
+                    unfocusedIndicatorColor = FinnencerColors.SurfaceBorder,
+                    cursorColor = FinnencerColors.Violet,
+                ),
+            )
+
+            state.regenerateError?.let { err ->
+                Text(err, color = FinnencerColors.Coral, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.TextButton(onClick = onClose) {
+                    Text("Cancel", color = FinnencerColors.TextSecondary)
+                }
+                Spacer(Modifier.weight(1f))
+                FilledTonalButton(
+                    onClick = { onSubmit(pages, note.ifBlank { null }) },
+                    enabled = !state.regenerating,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = FinnencerColors.Violet,
+                        contentColor = FinnencerColors.TextOnAccent,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    if (state.regenerating) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = FinnencerColors.TextOnAccent,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                    }
+                    Text(
+                        if (state.regenerating) "Generating…" else "Generate",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun LenChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val accent = if (selected) FinnencerColors.Violet else FinnencerColors.TextTertiary
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) FinnencerColors.Violet.copy(alpha = 0.22f) else FinnencerColors.SurfaceGlass)
+            .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = accent, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun VersionsRow(
+    versions: List<io.itsikh.finnencer.data.entity.SummaryVersion>,
+    onPick: (io.itsikh.finnencer.data.entity.SummaryVersion) -> Unit,
+) {
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    io.itsikh.finnencer.ui.components.GlassCard {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${versions.size - 1} older version${if (versions.size - 1 == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = FinnencerColors.TextSecondary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (expanded) "Hide" else "Show",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.Violet,
+                )
+            }
+            if (expanded) {
+                versions.drop(1).forEach { v ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { onPick(v) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                FMT.format(java.time.Instant.ofEpochMilli(v.generatedAtMillis)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FinnencerColors.TextPrimary,
+                            )
+                            Text(
+                                buildString {
+                                    append(v.model)
+                                    v.pagesTarget?.let { append(" · ${it}pp") }
+                                    if (!v.customPrompt.isNullOrBlank()) append(" · custom prompt")
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                            )
+                        }
+                        Text(
+                            "Show",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Violet,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
