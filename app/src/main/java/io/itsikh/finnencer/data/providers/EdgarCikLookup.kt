@@ -26,6 +26,10 @@ class EdgarCikLookup @Inject constructor(
     @Volatile
     private var cache: Map<String, String>? = null
 
+    /** Timestamp of the most recent failed fetch; used to back off retries. */
+    @Volatile
+    private var lastFailureMillis: Long = 0L
+
     /** Returns the zero-padded 10-digit CIK for [tickerSymbol], or null if unknown. */
     suspend fun resolve(tickerSymbol: String): String? {
         val map = ensureLoaded() ?: return null
@@ -34,12 +38,28 @@ class EdgarCikLookup @Inject constructor(
 
     private suspend fun ensureLoaded(): Map<String, String>? {
         cache?.let { return it }
+        // Back off: if the last attempt failed less than [FAILURE_BACKOFF_MS]
+        // ago, return null without spamming the network. SEC will hit a 403
+        // and we used to retry continuously (every scoring batch + every
+        // sync provider call for every ticker), producing dozens of log
+        // errors per minute.
+        val now = System.currentTimeMillis()
+        if (lastFailureMillis != 0L && now - lastFailureMillis < FAILURE_BACKOFF_MS) {
+            return null
+        }
         mutex.withLock {
             cache?.let { return it }
+            if (lastFailureMillis != 0L && System.currentTimeMillis() - lastFailureMillis < FAILURE_BACKOFF_MS) {
+                return null
+            }
             val raw = runCatching { service.tickerCikMap() }
-                .onFailure { AppLogger.e(TAG, "ticker->CIK map fetch failed", it) }
+                .onFailure {
+                    lastFailureMillis = System.currentTimeMillis()
+                    AppLogger.e(TAG, "ticker->CIK map fetch failed (cached for ${FAILURE_BACKOFF_MS / 60_000}m)", it)
+                }
                 .getOrNull() ?: return null
             cache = parse(raw)
+            lastFailureMillis = 0L
             AppLogger.i(TAG, "ticker->CIK map loaded: ${cache?.size ?: 0} symbols")
         }
         return cache
@@ -65,5 +85,8 @@ class EdgarCikLookup @Inject constructor(
         return out
     }
 
-    private companion object { const val TAG = "EdgarCikLookup" }
+    private companion object {
+        const val TAG = "EdgarCikLookup"
+        const val FAILURE_BACKOFF_MS = 15L * 60 * 1000 // 15 min
+    }
 }

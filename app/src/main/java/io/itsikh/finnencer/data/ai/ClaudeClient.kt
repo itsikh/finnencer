@@ -68,8 +68,9 @@ class ClaudeClient @Inject constructor(
      * instructions). Returns null if none found.
      */
     fun extractJson(s: String): String? {
-        // Try fenced code first
-        Regex("```(?:json)?\\s*(\\{.*?}|\\[.*?])\\s*```", RegexOption.DOT_MATCHES_ALL)
+        // Try fenced code first. Android's ICU regex engine treats unescaped
+        // `}` and `]` after a quantifier as a syntax error, so we escape both.
+        Regex("```(?:json)?\\s*(\\{.*?\\}|\\[.*?\\])\\s*```", RegexOption.DOT_MATCHES_ALL)
             .find(s)?.let { return it.groupValues[1] }
         // Otherwise the first balanced { ... } or [ ... ]
         val firstObj = s.indexOf('{')

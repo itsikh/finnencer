@@ -6,8 +6,11 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -73,6 +76,16 @@ class SyncScheduler @Inject constructor(
     fun cancel() {
         WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
     }
+
+    /**
+     * Reactive "is a sync currently in flight?" flag — true while the
+     * periodic or one-off worker is in RUNNING state. UI surfaces this as
+     * the thin top-of-screen progress bar.
+     */
+    val isSyncRunning: Flow<Boolean> =
+        WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWorkFlow(UNIQUE_NAME)
+            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING } }
 
     private companion object {
         const val UNIQUE_NAME = "finnencer-sync"

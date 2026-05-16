@@ -48,7 +48,7 @@ enum class ApiKey(
     EDGAR_UA(
         alias = "key_edgar_user_agent",
         displayName = "SEC EDGAR Identifier",
-        purpose = "Required User-Agent string for SEC API. Just your email.",
+        purpose = "User-Agent SEC requires on every request. Format: \"App Name your-email@example.com\".",
         signupUrl = "https://www.sec.gov/developer",
     ),
 }
@@ -132,8 +132,12 @@ class ApiKeysRepository @Inject constructor(
                     KeyTestResult.Ok
                 else KeyTestResult.BadFormat("Expected ghp_... or github_pat_... PAT")
             ApiKey.EDGAR_UA ->
-                if ("@" in value && value.length >= 5) KeyTestResult.Ok
-                else KeyTestResult.BadFormat("Expected an email (SEC requires contact in UA)")
+                if ("@" in value && value.length >= 5)
+                    KeyTestResult.Ok
+                else KeyTestResult.BadFormat(
+                    "SEC requires a real contact email in the User-Agent. " +
+                            "Format: \"finnencer your-email@example.com\"."
+                )
         }
     }
 
