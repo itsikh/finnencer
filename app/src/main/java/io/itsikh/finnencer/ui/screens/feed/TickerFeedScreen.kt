@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -70,6 +71,7 @@ fun TickerFeedScreen(
     val picker by vm.picker.collectAsState()
     val selection by vm.selection.collectAsState()
     val batchSheet by vm.batchSheet.collectAsState()
+    val articleAction by vm.action.collectAsState()
 
     LaunchedEffect(batchSheet.producedPodcastId) {
         batchSheet.producedPodcastId?.let { pid ->
@@ -188,6 +190,7 @@ fun TickerFeedScreen(
                                 else onOpenArticle(row.id)
                             },
                             onLongPress = { vm.toggleSelect(row.id) },
+                            onMore = { vm.openArticleAction(row.id) },
                         )
                     }
                 }
@@ -213,6 +216,16 @@ fun TickerFeedScreen(
             onClose = vm::closeBatchSheet,
             onSummarize = { pages, prompt -> vm.summarizeBatch(pages, prompt) },
             onPodcast = { mins, prompt -> vm.summarizeBatchToPodcast(mins, prompt) },
+        )
+    }
+
+    if (articleAction.article != null) {
+        ArticleActionSheet(
+            state = articleAction,
+            onClose = vm::closeArticleAction,
+            onApplyOverride = vm::applyOverride,
+            onClearOverride = vm::clearOverride,
+            onRescoreWithNote = vm::rescoreWithNote,
         )
     }
 }
@@ -423,6 +436,7 @@ private fun ArticleRowCard(
     inSelectMode: Boolean = false,
     onTap: () -> Unit = {},
     onLongPress: () -> Unit = {},
+    onMore: () -> Unit = {},
 ) {
     val accent = if (selected) FinnencerColors.Mint else Color.Transparent
     Box(
@@ -482,6 +496,17 @@ private fun ArticleRowCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = FinnencerColors.TextTertiary,
                     )
+                    if (!inSelectMode) {
+                        Spacer(Modifier.size(6.dp))
+                        IconButton(onClick = onMore, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "Article actions",
+                                tint = FinnencerColors.TextTertiary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(

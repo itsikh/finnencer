@@ -113,6 +113,38 @@ data class ArticleScore(
     val reason: String,
     val model: String,
     @ColumnInfo(name = "scored_at_millis") val scoredAtMillis: Long,
+    /** User override. When non-null, the UI shows this number with a 👤
+     *  marker and filters/sorting use this value instead of [score]. */
+    @ColumnInfo(name = "user_override") val userOverride: Int? = null,
+)
+
+/**
+ * Versioned summary of an article. Each "re-generate" creates a NEW row so
+ * the user can compare versions or revert. Most recent row is shown by
+ * default; older versions are reachable from the article detail screen.
+ */
+@Entity(
+    tableName = "summary_versions",
+    foreignKeys = [
+        ForeignKey(
+            entity = NewsArticle::class,
+            parentColumns = ["id"],
+            childColumns = ["article_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("article_id"), Index("generated_at_millis")],
+)
+data class SummaryVersion(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "article_id") val articleId: String,
+    val summary: String,
+    val model: String,
+    /** ~target pages (2/5/10) or null for default sized. */
+    @ColumnInfo(name = "pages_target") val pagesTarget: Int? = null,
+    /** Optional user-supplied additional instructions appended to the base prompt. */
+    @ColumnInfo(name = "custom_prompt") val customPrompt: String? = null,
+    @ColumnInfo(name = "generated_at_millis") val generatedAtMillis: Long,
 )
 
 /**
