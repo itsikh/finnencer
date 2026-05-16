@@ -52,6 +52,13 @@ object FeedParser {
         var description: String? = null
         var source: String? = null
 
+        // Parser enters here positioned AT the <item> START_TAG. Step past it
+        // so the inner loop starts on the first child, not on the <item> tag
+        // itself (otherwise the else→skip branch would consume the whole
+        // <item> without extracting any fields — that was the v0.0.x bug
+        // where every RSS feed silently returned 0 items).
+        parser.next()
+
         while (!(parser.eventType == XmlPullParser.END_TAG && parser.name.equals("item", true))) {
             if (parser.eventType == XmlPullParser.START_TAG) {
                 when (parser.name.lowercase()) {
@@ -88,6 +95,9 @@ object FeedParser {
         var updated: String? = null
         var published: String? = null
         var summary: String? = null
+
+        // Same fix as readRssItem — step past the <entry> START_TAG.
+        parser.next()
 
         while (!(parser.eventType == XmlPullParser.END_TAG && parser.name.equals("entry", true))) {
             if (parser.eventType == XmlPullParser.START_TAG) {
