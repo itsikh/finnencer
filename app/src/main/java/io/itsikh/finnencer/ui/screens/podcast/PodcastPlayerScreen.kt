@@ -1,0 +1,244 @@
+package io.itsikh.finnencer.ui.screens.podcast
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Forward30
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay30
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
+import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.theme.FinnencerColors
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PodcastPlayerScreen(onBack: () -> Unit) {
+    val vm: PodcastPlayerViewModel = hiltViewModel()
+    val podcast by vm.podcast.collectAsState()
+    val ui by vm.ui.collectAsState()
+
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        podcast?.title ?: "Podcast",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = FinnencerColors.TextPrimary,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = FinnencerColors.TextPrimary,
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+            )
+        },
+    ) { padding ->
+        val p = podcast
+        if (p == null) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("Loading…", color = FinnencerColors.TextSecondary)
+            }
+            return@Scaffold
+        }
+
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(8.dp))
+
+            // Art panel
+            GlassCard {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "${p.voiceHost} · ${p.voiceAnalyst ?: "—"}",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = FinnencerColors.TextSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
+            Text(
+                p.title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+
+            when (p.status) {
+                PodcastGenerationStatus.PENDING.name, PodcastGenerationStatus.GENERATING.name -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = FinnencerColors.Violet,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.size(10.dp))
+                        Text(
+                            "Generating two-voice podcast…",
+                            color = FinnencerColors.TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                PodcastGenerationStatus.FAILED.name -> Text(
+                    p.generationError ?: "Generation failed",
+                    color = FinnencerColors.Coral,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                PodcastGenerationStatus.READY.name -> {
+                    PlayerControls(
+                        positionMs = ui.positionMs,
+                        durationMs = if (ui.durationMs > 0) ui.durationMs else (p.durationMs ?: 0L),
+                        isPlaying = ui.isPlaying,
+                        speed = ui.speed,
+                        onPlayPause = vm::playPause,
+                        onSkipBack = vm::skipBack,
+                        onSkipForward = vm::skipForward,
+                        onSeek = vm::seekTo,
+                        onSpeed = vm::setSpeed,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerControls(
+    positionMs: Long,
+    durationMs: Long,
+    isPlaying: Boolean,
+    speed: Float,
+    onPlayPause: () -> Unit,
+    onSkipBack: () -> Unit,
+    onSkipForward: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onSpeed: (Float) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Slider(
+            value = if (durationMs > 0) positionMs / durationMs.toFloat() else 0f,
+            onValueChange = { v -> onSeek((v * durationMs).toLong()) },
+            colors = SliderDefaults.colors(
+                thumbColor = FinnencerColors.Violet,
+                activeTrackColor = FinnencerColors.Violet,
+                inactiveTrackColor = FinnencerColors.SurfaceGlassStrong,
+            ),
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(fmt(positionMs), style = MaterialTheme.typography.labelMedium, color = FinnencerColors.TextSecondary)
+            Text(fmt(durationMs), style = MaterialTheme.typography.labelMedium, color = FinnencerColors.TextSecondary)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onSkipBack) {
+                Icon(Icons.Default.Replay30, contentDescription = "-30s", tint = FinnencerColors.TextPrimary, modifier = Modifier.size(36.dp))
+            }
+            Spacer(Modifier.size(24.dp))
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(FinnencerColors.Violet)
+                    .border(2.dp, FinnencerColors.Violet.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                IconButton(onClick = onPlayPause, modifier = Modifier.size(80.dp)) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = FinnencerColors.TextOnAccent,
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.size(24.dp))
+            IconButton(onClick = onSkipForward) {
+                Icon(Icons.Default.Forward30, contentDescription = "+30s", tint = FinnencerColors.TextPrimary, modifier = Modifier.size(36.dp))
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { s ->
+                FilterChip(
+                    selected = speed == s,
+                    onClick = { onSpeed(s) },
+                    label = { Text("${s}x") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = FinnencerColors.SurfaceGlass,
+                        labelColor = FinnencerColors.TextSecondary,
+                        selectedContainerColor = FinnencerColors.Violet.copy(alpha = 0.25f),
+                        selectedLabelColor = FinnencerColors.TextPrimary,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+private fun fmt(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    val m = total / 60
+    val s = total % 60
+    return "%d:%02d".format(m, s)
+}

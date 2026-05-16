@@ -24,6 +24,9 @@ import io.itsikh.finnencer.ui.screens.cost.CostMeterScreen
 import io.itsikh.finnencer.ui.screens.earnings.EarningsScreen
 import io.itsikh.finnencer.ui.screens.earnings.ReportViewerScreen
 import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
+import io.itsikh.finnencer.ui.screens.podcast.PodcastFromReportScreen
+import io.itsikh.finnencer.ui.screens.podcast.PodcastLibraryScreen
+import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
 import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
 
@@ -69,6 +72,7 @@ fun AppNavHost() {
                     onOpenKeys = { navController.navigate("keys") },
                     onOpenEarnings = { navController.navigate("earnings") },
                     onOpenCost = { navController.navigate("cost") },
+                    onOpenPodcasts = { navController.navigate("podcasts") },
                     onOpenTickerFeed = { symbol ->
                         navController.navigate("ticker/$symbol")
                     },
@@ -90,9 +94,22 @@ fun AppNavHost() {
                 )
             }
             composable("podcast/from-report/{reportId}") {
-                io.itsikh.finnencer.ui.components.Placeholder(
-                    label = "Podcast",
-                    hint = "Multi-voice podcast generation lands in Build B",
+                PodcastFromReportScreen(
+                    onReady = { podcastId ->
+                        navController.navigate("podcast/$podcastId") {
+                            popUpTo("podcast/from-report/{reportId}") { inclusive = true }
+                        }
+                    },
+                    onFailed = { navController.popBackStack() },
+                )
+            }
+            composable("podcast/{podcastId}") {
+                PodcastPlayerScreen(onBack = { navController.popBackStack() })
+            }
+            composable("podcasts") {
+                PodcastLibraryScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenPodcast = { id -> navController.navigate("podcast/$id") },
                 )
             }
             composable("ticker/{symbol}") {

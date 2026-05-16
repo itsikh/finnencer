@@ -139,4 +139,9 @@ dependencies {
 
     // Coil (images)
     implementation(libs.coil.compose)
+
+    // Media3 (podcast playback service + ExoPlayer)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.common)
 }

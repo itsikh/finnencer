@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VolumeOff
@@ -57,6 +58,7 @@ fun WatchlistScreen(
     onOpenKeys: () -> Unit,
     onOpenEarnings: () -> Unit,
     onOpenCost: () -> Unit,
+    onOpenPodcasts: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
@@ -87,6 +89,13 @@ fun WatchlistScreen(
                         Icon(
                             Icons.Default.EventNote,
                             contentDescription = "Earnings",
+                            tint = FinnencerColors.TextSecondary,
+                        )
+                    }
+                    IconButton(onClick = onOpenPodcasts) {
+                        Icon(
+                            Icons.Default.Headphones,
+                            contentDescription = "Podcasts",
                             tint = FinnencerColors.TextSecondary,
                         )
                     }
