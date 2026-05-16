@@ -161,6 +161,32 @@ class TickerFeedViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Combo: enqueue ONE job that generates the summary first and then a
+     * podcast derived from that summary's text. The podcast row lands in
+     * the Podcasts tab; the Tasks card surfaces both the inline summary
+     * text and an "Open podcast" affordance via the produced job row.
+     */
+    fun summarizeBatchWithPodcast(
+        pages: BundleSummarizer.Pages,
+        minutes: BundleSummarizer.PodcastMinutes,
+        customPrompt: String?,
+    ) {
+        val ids = _selection.value.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            aiJobs.enqueueSummaryAndPodcast(
+                tickerSymbol = symbol,
+                articleIds = ids,
+                pages = pages,
+                minutes = minutes,
+                customPrompt = customPrompt,
+            )
+            _batchSheet.value = BatchActionState()
+            _selection.value = emptySet()
+        }
+    }
+
     // ── Per-article action sheet ────────────────────────────────────────
     private val _action = MutableStateFlow(ArticleActionState())
     val action: StateFlow<ArticleActionState> = _action.asStateFlow()

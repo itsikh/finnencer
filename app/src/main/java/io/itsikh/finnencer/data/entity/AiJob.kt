@@ -29,6 +29,7 @@ data class AiJob(
     val resultKind: String?,          // AiJobResultKind.name on success
     val resultRefId: String?,         // id of the produced row (long-as-string)
     val resultText: String?,          // inline result for jobs that don't write a row (batch summary)
+    val resultModel: String?,         // AiModel.id (or discovered id) that actually answered, after fallback walk
     val errorMessage: String?,        // on failure
     val createdAtMillis: Long,
     val startedAtMillis: Long?,
@@ -36,9 +37,10 @@ data class AiJob(
 )
 
 enum class AiJobType {
-    SUMMARY_BATCH,    // many articles → one text summary version
-    PODCAST_BATCH,    // many articles → one podcast row
-    REPORT_EARNINGS,  // one EarningsEvent → one EarningsReport
+    SUMMARY_BATCH,             // many articles → one text summary version
+    PODCAST_BATCH,             // many articles → one podcast row
+    SUMMARY_AND_PODCAST_BATCH, // many articles → summary AND a podcast derived from the summary
+    REPORT_EARNINGS,           // one EarningsEvent → one EarningsReport
 }
 
 enum class AiJobStatus {
@@ -49,5 +51,7 @@ enum class AiJobResultKind {
     /** Inline text only — read from AiJob.resultText. No separate row. */
     INLINE_TEXT,
     PODCAST,
+    /** Both: resultText holds the summary prose, resultRefId points at the Podcast row. */
+    SUMMARY_AND_PODCAST,
     EARNINGS_REPORT,
 }

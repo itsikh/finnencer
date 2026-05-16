@@ -235,8 +235,10 @@ fun TickerFeedScreen(
             state = batchSheet,
             selectionSize = selection.size,
             onClose = vm::closeBatchSheet,
-            onSummarize = { pages, prompt -> vm.summarizeBatch(pages, prompt) },
-            onPodcast = { mins, prompt -> vm.summarizeBatchToPodcast(mins, prompt) },
+            onGenerate = { pages, minutes, prompt ->
+                if (minutes != null) vm.summarizeBatchWithPodcast(pages, minutes, prompt)
+                else vm.summarizeBatch(pages, prompt)
+            },
         )
     }
 

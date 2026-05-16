@@ -47,6 +47,7 @@ class AiJobWorker @AssistedInject constructor(
             when (AiJobType.valueOf(job.type)) {
                 AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
                 AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
+                AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
                 AiJobType.REPORT_EARNINGS -> {
                     // Not yet routed through this worker — reports still run
                     // synchronously from the tier picker sheet. Mark as
@@ -74,13 +75,14 @@ class AiJobWorker @AssistedInject constructor(
         val input = gson.fromJson(json, SummaryInput::class.java)
         val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
             ?: BundleSummarizer.Pages.TWO
-        val text = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
+        val result = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
             resultKind = AiJobResultKind.INLINE_TEXT.name,
             resultRefId = null,
-            resultText = text,
+            resultText = result.text,
+            resultModel = result.modelId,
             nowMs = System.currentTimeMillis(),
         )
         notifier.notifyCompleted(jobId, title, "Summary ready · open Tasks")
@@ -101,6 +103,7 @@ class AiJobWorker @AssistedInject constructor(
             resultKind = AiJobResultKind.PODCAST.name,
             resultRefId = podcastId.toString(),
             resultText = null,
+            resultModel = null,
             nowMs = System.currentTimeMillis(),
         )
         notifier.notifyCompleted(jobId, "Podcast ready", "Open Tasks to listen")
@@ -127,6 +130,43 @@ class AiJobWorker @AssistedInject constructor(
         val minutesValue: Int,
         val customPrompt: String?,
     )
+
+    /** Combo payload — summary first, then podcast derived from the summary text. */
+    data class SummaryAndPodcastInput(
+        val articleIds: List<String>,
+        val pagesTarget: Int,
+        val minutesValue: Int,
+        val customPrompt: String?,
+    )
+
+    private suspend fun runSummaryAndPodcast(jobId: String, json: String, title: String) {
+        val input = gson.fromJson(json, SummaryAndPodcastInput::class.java)
+        val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
+            ?: BundleSummarizer.Pages.FIVE
+        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
+            ?: BundleSummarizer.PodcastMinutes.TEN
+        // 1. Summary first — its text becomes both the inline result AND the
+        //    podcast-script source material so the audio narrative aligns
+        //    with what the user sees in the Tasks card.
+        val summary = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
+        // 2. Podcast from that summary. Renders + persists a Podcast row.
+        val podcastId = bundle.podcastFromSummary(
+            articleIds = input.articleIds,
+            summaryText = summary.text,
+            minutes = minutes,
+            customPrompt = input.customPrompt,
+        )
+        dao.markCompleted(
+            id = jobId,
+            status = AiJobStatus.COMPLETED.name,
+            resultKind = AiJobResultKind.SUMMARY_AND_PODCAST.name,
+            resultRefId = podcastId.toString(),
+            resultText = summary.text,
+            resultModel = summary.modelId,
+            nowMs = System.currentTimeMillis(),
+        )
+        notifier.notifyCompleted(jobId, title, "Summary + podcast ready · open Tasks")
+    }
 
     companion object {
         const val KEY_JOB_ID = "ai_job_id"

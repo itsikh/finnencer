@@ -17,14 +17,23 @@ class ArticleSummarizer @Inject constructor(
     private val newsDao: NewsDao,
 ) {
 
+    /** Text + the model that produced it (for the attribution line in the UI). */
+    data class CachedSummary(val text: String, val model: String?)
+
     /**
      * Returns the latest cached summary for [article] without regenerating.
-     * Used by the article-detail screen to render the "current" summary
-     * lazily.
+     * Prefers the newest [SummaryVersion] (versioned regenerate history);
+     * falls back to the legacy single-row [ArticleSummary] cache.
      */
-    suspend fun latestSummaryText(article: NewsArticle): String? =
-        newsDao.latestSummaryVersion(article.id)?.summary
-            ?: newsDao.summaryFor(article.id)?.summary
+    suspend fun latestSummary(article: NewsArticle): CachedSummary? {
+        newsDao.latestSummaryVersion(article.id)?.let {
+            return CachedSummary(it.summary, it.model)
+        }
+        newsDao.summaryFor(article.id)?.let {
+            return CachedSummary(it.summary, it.model)
+        }
+        return null
+    }
 
     /**
      * Returns the latest cached summary or generates a new one with default
@@ -32,8 +41,8 @@ class ArticleSummarizer @Inject constructor(
      * the article detail screen when first opened — preserves the existing
      * one-tap UX without forcing the user to pick a tier.
      */
-    suspend fun summarizeIfMissing(article: NewsArticle): String {
-        latestSummaryText(article)?.let { return it }
+    suspend fun summarizeIfMissing(article: NewsArticle): CachedSummary {
+        latestSummary(article)?.let { return it }
         return regenerate(article, pagesTarget = null, customPrompt = null)
     }
 
@@ -50,7 +59,7 @@ class ArticleSummarizer @Inject constructor(
         article: NewsArticle,
         pagesTarget: Int?,
         customPrompt: String?,
-    ): String {
+    ): CachedSummary {
         val prompt = buildString {
             append("Article headline: ").append(article.title).append('\n')
             article.snippet?.takeIf { it.isNotBlank() }?.let {
@@ -95,11 +104,8 @@ class ArticleSummarizer @Inject constructor(
                 generatedAtMillis = System.currentTimeMillis(),
             )
         )
-        return text
+        return CachedSummary(text = text, model = completion.modelUsed.id)
     }
-
-    /** Back-compat shim — the article-detail "AI Summary" button still calls this. */
-    suspend fun summarize(article: NewsArticle): String = summarizeIfMissing(article)
 
     private companion object {
         const val SYSTEM_PROMPT = """

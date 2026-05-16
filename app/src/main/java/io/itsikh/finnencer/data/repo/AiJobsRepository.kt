@@ -79,6 +79,32 @@ class AiJobsRepository @Inject constructor(
         )
     }
 
+    suspend fun enqueueSummaryAndPodcast(
+        tickerSymbol: String?,
+        articleIds: List<String>,
+        pages: BundleSummarizer.Pages,
+        minutes: BundleSummarizer.PodcastMinutes,
+        customPrompt: String?,
+    ): String {
+        val id = UUID.randomUUID().toString()
+        val title = "Summary + Podcast · ${articleIds.size} articles · ${pages.target}-pg · ${minutes.minutes} min"
+        val subtitle = customPrompt?.takeIf { it.isNotBlank() }
+        val input = AiJobWorker.SummaryAndPodcastInput(
+            articleIds = articleIds,
+            pagesTarget = pages.target,
+            minutesValue = minutes.minutes,
+            customPrompt = customPrompt,
+        )
+        return insertAndEnqueue(
+            id = id,
+            type = AiJobType.SUMMARY_AND_PODCAST_BATCH,
+            title = title,
+            subtitle = subtitle,
+            tickerSymbol = tickerSymbol,
+            inputJson = gson.toJson(input),
+        )
+    }
+
     private suspend fun insertAndEnqueue(
         id: String,
         type: AiJobType,
@@ -99,6 +125,7 @@ class AiJobsRepository @Inject constructor(
                 resultKind = null,
                 resultRefId = null,
                 resultText = null,
+                resultModel = null,
                 errorMessage = null,
                 createdAtMillis = System.currentTimeMillis(),
                 startedAtMillis = null,

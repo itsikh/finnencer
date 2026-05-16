@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -42,11 +46,13 @@ fun BatchActionSheet(
     state: BatchActionState,
     selectionSize: Int,
     onClose: () -> Unit,
-    onSummarize: (BundleSummarizer.Pages, String?) -> Unit,
-    onPodcast: (BundleSummarizer.PodcastMinutes, String?) -> Unit,
+    onGenerate: (BundleSummarizer.Pages, BundleSummarizer.PodcastMinutes?, String?) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var customPrompt by remember { mutableStateOf("") }
+    var selectedPages by remember { mutableStateOf(BundleSummarizer.Pages.FIVE) }
+    var podcastEnabled by remember { mutableStateOf(false) }
+    var selectedMinutes by remember { mutableStateOf(BundleSummarizer.PodcastMinutes.TEN) }
 
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -69,12 +75,11 @@ fun BatchActionSheet(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "AI reads everything you selected, finds the common thread, and produces one coherent piece — text or audio.",
+                "AI reads everything you selected, finds the common thread, and produces one coherent summary — optionally narrated as a multi-voice podcast.",
                 style = MaterialTheme.typography.bodySmall,
                 color = FinnencerColors.TextSecondary,
             )
 
-            // Optional custom prompt
             OutlinedTextField(
                 value = customPrompt,
                 onValueChange = { customPrompt = it },
@@ -104,15 +109,14 @@ fun BatchActionSheet(
                     )
                     Spacer(Modifier.size(10.dp))
                     Text(
-                        "Generating — 20-90 seconds depending on length.",
+                        "Queueing job…",
                         color = FinnencerColors.TextSecondary,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             } else {
-                // Text summary group
                 Text(
-                    "AS TEXT SUMMARY",
+                    "SUMMARY LENGTH",
                     style = MaterialTheme.typography.labelSmall,
                     color = FinnencerColors.TextTertiary,
                     fontWeight = FontWeight.SemiBold,
@@ -120,55 +124,84 @@ fun BatchActionSheet(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     BundleSummarizer.Pages.entries.forEach { p ->
-                        ChoiceChip(
+                        SelectableChip(
                             label = "${p.target} pages",
                             accent = FinnencerColors.Mint,
-                            onClick = { onSummarize(p, customPrompt.ifBlank { null }) },
+                            selected = p == selectedPages,
+                            onClick = { selectedPages = p },
                         )
                     }
                 }
 
-                // Podcast group
-                Text(
-                    "AS PODCAST",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = FinnencerColors.TextTertiary,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BundleSummarizer.PodcastMinutes.entries.forEach { m ->
-                        ChoiceChip(
-                            label = "${m.minutes} min",
-                            accent = FinnencerColors.Amber,
-                            onClick = { onPodcast(m, customPrompt.ifBlank { null }) },
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Also create a podcast",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FinnencerColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Multi-voice (Host + Analyst) narration generated from the summary above.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
                         )
                     }
+                    Switch(
+                        checked = podcastEnabled,
+                        onCheckedChange = { podcastEnabled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = FinnencerColors.TextOnAccent,
+                            checkedTrackColor = FinnencerColors.Amber,
+                            uncheckedThumbColor = FinnencerColors.TextSecondary,
+                            uncheckedTrackColor = FinnencerColors.SurfaceGlass,
+                            uncheckedBorderColor = FinnencerColors.SurfaceBorder,
+                        ),
+                    )
+                }
+
+                if (podcastEnabled) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                            SelectableChip(
+                                label = "${m.minutes} min",
+                                accent = FinnencerColors.Amber,
+                                selected = m == selectedMinutes,
+                                onClick = { selectedMinutes = m },
+                            )
+                        }
+                    }
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        onGenerate(
+                            selectedPages,
+                            if (podcastEnabled) selectedMinutes else null,
+                            customPrompt.ifBlank { null },
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = FinnencerColors.Violet,
+                        contentColor = FinnencerColors.TextOnAccent,
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Text(
+                        if (podcastEnabled) "Generate summary + podcast" else "Generate summary",
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
 
             state.error?.let { err ->
                 Text(err, color = FinnencerColors.Coral, style = MaterialTheme.typography.bodySmall)
-            }
-
-            state.producedText?.let { text ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Generated summary (also saved to the article's history):",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = FinnencerColors.TextTertiary,
-                )
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = FinnencerColors.TextPrimary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(FinnencerColors.SurfaceGlass)
-                        .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(12.dp))
-                        .padding(12.dp),
-                )
             }
 
             Spacer(Modifier.height(40.dp))
@@ -177,16 +210,30 @@ fun BatchActionSheet(
 }
 
 @Composable
-private fun ChoiceChip(label: String, accent: Color, onClick: () -> Unit) {
+private fun SelectableChip(
+    label: String,
+    accent: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(accent.copy(alpha = 0.18f))
-            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .background(if (selected) accent.copy(alpha = 0.28f) else FinnencerColors.SurfaceGlass)
+            .border(
+                1.dp,
+                if (selected) accent else FinnencerColors.SurfaceBorder,
+                RoundedCornerShape(12.dp),
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = accent, fontWeight = FontWeight.SemiBold)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) accent else FinnencerColors.TextSecondary,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

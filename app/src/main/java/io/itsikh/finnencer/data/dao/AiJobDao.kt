@@ -39,6 +39,7 @@ interface AiJobDao {
             resultKind = :resultKind,
             resultRefId = :resultRefId,
             resultText = :resultText,
+            resultModel = :resultModel,
             errorMessage = NULL,
             completedAtMillis = :nowMs
         WHERE id = :id
@@ -50,6 +51,7 @@ interface AiJobDao {
         resultKind: String,
         resultRefId: String?,
         resultText: String?,
+        resultModel: String?,
         nowMs: Long,
     )
 

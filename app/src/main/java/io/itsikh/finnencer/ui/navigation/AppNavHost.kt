@@ -27,6 +27,7 @@ import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastFromReportScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastLibraryScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
+import io.itsikh.finnencer.ui.screens.reader.ReaderScreen
 import io.itsikh.finnencer.ui.screens.tasks.TasksScreen
 import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
@@ -83,6 +84,7 @@ fun AppNavHost() {
                 TasksScreen(
                     onBack = { navController.popBackStack() },
                     onOpenPodcast = { id -> navController.navigate("podcast/$id") },
+                    onOpenReader = { navController.navigate("reader") },
                 )
             }
             composable("cost") {
@@ -128,7 +130,13 @@ fun AppNavHost() {
                 )
             }
             composable("article/{articleId}") {
-                ArticleDetailScreen(onBack = { navController.popBackStack() })
+                ArticleDetailScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenReader = { navController.navigate("reader") },
+                )
+            }
+            composable("reader") {
+                ReaderScreen(onBack = { navController.popBackStack() })
             }
             composable("home") {
                 HomeScreen(

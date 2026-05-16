@@ -51,6 +51,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.itsikh.finnencer.data.ai.friendlyModelLabel
+import io.itsikh.finnencer.ui.screens.reader.ReaderHolder
 import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.AiJobResultKind
 import io.itsikh.finnencer.data.entity.AiJobStatus
@@ -86,6 +88,7 @@ class TasksViewModel @Inject constructor(
 fun TasksScreen(
     onBack: () -> Unit,
     onOpenPodcast: (Long) -> Unit,
+    onOpenReader: () -> Unit,
 ) {
     val vm: TasksViewModel = hiltViewModel()
     val jobs by vm.jobs.collectAsState()
@@ -139,6 +142,8 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         onOpen = { open(job, onOpenPodcast) },
+                        onOpenPodcast = onOpenPodcast,
+                        onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
                     )
                 }
@@ -149,6 +154,8 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         onOpen = { open(job, onOpenPodcast) },
+                        onOpenPodcast = onOpenPodcast,
+                        onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
                     )
                 }
@@ -159,6 +166,8 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         onOpen = { open(job, onOpenPodcast) },
+                        onOpenPodcast = onOpenPodcast,
+                        onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
                     )
                 }
@@ -172,7 +181,9 @@ private fun open(job: AiJob, onOpenPodcast: (Long) -> Unit) {
     val kind = job.resultKind ?: return
     when (AiJobResultKind.valueOf(kind)) {
         AiJobResultKind.PODCAST -> job.resultRefId?.toLongOrNull()?.let(onOpenPodcast)
-        else -> Unit // INLINE_TEXT renders in-place when expanded
+        // Combo: tapping the card expands the summary inline; the explicit
+        // "Open podcast" button inside the expanded card opens the podcast.
+        else -> Unit // INLINE_TEXT / SUMMARY_AND_PODCAST render in-place when expanded
     }
 }
 
@@ -202,12 +213,17 @@ private fun SectionHeader(label: String, count: Int) {
 private fun JobRow(
     job: AiJob,
     onOpen: () -> Unit,
+    onOpenPodcast: (Long) -> Unit,
+    onOpenReader: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val statusColor = statusAccent(job.status)
     val hasInlineResult = job.resultText != null
     val hasNavigable = job.resultKind == AiJobResultKind.PODCAST.name && job.resultRefId != null
+    val comboPodcastId: Long? = if (job.resultKind == AiJobResultKind.SUMMARY_AND_PODCAST.name) {
+        job.resultRefId?.toLongOrNull()
+    } else null
 
     GlassCard(onClick = {
         if (hasNavigable) onOpen() else if (hasInlineResult) expanded = !expanded
@@ -267,11 +283,67 @@ private fun JobRow(
                         .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(10.dp))
                         .padding(12.dp),
                 ) {
-                    Text(
-                        job.resultText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = FinnencerColors.TextPrimary,
-                    )
+                    Column {
+                        Text(
+                            job.resultText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                        job.resultModel?.takeIf { it.isNotBlank() }?.let { id ->
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "via ${friendlyModelLabel(id)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(FinnencerColors.Violet.copy(alpha = 0.18f))
+                                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        ReaderHolder.store(
+                                            ReaderHolder.Payload(
+                                                title = job.title,
+                                                body = job.resultText,
+                                                attribution = job.resultModel?.let { "via ${friendlyModelLabel(it)}" },
+                                            )
+                                        )
+                                        onOpenReader()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "Read mode",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = FinnencerColors.Violet,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            if (comboPodcastId != null) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                                        .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                        .clickable { onOpenPodcast(comboPodcastId) }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "▶  Open podcast",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = FinnencerColors.Amber,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -313,6 +385,7 @@ private fun statusAccent(status: String): Color = when (status) {
 private fun typeLabel(type: String): String = when (type) {
     AiJobType.SUMMARY_BATCH.name -> "Batch summary"
     AiJobType.PODCAST_BATCH.name -> "Podcast"
+    AiJobType.SUMMARY_AND_PODCAST_BATCH.name -> "Summary + podcast"
     AiJobType.REPORT_EARNINGS.name -> "Earnings report"
     else -> type
 }

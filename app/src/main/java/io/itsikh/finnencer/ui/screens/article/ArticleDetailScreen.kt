@@ -56,7 +56,10 @@ import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArticleDetailScreen(onBack: () -> Unit) {
+fun ArticleDetailScreen(
+    onBack: () -> Unit,
+    onOpenReader: () -> Unit,
+) {
     val vm: ArticleDetailViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val context = LocalContext.current
@@ -204,6 +207,7 @@ fun ArticleDetailScreen(onBack: () -> Unit) {
                 state = state,
                 onRequest = vm::requestSummary,
                 onRegenerate = vm::openRegenerate,
+                onOpenReader = onOpenReader,
             )
 
             val versions by vm.versions.collectAsState()
@@ -229,6 +233,7 @@ private fun SummaryBlock(
     state: ArticleDetailState,
     onRequest: () -> Unit,
     onRegenerate: () -> Unit,
+    onOpenReader: () -> Unit,
 ) {
     GlassCard {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -281,6 +286,13 @@ private fun SummaryBlock(
                         style = MaterialTheme.typography.bodyLarge,
                         color = FinnencerColors.TextPrimary,
                     )
+                    io.itsikh.finnencer.data.ai.friendlyModelLabel(s.model)?.let { label ->
+                        Text(
+                            "via $label",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    }
                     if (s.fromCache) {
                         Text(
                             "Cached locally — no extra cost on re-open.",
@@ -289,6 +301,23 @@ private fun SummaryBlock(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = {
+                                io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
+                                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
+                                        title = state.article?.title ?: "Summary",
+                                        body = s.text,
+                                        attribution = io.itsikh.finnencer.data.ai.friendlyModelLabel(s.model)?.let { "via $it" },
+                                    )
+                                )
+                                onOpenReader()
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = FinnencerColors.SurfaceGlass,
+                                contentColor = FinnencerColors.Violet,
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Read mode", fontWeight = FontWeight.SemiBold) }
                         Spacer(Modifier.weight(1f))
                         FilledTonalButton(
                             onClick = onRegenerate,

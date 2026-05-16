@@ -37,7 +37,7 @@ import io.itsikh.finnencer.data.entity.Ticker
         ApiUsage::class,
         AiJob::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {

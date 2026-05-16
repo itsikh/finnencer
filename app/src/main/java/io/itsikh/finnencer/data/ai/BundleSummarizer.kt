@@ -40,11 +40,17 @@ class BundleSummarizer @Inject constructor(
         val charBudget: Int get() = minutes * 600 // ~150 wpm spoken English
     }
 
+    /** Output of [summarizeText]: the prose plus the id of whichever model
+     *  actually answered (which may be a fallback if the primary failed). */
+    data class SummaryResult(val text: String, val modelId: String)
+
     /**
-     * Text summary of [articleIds] — returns the prose blob. Cached side-
-     * effect: the caller persists into [SummaryVersion]s table (see C·1).
+     * Text summary of [articleIds] — returns the prose blob plus the
+     * model that produced it (caller can persist for attribution).
+     * Cached side-effect: the caller persists into [SummaryVersion]s
+     * table (see C·1).
      */
-    suspend fun summarizeText(articleIds: List<String>, pages: Pages, customPrompt: String?): String {
+    suspend fun summarizeText(articleIds: List<String>, pages: Pages, customPrompt: String?): SummaryResult {
         require(articleIds.isNotEmpty()) { "selection must be non-empty" }
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
         val bundle = buildString {
@@ -77,7 +83,7 @@ class BundleSummarizer @Inject constructor(
             maxTokens = pages.maxTokens,
             temperature = 0.4,
         )
-        return completion.text.trim()
+        return SummaryResult(text = completion.text.trim(), modelId = completion.modelUsed.id)
     }
 
     /**
@@ -93,11 +99,64 @@ class BundleSummarizer @Inject constructor(
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
         val titles = articles.take(3).joinToString(", ") { it.title.take(60) }
         val title = "${articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"}  ·  ${minutes.minutes} min  ·  $titles"
+        val source = buildString {
+            articles.forEachIndexed { i, a ->
+                append("--- Article ").append(i + 1).append(" ---\n")
+                append("Title: ").append(a.title).append('\n')
+                a.snippet?.takeIf { it.isNotBlank() }?.let {
+                    append("Snippet: ").append(it).append('\n')
+                }
+                append("Source: ").append(a.sourceName)
+                append(" · Ticker: ").append(a.primaryTickerSymbol ?: "?").append('\n')
+                append('\n')
+            }
+        }
+        return renderPodcast(
+            title = title.take(120),
+            sourceId = articleIds.joinToString(","),
+            sourceMaterial = source,
+            minutes = minutes,
+            customPrompt = customPrompt,
+        )
+    }
 
+    /**
+     * Variant of [summarizeToPodcast] that uses an already-produced summary
+     * blob as the script writer's source material instead of the raw article
+     * bundle. Used by the combo "summary + podcast" flow so the podcast
+     * narrative aligns with the just-generated summary the user sees in the
+     * Tasks card.
+     */
+    suspend fun podcastFromSummary(
+        articleIds: List<String>,
+        summaryText: String,
+        minutes: PodcastMinutes,
+        customPrompt: String?,
+    ): Long {
+        val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
+        val ticker = articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"
+        val titles = articles.take(3).joinToString(", ") { it.title.take(60) }
+        val title = "$ticker  ·  ${minutes.minutes} min  ·  $titles"
+        return renderPodcast(
+            title = title.take(120),
+            sourceId = articleIds.joinToString(","),
+            sourceMaterial = summaryText,
+            minutes = minutes,
+            customPrompt = customPrompt,
+        )
+    }
+
+    private suspend fun renderPodcast(
+        title: String,
+        sourceId: String,
+        sourceMaterial: String,
+        minutes: PodcastMinutes,
+        customPrompt: String?,
+    ): Long {
         val pending = Podcast(
             sourceType = PodcastSourceType.CUSTOM_TEXT.name,
-            sourceId = articleIds.joinToString(","),
-            title = title.take(120),
+            sourceId = sourceId,
+            title = title,
             voiceHost = GeminiTts.VoicePair.Default.host,
             voiceAnalyst = GeminiTts.VoicePair.Default.analyst,
             filePath = null,
@@ -112,21 +171,6 @@ class BundleSummarizer @Inject constructor(
         runCatching {
             podcastDao.update(podcastDao.get(id)!!.copy(status = PodcastGenerationStatus.GENERATING.name))
 
-            // 1. Bundle as dense source material for the script writer.
-            val source = buildString {
-                articles.forEachIndexed { i, a ->
-                    append("--- Article ").append(i + 1).append(" ---\n")
-                    append("Title: ").append(a.title).append('\n')
-                    a.snippet?.takeIf { it.isNotBlank() }?.let {
-                        append("Snippet: ").append(it).append('\n')
-                    }
-                    append("Source: ").append(a.sourceName)
-                    append(" · Ticker: ").append(a.primaryTickerSymbol ?: "?").append('\n')
-                    append('\n')
-                }
-            }
-
-            // 2. Script with target duration. Bias toward exactly that length.
             val scriptSystem = buildString {
                 append(DIALOGUE_SYSTEM)
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
@@ -143,12 +187,11 @@ class BundleSummarizer @Inject constructor(
             val script = router.complete(
                 usage = AiUsage.PODCAST_SCRIPT,
                 system = scriptSystem,
-                userMessage = source,
+                userMessage = sourceMaterial,
                 maxTokens = maxTokens,
                 temperature = 0.6,
             ).text
 
-            // 3. Render.
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }
             val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
             val result = tts.synthesizeDialogue(

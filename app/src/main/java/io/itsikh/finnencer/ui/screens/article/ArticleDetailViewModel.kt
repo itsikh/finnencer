@@ -20,7 +20,7 @@ import javax.inject.Inject
 sealed interface SummaryState {
     object Idle : SummaryState
     object Loading : SummaryState
-    data class Ready(val text: String, val fromCache: Boolean) : SummaryState
+    data class Ready(val text: String, val fromCache: Boolean, val model: String?) : SummaryState
     data class Failed(val message: String) : SummaryState
 }
 
@@ -55,12 +55,13 @@ class ArticleDetailViewModel @Inject constructor(
         viewModelScope.launch {
             val article = newsDao.getArticle(articleId)
             val scores = newsDao.scoresFor(articleId)
-            val latest = newsDao.latestSummaryVersion(articleId)?.summary
-                ?: newsDao.summaryFor(articleId)?.summary
+            val latestVersion = newsDao.latestSummaryVersion(articleId)
+            val latestText = latestVersion?.summary ?: newsDao.summaryFor(articleId)?.summary
+            val latestModel = latestVersion?.model ?: newsDao.summaryFor(articleId)?.model
             _state.value = ArticleDetailState(
                 article = article,
                 scores = scores,
-                summary = if (latest != null) SummaryState.Ready(latest, fromCache = true)
+                summary = if (latestText != null) SummaryState.Ready(latestText, fromCache = true, model = latestModel)
                 else SummaryState.Idle,
             )
         }
@@ -73,9 +74,9 @@ class ArticleDetailViewModel @Inject constructor(
         _state.value = _state.value.copy(summary = SummaryState.Loading)
         viewModelScope.launch {
             runCatching { summarizer.summarizeIfMissing(article) }
-                .onSuccess { text ->
+                .onSuccess { result ->
                     _state.value = _state.value.copy(
-                        summary = SummaryState.Ready(text, fromCache = false),
+                        summary = SummaryState.Ready(result.text, fromCache = false, model = result.model),
                     )
                 }
                 .onFailure { t ->
@@ -95,11 +96,11 @@ class ArticleDetailViewModel @Inject constructor(
         _state.value = _state.value.copy(regenerating = true, regenerateError = null)
         viewModelScope.launch {
             runCatching { summarizer.regenerate(article, pagesTarget, customPrompt) }
-                .onSuccess { text ->
+                .onSuccess { result ->
                     _state.value = _state.value.copy(
                         regenerating = false,
                         regenerateOpen = false,
-                        summary = SummaryState.Ready(text, fromCache = false),
+                        summary = SummaryState.Ready(result.text, fromCache = false, model = result.model),
                     )
                 }
                 .onFailure { t ->
@@ -113,6 +114,6 @@ class ArticleDetailViewModel @Inject constructor(
 
     /** Switch the displayed summary back to a previous version. */
     fun showVersion(v: SummaryVersion) {
-        _state.value = _state.value.copy(summary = SummaryState.Ready(v.summary, fromCache = true))
+        _state.value = _state.value.copy(summary = SummaryState.Ready(v.summary, fromCache = true, model = v.model))
     }
 }
