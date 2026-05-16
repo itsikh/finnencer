@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
@@ -22,6 +21,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import io.itsikh.finnencer.bugreport.CrashAutoReporter
 import io.itsikh.finnencer.ui.navigation.AppNavHost
+import io.itsikh.finnencer.ui.theme.FinnencerTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -64,7 +64,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme {
+            FinnencerTheme {
                 val mainViewModel: MainViewModel = hiltViewModel()
                 val updatePrompt by mainViewModel.updatePrompt.collectAsState()
 
