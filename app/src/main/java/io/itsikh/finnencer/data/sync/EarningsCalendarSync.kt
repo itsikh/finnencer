@@ -29,7 +29,10 @@ class EarningsCalendarSync @Inject constructor(
         val tickers = tickerDao.getAll()
         if (tickers.isEmpty()) return 0
         val today = LocalDate.now(ZoneId.systemDefault())
-        val fromIso = today.minusDays(14).toString()
+        // Look back a full year so we always have at least the last four
+        // quarters available for per-ticker historical reports, plus three
+        // months forward for the upcoming view.
+        val fromIso = today.minusDays(400).toString()
         val toIso = today.plusDays(90).toString()
 
         var inserted = 0
