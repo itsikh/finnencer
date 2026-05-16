@@ -284,20 +284,8 @@ private fun JobRow(
                         .padding(12.dp),
                 ) {
                     Column {
-                        Text(
-                            job.resultText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FinnencerColors.TextPrimary,
-                        )
-                        job.resultModel?.takeIf { it.isNotBlank() }?.let { id ->
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "via ${friendlyModelLabel(id)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = FinnencerColors.TextTertiary,
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
+                        // Action chips up top so they're reachable without
+                        // having to scroll past the entire prose blob.
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier
@@ -343,6 +331,20 @@ private fun JobRow(
                                 }
                             }
                         }
+                        job.resultModel?.takeIf { it.isNotBlank() }?.let { id ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "via ${friendlyModelLabel(id)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            job.resultText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextPrimary,
+                        )
                     }
                 }
             }

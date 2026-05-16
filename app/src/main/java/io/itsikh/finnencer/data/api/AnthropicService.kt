@@ -2,6 +2,7 @@ package io.itsikh.finnencer.data.api
 
 import com.google.gson.annotations.SerializedName
 import retrofit2.http.Body
+import retrofit2.http.Header
 import retrofit2.http.POST
 
 /**
@@ -11,8 +12,18 @@ import retrofit2.http.POST
  */
 interface AnthropicService {
 
+    /**
+     * @param beta optional value for the per-request `anthropic-beta`
+     *        header. Required when invoking the 1M-context variant of
+     *        Opus 4.x ("context-1m-2025-08-07"); a null value tells
+     *        Retrofit to omit the header so standard 200K-context calls
+     *        aren't affected.
+     */
     @POST("v1/messages")
-    suspend fun messages(@Body request: AnthropicRequest): AnthropicResponse
+    suspend fun messages(
+        @Body request: AnthropicRequest,
+        @Header("anthropic-beta") beta: String? = null,
+    ): AnthropicResponse
 }
 
 data class AnthropicRequest(

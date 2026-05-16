@@ -281,25 +281,8 @@ private fun SummaryBlock(
                     )
                 }
                 is SummaryState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        s.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = FinnencerColors.TextPrimary,
-                    )
-                    io.itsikh.finnencer.data.ai.friendlyModelLabel(s.model)?.let { label ->
-                        Text(
-                            "via $label",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                        )
-                    }
-                    if (s.fromCache) {
-                        Text(
-                            "Cached locally — no extra cost on re-open.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                        )
-                    }
+                    // Action row first so Read mode + Regenerate stay
+                    // reachable without having to scroll through the prose.
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton(
                             onClick = {
@@ -328,6 +311,25 @@ private fun SummaryBlock(
                             shape = RoundedCornerShape(12.dp),
                         ) { Text("Regenerate", fontWeight = FontWeight.SemiBold) }
                     }
+                    io.itsikh.finnencer.data.ai.friendlyModelLabel(s.model)?.let { label ->
+                        Text(
+                            "via $label",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    }
+                    if (s.fromCache) {
+                        Text(
+                            "Cached locally — no extra cost on re-open.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    }
+                    Text(
+                        s.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = FinnencerColors.TextPrimary,
+                    )
                 }
                 is SummaryState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(

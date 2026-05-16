@@ -52,11 +52,29 @@ class ClaudeClient @Inject constructor(
             messages = listOf(AnthropicMessage(role = "user", content = userMessage)),
             temperature = temperature,
         )
+        // The 1M-context variant of Opus 4.x requires the per-request
+        // `anthropic-beta` header; without it the server returns HTTP 400.
+        // Decide based on the catalog entry's declared context window so
+        // future models inherit the right behavior automatically.
+        val beta = AiModel.byId(model)
+            ?.takeIf { it.provider == AiProvider.ANTHROPIC && it.maxContextTokens > 200_000 }
+            ?.let { "context-1m-2025-08-07" }
         val started = System.currentTimeMillis()
-        val response = runCatching { service.messages(request) }
-            .onSuccess { resp -> recordUsage(model, resp, started, ok = true, error = null) }
-            .onFailure { t -> recordUsage(model, null, started, ok = false, error = t.message) }
-            .getOrThrow()
+        val response = try {
+            service.messages(request, beta)
+                .also { recordUsage(model, it, started, ok = true, error = null) }
+        } catch (e: retrofit2.HttpException) {
+            // Retrofit's HttpException only carries "HTTP 4xx" in .message;
+            // the actionable detail is in errorBody(). Read it eagerly so
+            // logs/bug-reports show the provider's exact reason.
+            val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+            val detail = body?.take(500)?.replace("\n", " ") ?: "(no body)"
+            recordUsage(model, null, started, ok = false, error = "HTTP ${e.code()}: $detail")
+            throw java.io.IOException("Anthropic HTTP ${e.code()} on $model: $detail", e)
+        } catch (t: Throwable) {
+            recordUsage(model, null, started, ok = false, error = t.message)
+            throw t
+        }
         return response.content.firstOrNull { it.type == "text" }?.text
             ?: response.content.firstOrNull()?.text
             ?: error("Empty response from Anthropic for model $model")
