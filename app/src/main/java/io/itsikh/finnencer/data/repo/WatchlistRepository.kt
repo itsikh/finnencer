@@ -76,13 +76,13 @@ class WatchlistRepository @Inject constructor(
                 e,
             )
         }
-        return resp.result
+        val q = query.trim().uppercase()
+        val rows = resp.result
             .asSequence()
             .filter { it.symbol != null && it.description != null }
-            // Only common stock on US exchanges; skip warrants, units, ADRs of micro caps
-            .filter { it.type == null || it.type.equals("Common Stock", ignoreCase = true) }
-            // Skip symbols with dots (.PR for preferred etc.) for the MVP add flow
-            .filter { it.symbol!!.none { c -> c == '.' || c == '-' } || it.symbol.length <= 5 }
+            // Skip preferred shares, warrants, and other suffixed symbols
+            // (".PR", ".W", ":OTC" etc.); keep plain symbols only.
+            .filter { sym -> sym.symbol!!.none { c -> c == '.' || c == ':' } }
             .map {
                 TickerSearchResult(
                     symbol = it.symbol!!.uppercase(),
@@ -92,8 +92,20 @@ class WatchlistRepository @Inject constructor(
                 )
             }
             .distinctBy { it.symbol }
-            .take(25)
             .toList()
+
+        // Rank by relevance: exact ticker match first, then starts-with on
+        // ticker, then starts-with on company name, then contains. Within
+        // each bucket Finnhub's own order is preserved.
+        return rows.sortedBy { r ->
+            when {
+                r.symbol == q -> 0
+                r.symbol.startsWith(q) -> 1
+                r.description.uppercase().startsWith(q) -> 2
+                r.description.uppercase().contains(q) -> 3
+                else -> 4
+            }
+        }.take(30)
     }
 
     private companion object {

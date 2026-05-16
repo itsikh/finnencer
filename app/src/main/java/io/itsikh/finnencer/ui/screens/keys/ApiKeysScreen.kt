@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -84,6 +85,10 @@ fun ApiKeysScreen(
         ) {
             HeaderText()
             QrButtonsRow(onOpenScan = onOpenScan, onOpenShare = onOpenShare)
+            BuildIdentityCard(
+                packageName = vm.signingInfo.packageName,
+                sha1Pretty = vm.signingInfo.signingCertSha1Pretty,
+            )
             Spacer(Modifier.height(4.dp))
             ApiKey.entries.forEach { key ->
                 val card = state[key] ?: return@forEach
@@ -124,6 +129,70 @@ private fun KeysTopBar(onBack: () -> Unit) {
             color = FinnencerColors.TextPrimary,
             modifier = Modifier.padding(start = 4.dp),
         )
+    }
+}
+
+@Composable
+private fun BuildIdentityCard(packageName: String, sha1Pretty: String?) {
+    val clipboard = LocalClipboardManager.current
+    GlassCard {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Build identity (for GCP key restrictions)",
+                style = MaterialTheme.typography.labelMedium,
+                color = FinnencerColors.TextTertiary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Package",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                    Text(
+                        packageName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FinnencerColors.TextPrimary,
+                    )
+                }
+                IconButton(onClick = {
+                    clipboard.setText(AnnotatedString(packageName))
+                }) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Copy package",
+                        tint = FinnencerColors.TextSecondary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "SHA-1 fingerprint",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                    Text(
+                        sha1Pretty ?: "(unavailable)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinnencerColors.TextPrimary,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                }
+                IconButton(onClick = {
+                    sha1Pretty?.let { clipboard.setText(AnnotatedString(it)) }
+                }) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Copy SHA-1",
+                        tint = FinnencerColors.TextSecondary,
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -2,6 +2,7 @@ package io.itsikh.finnencer.data.repo
 
 import com.google.gson.Gson
 import io.itsikh.finnencer.logging.AppLogger
+import io.itsikh.finnencer.util.AppSigningInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,6 +34,7 @@ class KeyValidator @Inject constructor(
     private val okHttp: OkHttpClient,
     private val gson: Gson,
     private val keys: ApiKeysRepository,
+    private val signingInfo: AppSigningInfo,
 ) {
 
     suspend fun validate(key: ApiKey): KeyTestResult = withContext(Dispatchers.IO) {
@@ -117,8 +119,13 @@ class KeyValidator @Inject constructor(
             ),
             "generationConfig" to mapOf("maxOutputTokens" to 1),
         )
-        val req = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$token")
+        val builder = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")
+            .addHeader("x-goog-api-key", token)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("X-Android-Package", signingInfo.packageName)
+        signingInfo.signingCertSha1Hex?.let { builder.addHeader("X-Android-Cert", it) }
+        val req = builder
             .post(gson.toJson(body).toRequestBody(JSON))
             .build()
         okHttp.newCall(req).execute().use { resp ->
@@ -127,7 +134,7 @@ class KeyValidator @Inject constructor(
                 KeyTestResult.Ok
             } else {
                 val msg = parseGoogleError(resp.body?.string())
-                AppLogger.w(TAG, "GEMINI ${resp.code}: $msg")
+                AppLogger.w(TAG, "GEMINI ${resp.code}: $msg (pkg=${signingInfo.packageName} sha1=${signingInfo.signingCertSha1Hex?.take(16)}…)")
                 KeyTestResult.Failed("Gemini (HTTP ${resp.code}): $msg")
             }
         }
