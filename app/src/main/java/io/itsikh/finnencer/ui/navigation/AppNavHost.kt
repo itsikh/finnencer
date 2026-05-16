@@ -20,6 +20,7 @@ import io.itsikh.finnencer.ui.screens.keys.ApiKeysScreen
 import io.itsikh.finnencer.ui.screens.keys.QrScanScreen
 import io.itsikh.finnencer.ui.screens.keys.QrShareScreen
 import io.itsikh.finnencer.ui.screens.article.ArticleDetailScreen
+import io.itsikh.finnencer.ui.screens.cost.CostMeterScreen
 import io.itsikh.finnencer.ui.screens.earnings.EarningsScreen
 import io.itsikh.finnencer.ui.screens.earnings.ReportViewerScreen
 import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
@@ -67,10 +68,14 @@ fun AppNavHost() {
                 WatchlistScreen(
                     onOpenKeys = { navController.navigate("keys") },
                     onOpenEarnings = { navController.navigate("earnings") },
+                    onOpenCost = { navController.navigate("cost") },
                     onOpenTickerFeed = { symbol ->
                         navController.navigate("ticker/$symbol")
                     },
                 )
+            }
+            composable("cost") {
+                CostMeterScreen(onBack = { navController.popBackStack() })
             }
             composable("earnings") {
                 EarningsScreen(
