@@ -125,8 +125,12 @@ class ApiKeysRepository @Inject constructor(
                     KeyTestResult.Ok
                 else KeyTestResult.BadFormat("Expected alphanumeric ~20-60 char Finnhub key")
             ApiKey.GEMINI ->
-                if (value.startsWith("AIzaSy") && value.length == 39) KeyTestResult.Ok
-                else KeyTestResult.BadFormat("Expected AIzaSy... (39 chars) Google AI Studio key")
+                // Google issues several long-lived key formats: classic
+                // "AIzaSy..." (39 chars) from aistudio.google.com, plus newer
+                // "AQ..." style keys. Just check length and printable chars.
+                if (value.length in 20..120 && value.all { it.isLetterOrDigit() || it in "._-" })
+                    KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Doesn't look like a Google API key (expected 20-120 chars, letters/digits/.-_)")
             ApiKey.GITHUB_PAT ->
                 if (value.startsWith("ghp_") || value.startsWith("github_pat_"))
                     KeyTestResult.Ok

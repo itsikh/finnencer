@@ -108,11 +108,9 @@ class KeyValidator @Inject constructor(
     }
 
     private fun validateGemini(token: String): KeyTestResult {
-        if (!token.startsWith("AIza")) {
-            return KeyTestResult.Failed(
-                "Wrong format — Google API keys start with \"AIzaSy\". Generate one at aistudio.google.com."
-            )
-        }
+        // Don't pre-reject by prefix — Google ships multiple long-lived key
+        // formats (classic "AIzaSy..." and newer "AQ..." with different
+        // length/charset). Let the actual API tell us if it's good.
         val body = mapOf(
             "contents" to listOf(
                 mapOf("parts" to listOf(mapOf("text" to "hi"))),
