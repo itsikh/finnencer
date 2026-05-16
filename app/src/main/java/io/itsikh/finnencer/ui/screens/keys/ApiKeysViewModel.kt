@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.data.repo.KeyTestResult
+import io.itsikh.finnencer.data.repo.KeyValidator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,7 @@ data class KeyCardState(
 @HiltViewModel
 class ApiKeysViewModel @Inject constructor(
     private val repo: ApiKeysRepository,
+    private val validator: KeyValidator,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(initialState())
@@ -98,10 +100,36 @@ class ApiKeysViewModel @Inject constructor(
             if (k == key) v.copy(testing = true, testResult = null) else v
         }
         viewModelScope.launch {
-            val result = repo.checkSyntax(key)
+            // Fast offline pre-check first; if format is obviously wrong we
+            // never burn a network round-trip on the provider.
+            val syntax = repo.checkSyntax(key)
+            if (syntax is KeyTestResult.BadFormat) {
+                _state.value = _state.value.mapValues { (k, v) ->
+                    if (k == key) v.copy(testing = false, testResult = syntax) else v
+                }
+                return@launch
+            }
+            if (syntax is KeyTestResult.NotConfigured) {
+                _state.value = _state.value.mapValues { (k, v) ->
+                    if (k == key) v.copy(testing = false, testResult = syntax) else v
+                }
+                return@launch
+            }
+            // Real provider-side validation.
+            val networkResult = validator.validate(key)
             _state.value = _state.value.mapValues { (k, v) ->
-                if (k == key) v.copy(testing = false, testResult = result) else v
+                if (k == key) v.copy(testing = false, testResult = networkResult) else v
             }
         }
+    }
+
+    /**
+     * Save + immediately fire a real network probe so the user sees
+     * "Validated against {provider}" or "Provider rejected the key" without
+     * having to leave the screen and trigger a search.
+     */
+    fun saveAndValidate(key: ApiKey) {
+        save(key)
+        test(key)
     }
 }

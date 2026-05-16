@@ -3,6 +3,8 @@ package io.itsikh.finnencer.data.repo
 import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.logging.AppLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import retrofit2.HttpException
 import java.io.IOException
@@ -45,23 +47,34 @@ class WatchlistRepository @Inject constructor(
     suspend fun search(query: String): List<TickerSearchResult> {
         if (query.isBlank()) return emptyList()
         if (!apiKeys.isConfigured(ApiKey.FINNHUB)) {
+            AppLogger.w(TAG, "search blocked: FINNHUB key not configured")
             throw IllegalStateException(
-                "Finnhub API key not set. Add it in Settings → API Keys."
+                "Finnhub API key not set. Open Settings → API Keys and paste your Finnhub key (free at finnhub.io)."
             )
         }
         val resp = try {
             finnhub.search(query.trim())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: HttpException) {
             val code = e.code()
             val hint = when (code) {
-                401, 403 -> "Finnhub rejected the key — check it in Settings → API Keys."
+                401, 403 -> "Finnhub rejected the key — verify it in Settings → API Keys."
                 429 -> "Finnhub rate-limited the request. Try again in a minute."
                 in 500..599 -> "Finnhub server error ($code). Try again shortly."
                 else -> "Finnhub returned HTTP $code."
             }
+            AppLogger.e(TAG, "Finnhub /search HTTP $code for '$query'", e)
             throw IllegalStateException(hint, e)
         } catch (e: IOException) {
+            AppLogger.e(TAG, "Network error reaching Finnhub /search for '$query'", e)
             throw IllegalStateException("Network error reaching Finnhub.", e)
+        } catch (e: Throwable) {
+            AppLogger.e(TAG, "Unexpected ${e.javaClass.simpleName} from Finnhub /search for '$query'", e)
+            throw IllegalStateException(
+                "Unexpected error: ${e.javaClass.simpleName}: ${e.message ?: "(no detail)"}",
+                e,
+            )
         }
         return resp.result
             .asSequence()
@@ -81,6 +94,10 @@ class WatchlistRepository @Inject constructor(
             .distinctBy { it.symbol }
             .take(25)
             .toList()
+    }
+
+    private companion object {
+        const val TAG = "WatchlistRepo"
     }
 }
 

@@ -93,7 +93,7 @@ fun ApiKeysScreen(
                     onStartEdit = { vm.startEdit(key) },
                     onDraftChange = { vm.updateDraft(key, it) },
                     onToggleReveal = { vm.toggleReveal(key) },
-                    onSave = { vm.save(key) },
+                    onSave = { vm.saveAndValidate(key) },
                     onClear = { vm.clear(key) },
                     onTest = { vm.test(key) },
                 )
@@ -314,7 +314,7 @@ private fun ExpandedKeyEditor(
                 onClick = onTest,
                 enabled = state.draft.isNotBlank() && !state.testing,
                 colors = ButtonDefaults.textButtonColors(contentColor = FinnencerColors.Mint),
-            ) { Text(if (state.testing) "Testing…" else "Test") }
+            ) { Text(if (state.testing) "Validating with provider…" else "Test") }
 
             Spacer(Modifier.weight(1f))
 
@@ -351,7 +351,7 @@ private fun TestResultRow(result: KeyTestResult) {
     val (text, color) = when (result) {
         KeyTestResult.NotConfigured -> "No key saved yet" to FinnencerColors.TextTertiary
         KeyTestResult.ChecksSyntax -> "Checking format…" to FinnencerColors.TextSecondary
-        KeyTestResult.Ok -> "Format looks valid" to FinnencerColors.Mint
+        KeyTestResult.Ok -> "Provider accepted the key" to FinnencerColors.Mint
         is KeyTestResult.BadFormat -> result.message to FinnencerColors.Amber
         is KeyTestResult.Failed -> result.message to FinnencerColors.Coral
     }
