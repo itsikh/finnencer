@@ -135,7 +135,17 @@ fun AppNavHost() {
                 )
             }
             composable("podcast/{podcastId}") {
-                PodcastPlayerScreen(onBack = { navController.popBackStack() })
+                PodcastPlayerScreen(
+                    onBack = { navController.popBackStack() },
+                    // Auto-play-next: replace the current podcast route
+                    // with the next one in the queue so Back doesn't
+                    // accumulate a deep stack of every podcast played.
+                    onOpenPodcast = { nextId ->
+                        navController.navigate("podcast/$nextId") {
+                            popUpTo("podcast/{podcastId}") { inclusive = true }
+                        }
+                    },
+                )
             }
             composable("podcasts") {
                 PodcastLibraryScreen(

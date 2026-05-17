@@ -16,12 +16,19 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.core.playback.PodcastPlaybackService
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.Podcast
+import io.itsikh.finnencer.data.entity.QueueItemKind
+import io.itsikh.finnencer.data.repo.PodcastPreferences
+import io.itsikh.finnencer.data.repo.QueueRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -39,6 +46,8 @@ class PodcastPlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     savedState: SavedStateHandle,
     podcastDao: PodcastDao,
+    private val queueRepo: QueueRepository,
+    private val prefs: PodcastPreferences,
 ) : ViewModel() {
 
     private val podcastId: Long = savedState.get<String>("podcastId")?.toLongOrNull()
@@ -50,8 +59,19 @@ class PodcastPlayerViewModel @Inject constructor(
     private val _ui = MutableStateFlow(PlaybackUiState())
     val ui: StateFlow<PlaybackUiState> = _ui.asStateFlow()
 
+    /**
+     * Fires the next podcast's id when the current podcast ends and the
+     * user has opted into auto-play-next via [PodcastPreferences]. The
+     * screen observes this and asks the navigator to replace the route.
+     */
+    private val _navigateToNext = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val navigateToNext: SharedFlow<Long> = _navigateToNext.asSharedFlow()
+
     private var controller: MediaController? = null
     private var loaded = false
+    /** Guards [handlePlaybackEnded] so STATE_ENDED-triggered work runs once
+     *  per opened podcast, not once per state-change repaint. */
+    private var endHandled = false
     private var pollJob: Job? = null
 
     init {
@@ -82,8 +102,32 @@ class PodcastPlayerViewModel @Inject constructor(
                     positionMs = c.currentPosition,
                     durationMs = c.duration.coerceAtLeast(0),
                 )
+                if (playbackState == Player.STATE_ENDED) handlePlaybackEnded()
             }
         })
+    }
+
+    /**
+     * On playback completion: mark this podcast's queue item (if any) as
+     * done so the user's reading queue stays in sync, and — if the
+     * "Auto-play next in queue" pref is on — fire a navigation event for
+     * the next incomplete podcast.
+     */
+    private fun handlePlaybackEnded() {
+        if (endHandled) return
+        endHandled = true
+        viewModelScope.launch {
+            val refId = podcastId.toString()
+            val current = queueRepo.observeByRef(QueueItemKind.PODCAST, refId).first()
+            if (current != null && current.completedAtMillis == null) {
+                queueRepo.markDone(current.id)
+            }
+            if (prefs.autoPlayNextInQueue.first()) {
+                val next = queueRepo.observeIncomplete().first()
+                    .firstOrNull { it.kind == QueueItemKind.PODCAST.name }
+                next?.refId?.toLongOrNull()?.let { _navigateToNext.tryEmit(it) }
+            }
+        }
     }
 
     private fun startPolling() {
@@ -114,6 +158,10 @@ class PodcastPlayerViewModel @Inject constructor(
         val uri = Uri.fromFile(File(path))
         c.setMediaItem(MediaItem.fromUri(uri))
         c.prepare()
+        // Auto-start playback when the player opens (#29). Opening the
+        // player from the queue / library row previously left it paused
+        // and the user had to tap play — friction the bug report flagged.
+        c.play()
         loaded = true
     }
 

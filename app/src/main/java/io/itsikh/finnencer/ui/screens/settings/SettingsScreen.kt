@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Engineering
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
@@ -86,6 +87,7 @@ fun SettingsScreen(
     val showBugButton by viewModel.showBugButton.collectAsState()
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
+    val podcastAutoPlayNext by viewModel.podcastAutoPlayNext.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val exportState by viewModel.exportState.collectAsState()
     val restoreState by viewModel.restoreState.collectAsState()
@@ -186,6 +188,19 @@ fun SettingsScreen(
                         Switch(
                             checked = showDiagnoseButtons,
                             onCheckedChange = viewModel::setShowDiagnoseButtons,
+                            colors = switchColors(),
+                        )
+                    },
+                )
+                SettingsRow(
+                    title = "Auto-play next podcast in queue",
+                    subtitle = "When a podcast ends, automatically play the next podcast queued in your To do list.",
+                    icon = Icons.Default.Headphones,
+                    iconTint = FinnencerColors.Violet,
+                    trailing = {
+                        Switch(
+                            checked = podcastAutoPlayNext,
+                            onCheckedChange = viewModel::setPodcastAutoPlayNext,
                             colors = switchColors(),
                         )
                     },

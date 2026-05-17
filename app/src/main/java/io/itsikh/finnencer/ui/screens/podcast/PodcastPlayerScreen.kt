@@ -56,10 +56,17 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PodcastPlayerScreen(onBack: () -> Unit) {
+fun PodcastPlayerScreen(
+    onBack: () -> Unit,
+    onOpenPodcast: (Long) -> Unit = {},
+) {
     val vm: PodcastPlayerViewModel = hiltViewModel()
     val podcast by vm.podcast.collectAsState()
     val ui by vm.ui.collectAsState()
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        vm.navigateToNext.collect { nextId -> onOpenPodcast(nextId) }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,

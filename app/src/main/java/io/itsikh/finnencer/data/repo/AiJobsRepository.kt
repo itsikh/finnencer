@@ -210,6 +210,27 @@ class AiJobsRepository @Inject constructor(
 
     suspend fun delete(jobId: String) = dao.delete(jobId)
 
+    /**
+     * Re-run a previously-finished job (failed, completed, or canceled).
+     * Reuses the same row id + inputJson so the user's history shows
+     * "the same thing happened again" rather than a duplicate row.
+     */
+    suspend fun retry(jobId: String) {
+        val existing = dao.get(jobId) ?: return
+        dao.markQueued(jobId)
+        val request = OneTimeWorkRequestBuilder<AiJobWorker>()
+            .setInputData(workDataOf(AiJobWorker.KEY_JOB_ID to existing.id))
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .addTag(TAG_AI_JOB)
+            .addTag("ai-job:${existing.id}")
+            .build()
+        WorkManager.getInstance(context).enqueue(request)
+    }
+
     companion object {
         const val TAG_AI_JOB = "ai-job"
     }

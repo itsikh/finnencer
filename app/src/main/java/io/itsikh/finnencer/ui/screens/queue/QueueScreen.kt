@@ -365,76 +365,89 @@ private fun QueueRow(
             },
     ) {
         GlassCard {
+            // Outer Row is the layout container. The drag handle on the
+            // trailing edge has its own touch zone — combinedClickable on
+            // the content half stole the long-press gesture and made
+            // drag-to-reorder impossible (#30).
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(onClick = onTap, onLongClick = onLongPress)
-                    .background(rowColor)
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (selectionMode) {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) FinnencerColors.Violet else Color.Transparent)
-                            .border(
-                                1.dp,
-                                if (selected) FinnencerColors.Violet else FinnencerColors.TextTertiary,
-                                CircleShape,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (selected) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = null,
-                                tint = FinnencerColors.TextOnAccent,
-                                modifier = Modifier.size(14.dp),
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .combinedClickable(onClick = onTap, onLongClick = onLongPress)
+                        .background(rowColor)
+                        .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (selectionMode) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) FinnencerColors.Violet else Color.Transparent)
+                                .border(
+                                    1.dp,
+                                    if (selected) FinnencerColors.Violet else FinnencerColors.TextTertiary,
+                                    CircleShape,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = FinnencerColors.TextOnAccent,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    KindBadge(kind = item.kind, ticker = item.tickerSymbol)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            item.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FinnencerColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        val sub = item.subtitle
+                        if (!sub.isNullOrBlank()) {
+                            Text(
+                                sub,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
-                    Spacer(Modifier.width(10.dp))
-                }
-                KindBadge(kind = item.kind, ticker = item.tickerSymbol)
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        item.title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = FinnencerColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val sub = item.subtitle
-                    if (!sub.isNullOrBlank()) {
-                        Text(
-                            sub,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                if (!selectionMode) {
-                    // Quick-action: mark done / undone via row-level icon.
-                    IconButton(onClick = onComplete) {
-                        Icon(
-                            if (item.completedAtMillis == null) Icons.Default.Check else Icons.Default.Undo,
-                            contentDescription = if (item.completedAtMillis == null) "Mark done" else "Move back to To do",
-                            tint = if (item.completedAtMillis == null) FinnencerColors.Mint
-                                   else FinnencerColors.Violet,
-                            modifier = Modifier.size(20.dp),
-                        )
+                    if (!selectionMode) {
+                        // Quick-action: mark done / undone via row-level icon.
+                        IconButton(onClick = onComplete) {
+                            Icon(
+                                if (item.completedAtMillis == null) Icons.Default.Check else Icons.Default.Undo,
+                                contentDescription = if (item.completedAtMillis == null) "Mark done" else "Move back to To do",
+                                tint = if (item.completedAtMillis == null) FinnencerColors.Mint
+                                       else FinnencerColors.Violet,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
                 if (showDragHandle) {
+                    // Outside the combinedClickable Row so the
+                    // detectDragGesturesAfterLongPress on `dragModifier`
+                    // actually wins the long-press gesture instead of
+                    // being preempted by the parent's onLongClick.
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(48.dp)
                             .then(dragModifier),
                         contentAlignment = Alignment.Center,
                     ) {

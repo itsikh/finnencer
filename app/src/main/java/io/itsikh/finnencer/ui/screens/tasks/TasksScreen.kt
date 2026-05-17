@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -78,6 +79,10 @@ class TasksViewModel @Inject constructor(
 
     fun delete(id: String) {
         viewModelScope.launch { repo.delete(id) }
+    }
+
+    fun retry(id: String) {
+        viewModelScope.launch { repo.retry(id) }
     }
 
     fun clearFinished() {
@@ -148,6 +153,7 @@ fun TasksScreen(
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
+                        onRetry = { vm.retry(job.id) },
                     )
                 }
             }
@@ -160,6 +166,7 @@ fun TasksScreen(
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
+                        onRetry = { vm.retry(job.id) },
                     )
                 }
             }
@@ -172,6 +179,7 @@ fun TasksScreen(
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
+                        onRetry = { vm.retry(job.id) },
                     )
                 }
             }
@@ -224,6 +232,7 @@ private fun JobRow(
     onOpenPodcast: (Long) -> Unit,
     onOpenReader: () -> Unit,
     onDelete: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val statusColor = statusAccent(job.status)
@@ -272,6 +281,18 @@ private fun JobRow(
                             contentDescription = if (expanded) "Collapse" else "Expand",
                             tint = FinnencerColors.TextSecondary,
                             modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                val canRetry = job.status == AiJobStatus.FAILED.name ||
+                    job.status == AiJobStatus.CANCELED.name
+                if (canRetry) {
+                    IconButton(onClick = onRetry, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Retry",
+                            tint = FinnencerColors.Violet,
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }

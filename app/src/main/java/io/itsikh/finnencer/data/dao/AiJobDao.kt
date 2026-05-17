@@ -69,6 +69,28 @@ interface AiJobDao {
     )
     suspend fun markFailed(id: String, status: String, errorMessage: String, nowMs: Long)
 
+    /**
+     * Reset a finished (failed / completed / canceled) job back to
+     * QUEUED so a fresh worker run can pick it up. Clears the timing
+     * + result fields so the Tasks UI doesn't show stale "failed at"
+     * info while it's retrying.
+     */
+    @Query(
+        """
+        UPDATE ai_jobs
+        SET status = 'QUEUED',
+            errorMessage = NULL,
+            startedAtMillis = NULL,
+            completedAtMillis = NULL,
+            resultKind = NULL,
+            resultRefId = NULL,
+            resultText = NULL,
+            resultModel = NULL
+        WHERE id = :id
+        """
+    )
+    suspend fun markQueued(id: String)
+
     @Query("DELETE FROM ai_jobs WHERE id = :id")
     suspend fun delete(id: String)
 

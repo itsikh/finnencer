@@ -14,8 +14,11 @@ import io.itsikh.finnencer.data.api.GeminiSpeechConfig
 import io.itsikh.finnencer.data.api.GeminiVoiceConfig
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.entity.ApiUsage
+import kotlinx.coroutines.delay
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
@@ -55,38 +58,76 @@ class GeminiTts @Inject constructor(
         val chunks = chunkAtSpeakerBoundaries(script, CHARS_PER_CHUNK)
         if (chunks.isEmpty()) error("Empty script")
 
-        val pcmStream = ByteArrayOutputStreamSimple()
+        // Stream decoded PCM straight to a temp file rather than
+        // accumulating in an in-memory ByteArrayOutputStream. A 10-min
+        // podcast is ~60 MB of PCM across ~6 chunks; holding all of it
+        // on the heap (twice, since .toByteArray() copies) triggers
+        // OutOfMemoryError on real devices (#31 — Base64.decode OOM).
+        outputFile.parentFile?.mkdirs()
+        val pcmTmp = File(outputFile.parentFile, "${outputFile.name}.pcm.tmp")
+        runCatching { pcmTmp.delete() }
         var charsSubmitted = 0
+        var pcmTotalBytes = 0L
         val startedAt = System.currentTimeMillis()
 
-        for ((idx, chunk) in chunks.withIndex()) {
-            val req = buildRequest(chunk, voices)
-            val resp = runCatching { service.generateContent(model = model, request = req) }
-                .onFailure {
-                    Log.w(TAG, "tts chunk $idx failed: ${it.message}")
-                }
-                .getOrThrow()
-            val part = resp.candidates.firstOrNull()?.content?.parts?.firstOrNull()
-            val inline = part?.inlineData ?: error("Gemini returned no inlineData in chunk $idx")
-            val bytes = Base64.decode(inline.data, Base64.DEFAULT)
-            // inlineData is raw PCM (audio/L16). Append directly; we'll wrap
-            // a WAV header around the whole thing once at the end.
-            pcmStream.write(bytes)
-            charsSubmitted += chunk.length
-            Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} ok (${bytes.size}B)")
+        FileOutputStream(pcmTmp).use { pcmOut ->
+            for ((idx, chunk) in chunks.withIndex()) {
+                val req = buildRequest(chunk, voices)
+                val resp = generateWithRetry(model, req, idx)
+                val part = resp.candidates.firstOrNull()?.content?.parts?.firstOrNull()
+                val inline = part?.inlineData ?: error("Gemini returned no inlineData in chunk $idx")
+                val bytes = Base64.decode(inline.data, Base64.DEFAULT)
+                pcmOut.write(bytes)
+                pcmTotalBytes += bytes.size
+                charsSubmitted += chunk.length
+                Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} ok (${bytes.size}B)")
+                // Don't hold the per-chunk Base64 string / decoded bytes
+                // any longer than needed — the JSON response from Retrofit
+                // already kept them in heap once.
+                @Suppress("UNUSED_VALUE", "AssignedValueIsNeverRead")
+                var unused: ByteArray? = bytes
+                unused = null
+            }
         }
 
-        val pcmBytes = pcmStream.toByteArray()
-        writeWav(pcmBytes = pcmBytes, sampleRateHz = SAMPLE_RATE, outputFile = outputFile)
+        writeWavFromPcmFile(pcmTmp, pcmTotalBytes, SAMPLE_RATE, outputFile)
+        runCatching { pcmTmp.delete() }
 
-        val durationMs = (pcmBytes.size / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000L
-        recordUsage(model, charsSubmitted, pcmBytes.size, startedAt, ok = true, err = null)
+        val durationMs = (pcmTotalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000L
+        recordUsage(model, charsSubmitted, pcmTotalBytes.toInt(), startedAt, ok = true, err = null)
         return TtsResult(
             file = outputFile,
             durationMs = durationMs,
             bytes = outputFile.length(),
             chunks = chunks.size,
         )
+    }
+
+    /**
+     * Call Gemini's generate-content endpoint with a small retry loop
+     * over [SocketTimeoutException] — those are flaky in the field
+     * (#31 logs showed `tts chunk 1 failed: timeout` repeatedly) and
+     * the request is idempotent.
+     */
+    private suspend fun generateWithRetry(
+        model: String,
+        req: GeminiGenerateRequest,
+        chunkIdx: Int,
+    ): io.itsikh.finnencer.data.api.GeminiGenerateResponse {
+        var lastErr: Throwable? = null
+        for (attempt in 0 until RETRY_ATTEMPTS) {
+            try {
+                return service.generateContent(model = model, request = req)
+            } catch (t: SocketTimeoutException) {
+                lastErr = t
+                Log.w(TAG, "tts chunk $chunkIdx attempt ${attempt + 1}/$RETRY_ATTEMPTS timed out, retrying")
+                delay(RETRY_BACKOFF_MS_BASE shl attempt) // 1s, 2s, 4s
+            } catch (t: Throwable) {
+                Log.w(TAG, "tts chunk $chunkIdx failed: ${t.message}")
+                throw t
+            }
+        }
+        throw lastErr ?: IllegalStateException("tts chunk $chunkIdx failed after $RETRY_ATTEMPTS attempts")
     }
 
     private fun buildRequest(text: String, voices: VoicePair) = GeminiGenerateRequest(
@@ -153,10 +194,21 @@ class GeminiTts @Inject constructor(
         return out
     }
 
-    private fun writeWav(pcmBytes: ByteArray, sampleRateHz: Int, outputFile: File) {
+    /**
+     * Stream a WAV file: write the 44-byte header, then copy PCM bytes
+     * from [pcmFile] directly to [outputFile]. Never loads the full PCM
+     * into memory.
+     */
+    private fun writeWavFromPcmFile(
+        pcmFile: File,
+        pcmSizeBytes: Long,
+        sampleRateHz: Int,
+        outputFile: File,
+    ) {
         outputFile.parentFile?.mkdirs()
+        val pcmSize = pcmSizeBytes.toInt() // WAV header is 32-bit
         FileOutputStream(outputFile).use { fos ->
-            val totalDataLen = pcmBytes.size + 36
+            val totalDataLen = pcmSize + 36
             val byteRate = sampleRateHz * BYTES_PER_SAMPLE
             fos.write(
                 byteArrayOf(
@@ -181,13 +233,20 @@ class GeminiTts @Inject constructor(
                     2, 0,        // block align (mono * 16/8)
                     16, 0,       // bits per sample
                     'd'.code.toByte(), 'a'.code.toByte(), 't'.code.toByte(), 'a'.code.toByte(),
-                    (pcmBytes.size and 0xff).toByte(),
-                    ((pcmBytes.size shr 8) and 0xff).toByte(),
-                    ((pcmBytes.size shr 16) and 0xff).toByte(),
-                    ((pcmBytes.size shr 24) and 0xff).toByte(),
+                    (pcmSize and 0xff).toByte(),
+                    ((pcmSize shr 8) and 0xff).toByte(),
+                    ((pcmSize shr 16) and 0xff).toByte(),
+                    ((pcmSize shr 24) and 0xff).toByte(),
                 )
             )
-            fos.write(pcmBytes)
+            FileInputStream(pcmFile).use { fis ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = fis.read(buf)
+                    if (n <= 0) break
+                    fos.write(buf, 0, n)
+                }
+            }
         }
     }
 
@@ -228,18 +287,13 @@ class GeminiTts @Inject constructor(
         val chunks: Int,
     )
 
-    /** Tiny stand-in for ByteArrayOutputStream that ignores @Throws ceremony. */
-    private class ByteArrayOutputStreamSimple {
-        private val buf = java.io.ByteArrayOutputStream()
-        fun write(b: ByteArray) { buf.write(b, 0, b.size) }
-        fun toByteArray(): ByteArray = buf.toByteArray()
-    }
-
     private companion object {
         const val TAG = "GeminiTts"
         const val CHARS_PER_CHUNK = 4_500
         const val SAMPLE_RATE = 24_000
         const val BYTES_PER_SAMPLE = 2 // 16-bit mono
+        const val RETRY_ATTEMPTS = 3
+        const val RETRY_BACKOFF_MS_BASE = 1_000L
         private fun nope(@Suppress("unused") v: Any) {
             @Suppress("UNUSED_EXPRESSION") min(0, 0)
         }
