@@ -47,6 +47,29 @@ interface EarningsDao {
     )
     suspend fun findFiscal(symbol: String, year: Int, quarter: Int): EarningsEvent?
 
+    /**
+     * Find the EarningsEvent for [symbol] whose scheduled date is closest
+     * to [aroundMillis] and falls within ±[windowMillis] of it. Lets the
+     * numeric sync match an event without depending on (fiscal_year,
+     * fiscal_quarter) — EDGAR's filing-date heuristic and Finnhub's
+     * company-fiscal labels disagree for companies with offset fiscal
+     * calendars (NVDA / AAPL / MSFT / ORCL / etc.).
+     */
+    @Query(
+        """
+        SELECT * FROM earnings_events
+        WHERE ticker_symbol = :symbol
+          AND ABS(scheduled_at_millis - :aroundMillis) <= :windowMillis
+        ORDER BY ABS(scheduled_at_millis - :aroundMillis) ASC
+        LIMIT 1
+        """
+    )
+    suspend fun findNearestByDate(
+        symbol: String,
+        aroundMillis: Long,
+        windowMillis: Long,
+    ): EarningsEvent?
+
     @Query("SELECT * FROM earnings_events WHERE id = :id")
     suspend fun getEvent(id: Long): EarningsEvent?
 
