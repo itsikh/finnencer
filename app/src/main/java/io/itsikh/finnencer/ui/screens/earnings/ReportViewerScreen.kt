@@ -1,35 +1,52 @@
 package io.itsikh.finnencer.ui.screens.earnings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-
+import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,9 +54,22 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 fun ReportViewerScreen(
     onBack: () -> Unit,
     onListen: (reportId: Long) -> Unit,
+    onOpenReportId: (Long) -> Unit = {},
+    onOpenReader: () -> Unit = {},
 ) {
     val vm: ReportViewerViewModel = hiltViewModel()
     val report by vm.report.collectAsState()
+    val action by vm.action.collectAsState()
+    var podcastPickerOpen by remember { mutableStateOf(false) }
+
+    // Navigate to the newly-produced report when a regenerate/upgrade
+    // completes, so the user lands on the fresh version automatically.
+    LaunchedEffect(action.producedReportId) {
+        action.producedReportId?.let {
+            vm.acknowledgeProduced()
+            onOpenReportId(it)
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -66,7 +96,7 @@ fun ReportViewerScreen(
                         IconButton(onClick = { onListen(r.id) }) {
                             Icon(
                                 Icons.Default.Headphones,
-                                contentDescription = "Listen as podcast",
+                                contentDescription = "Listen now",
                                 tint = FinnencerColors.Violet,
                             )
                         }
@@ -88,6 +118,7 @@ fun ReportViewerScreen(
             return@Scaffold
         }
 
+        val currentTier = ReportTier.entries.firstOrNull { it.name == r.tier }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -102,11 +133,34 @@ fun ReportViewerScreen(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "${r.tier} · ${r.model}",
+                "${r.tier} · ${io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model) ?: r.model}",
                 style = MaterialTheme.typography.labelMedium,
                 color = FinnencerColors.TextTertiary,
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
+
+            // Action chips so the user can re-run / upgrade / make a
+            // podcast / open in Reader from inside the report itself
+            // instead of having to back out to the ticker feed (#21).
+            ReportActionRow(
+                currentTier = currentTier,
+                action = action,
+                onRegenerate = vm::regenerate,
+                onUpgrade = vm::upgradeTier,
+                onMakePodcast = { podcastPickerOpen = true },
+                onOpenReader = {
+                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
+                        io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
+                            title = r.title,
+                            body = r.contentMarkdown,
+                            attribution = io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model)
+                                ?.let { "via $it" },
+                        )
+                    )
+                    onOpenReader()
+                },
+            )
+            Spacer(Modifier.height(14.dp))
 
             // For MVP we render the markdown body as plain text styled with
             // light line-height. A future polish pass can swap in a real
@@ -118,5 +172,153 @@ fun ReportViewerScreen(
             )
             Spacer(Modifier.height(40.dp))
         }
+    }
+
+    if (podcastPickerOpen) {
+        AlertDialog(
+            onDismissRequest = { podcastPickerOpen = false },
+            title = { Text("Earnings podcast") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Renders a multi-voice podcast scripted from this report's text. Progress in Tasks.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinnencerColors.TextSecondary,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        vm.makePodcast(m)
+                                        podcastPickerOpen = false
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "${m.minutes} min",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = FinnencerColors.Amber,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { podcastPickerOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (action.podcastQueued) {
+        AlertDialog(
+            onDismissRequest = vm::resetPodcastQueued,
+            title = { Text("Podcast queued") },
+            text = {
+                Text(
+                    "Watch progress in the Tasks tab — your podcast will land in Podcasts once it's rendered.",
+                    color = FinnencerColors.TextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::resetPodcastQueued) { Text("OK") }
+            },
+        )
+    }
+
+    action.error?.let { msg ->
+        AlertDialog(
+            onDismissRequest = vm::clearError,
+            title = { Text("Something went wrong") },
+            text = { Text(msg, color = FinnencerColors.TextSecondary) },
+            confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } },
+        )
+    }
+}
+
+@Composable
+private fun ReportActionRow(
+    currentTier: ReportTier?,
+    action: ReportViewerActionState,
+    onRegenerate: () -> Unit,
+    onUpgrade: () -> Unit,
+    onMakePodcast: () -> Unit,
+    onOpenReader: () -> Unit,
+) {
+    val nextTierLabel = when (currentTier) {
+        ReportTier.BRIEF -> "Upgrade to Standard"
+        ReportTier.STANDARD -> "Upgrade to Deep"
+        ReportTier.DEEP -> null
+        null -> null
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ActionChip(
+            label = "Regenerate",
+            accent = FinnencerColors.Violet,
+            busy = action.regenerating,
+            onClick = onRegenerate,
+        )
+        nextTierLabel?.let { label ->
+            ActionChip(
+                label = label,
+                accent = FinnencerColors.Amber,
+                busy = action.upgradeBusy,
+                onClick = onUpgrade,
+            )
+        }
+        ActionChip(
+            label = "Podcast",
+            accent = FinnencerColors.Mint,
+            busy = false,
+            onClick = onMakePodcast,
+        )
+        ActionChip(
+            label = "Read mode",
+            accent = FinnencerColors.Violet.copy(alpha = 0.7f),
+            busy = false,
+            onClick = onOpenReader,
+        )
+    }
+}
+
+@Composable
+private fun ActionChip(
+    label: String,
+    accent: Color,
+    busy: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(accent.copy(alpha = 0.18f))
+            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+            .clickable(enabled = !busy, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                color = accent,
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.size(6.dp))
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = accent,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

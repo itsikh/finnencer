@@ -222,21 +222,44 @@ fun ReaderScreen(onBack: () -> Unit) {
             // size here is the viewport height; `barTop` already maps the
             // scroll position into viewport-space, so the bar tracks
             // progress visibly.
+            // Always-visible right-side scroll indicator: track (so you
+            // can see the full range) + accent-coloured thumb that tracks
+            // progress. Drawn on the OUTER (viewport-sized) Box on purpose
+            // — drawing on the verticalScroll'd child would translate the
+            // bar by `-scrollState.value` along with the prose, dragging
+            // it off-screen as the user scrolls.
             .drawWithContent {
                 drawContent()
                 val max = scrollState.maxValue
-                if (max > 0) {
-                    val viewport = size.height
-                    val total = viewport + max
-                    val barHeight = (viewport * viewport / total).coerceAtLeast(48f)
-                    val barTop = (scrollState.value / max.toFloat()) * (viewport - barHeight)
-                    drawRoundRect(
-                        color = palette.muted.copy(alpha = 0.65f),
-                        topLeft = androidx.compose.ui.geometry.Offset(size.width - 8f, barTop),
-                        size = androidx.compose.ui.geometry.Size(4f, barHeight),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f),
-                    )
-                }
+                if (max <= 0) return@drawWithContent
+                val viewport = size.height
+                val total = viewport + max
+                val barWidth = 6f
+                val rightInset = 6f
+                val verticalInset = 8f
+                val trackHeight = viewport - verticalInset * 2
+                val barHeight = (viewport * trackHeight / total).coerceAtLeast(72f)
+                val barTop = verticalInset +
+                    (scrollState.value / max.toFloat()) * (trackHeight - barHeight)
+                val x = size.width - rightInset - barWidth
+
+                // Background track — soft so it never competes with the
+                // prose visually, just enough to anchor where the thumb
+                // can travel.
+                drawRoundRect(
+                    color = palette.muted.copy(alpha = 0.18f),
+                    topLeft = androidx.compose.ui.geometry.Offset(x, verticalInset),
+                    size = androidx.compose.ui.geometry.Size(barWidth, trackHeight),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2, barWidth / 2),
+                )
+                // Accent-coloured thumb — full opacity so the user can see
+                // at a glance where they are in a multi-page summary.
+                drawRoundRect(
+                    color = palette.accent.copy(alpha = 0.9f),
+                    topLeft = androidx.compose.ui.geometry.Offset(x, barTop),
+                    size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2, barWidth / 2),
+                )
             }
         ) {
             Box(

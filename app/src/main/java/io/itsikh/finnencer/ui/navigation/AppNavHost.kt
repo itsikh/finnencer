@@ -100,6 +100,16 @@ fun AppNavHost() {
                 ReportViewerScreen(
                     onBack = { navController.popBackStack() },
                     onListen = { id -> navController.navigate("podcast/from-report/$id") },
+                    onOpenReportId = { newId ->
+                        // Replace the current report entry in the back stack
+                        // with the newly-produced one (regenerate / upgrade)
+                        // so Back from there returns to the ticker feed
+                        // rather than the stale report.
+                        navController.navigate("report/$newId") {
+                            popUpTo("report/{reportId}") { inclusive = true }
+                        }
+                    },
+                    onOpenReader = { navController.navigate("reader") },
                 )
             }
             composable("podcast/from-report/{reportId}") {
