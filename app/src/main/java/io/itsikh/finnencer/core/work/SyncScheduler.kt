@@ -3,6 +3,7 @@ package io.itsikh.finnencer.core.work
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -10,6 +11,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -61,7 +63,12 @@ class SyncScheduler @Inject constructor(
         )
     }
 
-    /** Fire-and-forget one-off sync. Useful for pull-to-refresh later. */
+    /**
+     * Fire-and-forget one-off sync. Registered under [ONCE_NAME] (not the
+     * periodic [UNIQUE_NAME]) so it doesn't clobber the periodic schedule,
+     * AND so [isSyncRunning] can include it — without that registration
+     * the run-once work was invisible to the UI progress indicator.
+     */
     fun runOnceNow() {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(
@@ -70,7 +77,11 @@ class SyncScheduler @Inject constructor(
                     .build()
             )
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            ONCE_NAME,
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     fun cancel() {
@@ -78,16 +89,30 @@ class SyncScheduler @Inject constructor(
     }
 
     /**
-     * Reactive "is a sync currently in flight?" flag — true while the
-     * periodic or one-off worker is in RUNNING state. UI surfaces this as
-     * the thin top-of-screen progress bar.
+     * Reactive "is a sync currently in flight?" flag — true while EITHER
+     * the periodic worker OR a user-triggered one-off is RUNNING / ENQUEUED.
+     * Including ENQUEUED here means the progress bar shows up immediately
+     * after the user taps refresh, rather than waiting for WorkManager to
+     * transition the job to RUNNING (which can lag a beat or two).
      */
-    val isSyncRunning: Flow<Boolean> =
-        WorkManager.getInstance(context)
-            .getWorkInfosForUniqueWorkFlow(UNIQUE_NAME)
-            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING } }
+    val isSyncRunning: Flow<Boolean> = combine(
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(UNIQUE_NAME),
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(ONCE_NAME),
+    ) { periodic, once ->
+        // Periodic sits in ENQUEUED state between firings — don't treat
+        // that as "running" or the bar would never turn off. The one-off
+        // queue, however, only contains an entry when the user just
+        // tapped refresh, so ENQUEUED there means "about to run" and is
+        // worth surfacing immediately.
+        val periodicRunning = periodic.any { it.state == WorkInfo.State.RUNNING }
+        val onceActive = once.any {
+            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
+        }
+        periodicRunning || onceActive
+    }
 
     private companion object {
         const val UNIQUE_NAME = "finnencer-sync"
+        const val ONCE_NAME = "finnencer-sync-once"
     }
 }
