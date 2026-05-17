@@ -1,5 +1,6 @@
 package io.itsikh.finnencer.data.providers
 
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import io.itsikh.finnencer.data.api.SecEdgarService
@@ -94,8 +95,10 @@ class EdgarXbrlExtractor @Inject constructor(
         // use RevenueFromContractWithCustomerExcludingAssessedTax.
         val revenueByPeriod = pickConcept(
             gaap,
-            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            // Order doesn't matter now (we union) — but list both because
+            // some companies use only one of the two concepts.
             "Revenues",
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
             unit = "USD",
         )
         val grossByPeriod = pickConcept(gaap, "GrossProfit", unit = "USD")
@@ -113,8 +116,18 @@ class EdgarXbrlExtractor @Inject constructor(
 
         // Use revenue's period set as the spine — every reasonable income
         // statement has a top line, and we want to land on rows the
-        // company actually filed.
-        val periodKeys = revenueByPeriod.keys.sortedByDescending { it.periodEnd }
+        // company actually filed. Sort by periodEnd descending and
+        // dedupe by (start, end) — XBRL re-files the same period
+        // multiple times under different `fy` values (comparative
+        // columns in later 10-Ks), and we only want one entry per
+        // physical period. Within a tie, prefer the entry whose `fy`
+        // matches the period (the original primary filing).
+        val periodKeys = revenueByPeriod.keys
+            .sortedWith(
+                compareByDescending<PeriodKey> { it.periodEnd }
+                    .thenBy { kotlin.math.abs(it.fiscalYear - it.periodEnd.year) }
+            )
+            .distinctBy { it.periodStart to it.periodEnd }
 
         return periodKeys
             .asSequence()
@@ -181,9 +194,14 @@ class EdgarXbrlExtractor @Inject constructor(
     private data class Reported(val value: Double)
 
     /**
-     * For [concepts] (tried in order), grab the parsed USD/USD-per-share
-     * series and key it by [PeriodKey]. Later entries with identical
-     * periods overwrite — XBRL re-files happen; we trust the latest one.
+     * Collect entries across every concept in [concepts] and merge by
+     * [PeriodKey]. Earlier versions stopped at the first concept that
+     * returned anything — that silently dropped the latest data for
+     * NVDA et al., which migrated from `Revenues` to
+     * `RevenueFromContractWithCustomerExcludingAssessedTax` for the
+     * ASC-606 transition (FY2018-FY2022) and then back to `Revenues`.
+     * Single-concept lookup found only one half of the timeline. Now
+     * we union them.
      */
     private fun pickConcept(
         gaap: JsonObject,
@@ -197,33 +215,55 @@ class EdgarXbrlExtractor @Inject constructor(
             val arr = units.getAsJsonArray(unit) ?: continue
             for (el in arr) {
                 val o = el.asJsonObject
-                val start = o.get("start")?.asString ?: continue
-                val end = o.get("end")?.asString ?: continue
-                val fy = o.get("fy")?.asInt ?: continue
-                val fp = o.get("fp")?.asString ?: continue
-                val form = o.get("form")?.asString ?: continue
-                // 10-Q (quarter and YTD entries) + 10-K (fiscal year and
-                // Q4 standalone, when companies bother to tag it). 8-K
-                // earnings releases aren't XBRL-tagged for the income
-                // statement, so they don't show up here.
-                if (form != "10-Q" && form != "10-K") continue
-                val value = o.get("val")?.asDouble ?: continue
-                val key = PeriodKey(
-                    periodStart = LocalDate.parse(start),
-                    periodEnd = LocalDate.parse(end),
-                    fiscalYear = fy,
-                    fiscalPeriod = fp,
-                    form = form,
-                    accn = o.get("accn")?.asString,
-                )
-                out[key] = Reported(value)
+                // SEC's XBRL JSON occasionally emits explicit `null` for
+                // optional fields (most commonly `fp` on amended or
+                // restated filings). Gson surfaces those as JsonNull
+                // elements, and calling `.asString` / `.asInt` on
+                // JsonNull throws UnsupportedOperationException — that's
+                // what surfaced as a bare "JsonNull" error in earlier
+                // testing. Wrap each row in runCatching so one bad
+                // entry can't poison the whole quarter list.
+                runCatching {
+                    val start = o.optString("start") ?: return@runCatching
+                    val end = o.optString("end") ?: return@runCatching
+                    val fy = o.optInt("fy") ?: return@runCatching
+                    val fp = o.optString("fp") ?: return@runCatching
+                    val form = o.optString("form") ?: return@runCatching
+                    // 10-Q (quarter and YTD entries) + 10-K (fiscal year
+                    // and Q4 standalone, when companies bother to tag
+                    // it). 8-K earnings releases aren't XBRL-tagged for
+                    // the income statement, so they don't show up here.
+                    if (form != "10-Q" && form != "10-K") return@runCatching
+                    val value = o.optDouble("val") ?: return@runCatching
+                    val key = PeriodKey(
+                        periodStart = LocalDate.parse(start),
+                        periodEnd = LocalDate.parse(end),
+                        fiscalYear = fy,
+                        fiscalPeriod = fp,
+                        form = form,
+                        accn = o.optString("accn"),
+                    )
+                    out[key] = Reported(value)
+                }.onFailure {
+                    AppLogger.w(TAG, "skipping bad XBRL row in $concept: ${it.message}")
+                }
             }
-            // Stop at the first concept that returned anything — the
-            // fallback list is "first preference, second preference".
-            if (out.isNotEmpty()) return out
+            // Continue across all concepts and union the results — see
+            // class docstring above.
         }
         return out
     }
+
+    /** JsonNull-safe accessors. `JsonObject.get` returns null for missing
+     *  keys but a JsonNull element for present-but-null keys; the typed
+     *  accessors (.asString, .asInt, .asDouble) throw on JsonNull. These
+     *  helpers collapse both "missing" and "null" into Kotlin null. */
+    private fun JsonObject.optString(key: String): String? =
+        this.get(key)?.takeIf { !it.isJsonNull }?.asString
+    private fun JsonObject.optInt(key: String): Int? =
+        this.get(key)?.takeIf { !it.isJsonNull }?.asInt
+    private fun JsonObject.optDouble(key: String): Double? =
+        this.get(key)?.takeIf { !it.isJsonNull }?.asDouble
 
     private companion object {
         const val TAG = "XbrlExtractor"
