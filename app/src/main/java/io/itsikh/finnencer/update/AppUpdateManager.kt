@@ -24,7 +24,26 @@ import java.util.concurrent.TimeUnit
  */
 data class UpdateInfo(
     val version: String,
-    val downloadUrl: String
+    val downloadUrl: String,
+    /** Markdown body of the GitHub release. Populated when available; null if the
+     *  release has no description or the API call couldn't parse one. */
+    val releaseNotes: String? = null,
+)
+
+/**
+ * Lightweight payload for the in-app "What's new" screen. Unlike [UpdateInfo]
+ * this is returned regardless of whether the remote version is newer than
+ * the installed one — users who are already on the latest can still review
+ * the notes for their current version.
+ */
+data class ReleaseNotesView(
+    val version: String,
+    val tagName: String,
+    val publishedAtMillis: Long?,
+    val notesMarkdown: String,
+    val htmlUrl: String?,
+    /** True if [version] is strictly newer than the currently-installed app. */
+    val isNewerThanInstalled: Boolean,
 )
 
 /**
@@ -136,9 +155,62 @@ class AppUpdateManager(
             }
 
             AppLogger.i(TAG, "Update available: $remoteVersion (current: ${BuildConfig.VERSION_NAME})")
-            UpdateInfo(version = remoteVersion, downloadUrl = apkAssetUrl)
+            val notes = json.get("body")?.asString?.trim()?.takeIf { it.isNotEmpty() }
+            UpdateInfo(
+                version = remoteVersion,
+                downloadUrl = apkAssetUrl,
+                releaseNotes = notes,
+            )
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to check for update", e)
+            null
+        }
+    }
+
+    /**
+     * Returns release notes for the latest tag *regardless* of whether the
+     * remote version is newer than the installed one. Powers the in-app
+     * "What's new" screen — users on the latest version still want to see
+     * what shipped in their current build, so this returns a value even
+     * when [checkForUpdate] would have returned null.
+     */
+    suspend fun fetchLatestReleaseNotes(): ReleaseNotesView? = withContext(Dispatchers.IO) {
+        try {
+            val token = secureKeyManager.getKey(KEY_GITHUB_TOKEN)
+            if (token.isNullOrBlank()) {
+                AppLogger.w(TAG, "No GitHub token configured - cannot fetch release notes")
+                return@withContext null
+            }
+            val request = Request.Builder()
+                .url("$GITHUB_API_URL/repos/$repoOwner/$repoName/releases/latest")
+                .addHeader("Authorization", "Bearer $token")
+                .addHeader("Accept", "application/vnd.github.v3+json")
+                .get()
+                .build()
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                AppLogger.e(TAG, "GitHub API error: ${response.code} fetching release notes")
+                return@withContext null
+            }
+            val json = JsonParser.parseString(body).asJsonObject
+            val tagName = json.get("tag_name")?.asString ?: return@withContext null
+            val notesBody = json.get("body")?.asString?.trim().orEmpty()
+            val publishedAt = json.get("published_at")?.asString?.let { iso ->
+                runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrNull()
+            }
+            val htmlUrl = json.get("html_url")?.asString
+            val remoteVersion = tagName.removePrefix("v")
+            ReleaseNotesView(
+                version = remoteVersion,
+                tagName = tagName,
+                publishedAtMillis = publishedAt,
+                notesMarkdown = notesBody.ifEmpty { "(No release notes were published for this version.)" },
+                htmlUrl = htmlUrl,
+                isNewerThanInstalled = isNewerVersion(remoteVersion, BuildConfig.VERSION_NAME),
+            )
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to fetch release notes", e)
             null
         }
     }

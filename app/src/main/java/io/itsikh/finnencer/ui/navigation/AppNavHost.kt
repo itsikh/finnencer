@@ -165,6 +165,7 @@ fun AppNavHost() {
                     onOpenCost = { navController.navigate("cost") },
                     onOpenAiPrefs = { navController.navigate("ai_prefs") },
                     onOpenAiPrompts = { navController.navigate("ai_prompts") },
+                    onOpenReleaseNotes = { navController.navigate("release_notes") },
                 )
             }
             composable("ai_prefs") {
@@ -174,6 +175,11 @@ fun AppNavHost() {
             }
             composable("ai_prompts") {
                 io.itsikh.finnencer.ui.screens.settings.PromptEditorScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable("release_notes") {
+                io.itsikh.finnencer.ui.screens.settings.ReleaseNotesScreen(
                     onBack = { navController.popBackStack() },
                 )
             }

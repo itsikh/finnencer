@@ -88,16 +88,64 @@ wait
 ```
 Where `<AppName>` is the `APP_NAME` value from `AppConfig.kt` (spaces replaced with hyphens).
 
-### 9. Create GitHub release and upload APK
+### 9. Generate structured release notes from commits
+The app surfaces these notes in **Settings → What's new**, so every release
+MUST ship structured notes — not the placeholder. Collect commits since
+the previous tag and bucket them by type so the user can scan changes at
+a glance.
+
+```bash
+PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+if [ -n "$PREV_TAG" ]; then
+  RANGE="$PREV_TAG..HEAD"
+else
+  RANGE="HEAD"
+fi
+git log --format='%s' "$RANGE" > /tmp/release-commits.txt
+```
+
+Read `/tmp/release-commits.txt` and classify each subject line:
+
+- **New features** → commits starting with `feat(...):` or `feat:` (and not
+  the chore version-bump). One bullet per commit, rewritten as a
+  user-facing one-liner (drop the prefix, expand abbreviations, keep it
+  readable to a non-developer).
+- **Bug fixes** → commits starting with `fix(...):` or `fix:`. Same
+  rewriting rules. If the subject says `closes #N` or the body
+  references an issue number, append `(#N)` so the user can cross-link.
+- **Improvements / under-the-hood** → commits starting with `perf:`,
+  `refactor:`, `chore:` (excluding the version-bump commits whose
+  subjects start with `chore: release v` or `chore: pre-release`).
+  Optional — include only if at least one entry is user-visible.
+
+Sections with zero entries are omitted entirely. If literally every
+commit is a version-bump (no real changes), use one bullet: "Maintenance
+release; no user-visible changes."
+
+Then publish:
+
 ```bash
 gh release create v<newVersionName> \
   --repo <GITHUB_RELEASES_REPO_OWNER>/<GITHUB_RELEASES_REPO_NAME> \
   --title "<AppName> v<newVersionName>" \
-  --notes "## What's new
-Release v<newVersionName>" \
+  --notes "$(cat <<'EOF'
+## New features
+- …
+
+## Bug fixes
+- …
+
+## Improvements
+- …
+EOF
+)" \
   "<AppName>-v<newVersionName>.apk"
+rm /tmp/release-commits.txt
 rm "<AppName>-v<newVersionName>.apk"
 ```
+
+Substitute the bullets in the heredoc with the categorized list you
+derived above; omit any section whose bullet list would be empty.
 
 ### 10. Print summary
 ```

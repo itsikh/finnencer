@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -74,6 +75,7 @@ fun SettingsScreen(
     onOpenCost: () -> Unit = {},
     onOpenAiPrefs: () -> Unit = {},
     onOpenAiPrompts: () -> Unit = {},
+    onOpenReleaseNotes: () -> Unit = {},
 ) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
@@ -158,6 +160,13 @@ fun SettingsScreen(
                     onCheckNow = viewModel::checkForUpdate,
                     onInstall = viewModel::downloadAndInstall,
                     onReset = viewModel::resetUpdateState,
+                )
+                SettingsRow(
+                    title = "What's new",
+                    subtitle = "Release notes for v${io.itsikh.finnencer.BuildConfig.VERSION_NAME} (and any newer version available)",
+                    icon = Icons.Default.NewReleases,
+                    iconTint = FinnencerColors.Violet,
+                    onClick = onOpenReleaseNotes,
                 )
                 SettingsRow(
                     title = "Cost meter",
