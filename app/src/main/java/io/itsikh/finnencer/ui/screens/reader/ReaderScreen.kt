@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -223,7 +224,27 @@ fun ReaderScreen(onBack: () -> Unit) {
                     .clickable(
                         indication = null,
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    ) { chromeVisible = !chromeVisible },
+                    ) { chromeVisible = !chromeVisible }
+                    // Slim right-side scroll indicator. Vertical progress bar
+                    // pulled into the body via `drawWithContent` so it tracks
+                    // with the content but doesn't claim its own layout slot
+                    // (and doesn't push the prose inward).
+                    .drawWithContent {
+                        drawContent()
+                        val max = scrollState.maxValue
+                        if (max > 0) {
+                            val viewport = size.height
+                            val total = viewport + max
+                            val barHeight = (viewport * viewport / total).coerceAtLeast(40f)
+                            val barTop = (scrollState.value / max.toFloat()) * (viewport - barHeight)
+                            drawRoundRect(
+                                color = palette.muted.copy(alpha = 0.45f),
+                                topLeft = androidx.compose.ui.geometry.Offset(size.width - 6f, barTop),
+                                size = androidx.compose.ui.geometry.Size(3f, barHeight),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f),
+                            )
+                        }
+                    },
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Column(

@@ -9,10 +9,14 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import io.itsikh.finnencer.core.notifications.AiJobNotifier
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.AiJobDao
+import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.entity.AiJobResultKind
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
+import io.itsikh.finnencer.data.entity.ReportTier
+import kotlinx.coroutines.flow.first
 import io.itsikh.finnencer.logging.AppLogger
 
 /**
@@ -34,6 +38,8 @@ class AiJobWorker @AssistedInject constructor(
     private val bundle: BundleSummarizer,
     private val notifier: AiJobNotifier,
     private val gson: Gson,
+    private val reportGenerator: ReportGenerator,
+    private val earningsDao: EarningsDao,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -48,6 +54,7 @@ class AiJobWorker @AssistedInject constructor(
                 AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
                 AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
                 AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
+                AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
                 AiJobType.REPORT_EARNINGS -> {
                     // Not yet routed through this worker — reports still run
                     // synchronously from the tier picker sheet. Mark as
@@ -138,6 +145,47 @@ class AiJobWorker @AssistedInject constructor(
         val minutesValue: Int,
         val customPrompt: String?,
     )
+
+    /**
+     * Per-stock earnings combo payload. The worker resolves an existing
+     * BRIEF report for [earningsEventId] (or generates one if missing) and
+     * then renders a podcast scripted from that report's markdown body.
+     */
+    data class EarningsBriefAndPodcastInput(
+        val earningsEventId: Long,
+        val minutesValue: Int,
+        val customPrompt: String?,
+    )
+
+    private suspend fun runEarningsBriefAndPodcast(jobId: String, json: String, title: String) {
+        val input = gson.fromJson(json, EarningsBriefAndPodcastInput::class.java)
+        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
+            ?: BundleSummarizer.PodcastMinutes.TEN
+        val event = earningsDao.getEvent(input.earningsEventId)
+            ?: error("EarningsEvent ${input.earningsEventId} not found")
+        // Look for an existing BRIEF report for this event; only generate a
+        // new one if there isn't one already, so re-runs don't burn tokens.
+        val existingBrief = earningsDao.observeReportsForTicker(event.tickerSymbol)
+            .first()
+            .firstOrNull { it.earningsEventId == event.id && it.tier == ReportTier.BRIEF.name }
+        val reportId = existingBrief?.id ?: reportGenerator.generate(event.id, ReportTier.BRIEF)
+        val report = earningsDao.getReport(reportId) ?: error("freshly generated report $reportId missing")
+        val podcastId = bundle.podcastFromEarningsReport(
+            reportId = reportId,
+            minutes = minutes,
+            customPrompt = input.customPrompt,
+        )
+        dao.markCompleted(
+            id = jobId,
+            status = AiJobStatus.COMPLETED.name,
+            resultKind = AiJobResultKind.SUMMARY_AND_PODCAST.name,
+            resultRefId = podcastId.toString(),
+            resultText = report.contentMarkdown,
+            resultModel = report.model,
+            nowMs = System.currentTimeMillis(),
+        )
+        notifier.notifyCompleted(jobId, title, "Earnings podcast ready · open Tasks")
+    }
 
     private suspend fun runSummaryAndPodcast(jobId: String, json: String, title: String) {
         val input = gson.fromJson(json, SummaryAndPodcastInput::class.java)

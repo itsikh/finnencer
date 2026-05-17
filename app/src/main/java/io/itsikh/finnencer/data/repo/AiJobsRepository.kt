@@ -79,6 +79,36 @@ class AiJobsRepository @Inject constructor(
         )
     }
 
+    /**
+     * Per-stock earnings combo: BRIEF earnings report (resolved or newly
+     * generated) plus a podcast scripted from it. The worker decides which
+     * model to use; the user just picks the podcast length.
+     */
+    suspend fun enqueueEarningsBriefAndPodcast(
+        tickerSymbol: String,
+        earningsEventId: Long,
+        eventLabel: String,
+        minutes: BundleSummarizer.PodcastMinutes,
+        customPrompt: String?,
+    ): String {
+        val id = UUID.randomUUID().toString()
+        val title = "$tickerSymbol earnings · $eventLabel · ${minutes.minutes}-min podcast"
+        val subtitle = customPrompt?.takeIf { it.isNotBlank() }
+        val input = AiJobWorker.EarningsBriefAndPodcastInput(
+            earningsEventId = earningsEventId,
+            minutesValue = minutes.minutes,
+            customPrompt = customPrompt,
+        )
+        return insertAndEnqueue(
+            id = id,
+            type = AiJobType.EARNINGS_BRIEF_AND_PODCAST,
+            title = title,
+            subtitle = subtitle,
+            tickerSymbol = tickerSymbol,
+            inputJson = gson.toJson(input),
+        )
+    }
+
     suspend fun enqueueSummaryAndPodcast(
         tickerSymbol: String?,
         articleIds: List<String>,

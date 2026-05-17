@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Forward30
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay30
@@ -104,33 +105,52 @@ fun PodcastPlayerScreen(onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(8.dp))
 
-            // Art panel. Capped at 260dp tall so the play controls + speed
-            // chips below it stay above the Samsung gesture bar on a 6.8"
-            // phone. On larger displays it still scales up to a sensible
-            // square.
+            // Art panel. A soft violet→mint radial-ish gradient with a big
+            // headphones glyph reads better than the bare "Charon · Aoede"
+            // voice-pair label that used to occupy this card.
             GlassCard {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 180.dp, max = 260.dp)
-                        .padding(24.dp),
+                        .heightIn(min = 180.dp, max = 240.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        "${p.voiceHost} · ${p.voiceAnalyst ?: "—"}",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = FinnencerColors.TextSecondary,
-                        fontWeight = FontWeight.SemiBold,
+                    // Subtle accent backdrop
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                androidx.compose.ui.graphics.Brush.radialGradient(
+                                    colors = listOf(
+                                        FinnencerColors.Violet.copy(alpha = 0.20f),
+                                        Color.Transparent,
+                                    ),
+                                )
+                            )
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Headphones,
+                        contentDescription = null,
+                        tint = FinnencerColors.Violet.copy(alpha = 0.70f),
+                        modifier = Modifier.size(96.dp),
                     )
                 }
             }
 
-            Text(
-                p.title,
-                style = MaterialTheme.typography.headlineSmall,
-                color = FinnencerColors.TextPrimary,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    p.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${p.voiceHost} · ${p.voiceAnalyst ?: "—"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
 
             when (p.status) {
                 PodcastGenerationStatus.PENDING.name, PodcastGenerationStatus.GENERATING.name -> {
@@ -234,15 +254,27 @@ private fun PlayerControls(
                 Icon(Icons.Default.Forward30, contentDescription = "+30s", tint = FinnencerColors.TextPrimary, modifier = Modifier.size(36.dp))
             }
         }
+        // Speed chips. Equal-weight so all five fit in one row on any
+        // phone (Samsung S918B previously wrapped "2.0x" to a second
+        // line). Labels drop the .0 suffix to save horizontal space.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { s ->
                 FilterChip(
+                    modifier = Modifier.weight(1f),
                     selected = speed == s,
                     onClick = { onSpeed(s) },
-                    label = { Text("${s}x") },
+                    label = {
+                        Text(
+                            formatSpeedLabel(s),
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    },
                     colors = FilterChipDefaults.filterChipColors(
                         containerColor = FinnencerColors.SurfaceGlass,
                         labelColor = FinnencerColors.TextSecondary,
@@ -253,6 +285,13 @@ private fun PlayerControls(
             }
         }
     }
+}
+
+private fun formatSpeedLabel(s: Float): String {
+    // "1x" / "1.25x" / "1.5x" / "2x" — drop trailing zero so chips fit
+    // comfortably across a 5-column equal-weight row.
+    val rounded = if (s == s.toInt().toFloat()) s.toInt().toString() else s.toString().trimEnd('0').trimEnd('.')
+    return "${rounded}x"
 }
 
 private fun fmt(ms: Long): String {

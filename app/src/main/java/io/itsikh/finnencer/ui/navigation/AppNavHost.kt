@@ -127,6 +127,7 @@ fun AppNavHost() {
                     onOpenArticle = { articleId -> navController.navigate("article/$articleId") },
                     onOpenReport = { reportId -> navController.navigate("report/$reportId") },
                     onOpenPodcast = { podcastId -> navController.navigate("podcast/$podcastId") },
+                    onOpenReader = { navController.navigate("reader") },
                 )
             }
             composable("article/{articleId}") {

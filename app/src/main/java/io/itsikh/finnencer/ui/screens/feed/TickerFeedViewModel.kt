@@ -120,6 +120,72 @@ class TickerFeedViewModel @Inject constructor(
         .observePastForTicker(symbol, System.currentTimeMillis(), limit = 2)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** All earnings reports for this ticker, latest first (keyed by event id in the UI layer). */
+    val earningsReports: StateFlow<List<io.itsikh.finnencer.data.entity.EarningsReport>> = earningsDao
+        .observeReportsForTicker(symbol)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Per-event in-flight state for the Highlights / Deep dive buttons. */
+    private val _earningsBusy = MutableStateFlow<Map<Long, ReportTier>>(emptyMap())
+    val earningsBusy: StateFlow<Map<Long, ReportTier>> = _earningsBusy.asStateFlow()
+
+    /** Per-event most recent error to surface inline. */
+    private val _earningsError = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val earningsError: StateFlow<Map<Long, String>> = _earningsError.asStateFlow()
+    fun clearEarningsError(eventId: Long) {
+        _earningsError.value = _earningsError.value - eventId
+    }
+
+    /**
+     * Kick off (or re-open) an earnings report for [eventId] at the given
+     * [tier]. On success, [onProducedReport] is invoked with the new report
+     * id so the caller can navigate into the ReportViewer.
+     */
+    fun requestEarningsReport(eventId: Long, tier: ReportTier, onProducedReport: (Long) -> Unit) {
+        // If a report at this tier already exists for the event, just open it.
+        val existing = earningsReports.value
+            .firstOrNull { it.earningsEventId == eventId && it.tier == tier.name }
+        if (existing != null) {
+            onProducedReport(existing.id)
+            return
+        }
+        if (_earningsBusy.value[eventId] != null) return
+        _earningsBusy.value = _earningsBusy.value + (eventId to tier)
+        viewModelScope.launch {
+            runCatching { reportGenerator.generate(eventId, tier) }
+                .onSuccess { id ->
+                    _earningsBusy.value = _earningsBusy.value - eventId
+                    onProducedReport(id)
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "earnings ${tier.name} for event=$eventId failed", t)
+                    _earningsBusy.value = _earningsBusy.value - eventId
+                    _earningsError.value = _earningsError.value + (eventId to (t.message ?: "Report failed"))
+                }
+        }
+    }
+
+    /**
+     * Enqueue the combo earnings job: BRIEF (auto-generated if missing) +
+     * a podcast scripted from it. Tasks badge shows progress.
+     */
+    fun requestEarningsPodcast(
+        eventId: Long,
+        eventLabel: String,
+        minutes: BundleSummarizer.PodcastMinutes,
+        customPrompt: String?,
+    ) {
+        viewModelScope.launch {
+            aiJobs.enqueueEarningsBriefAndPodcast(
+                tickerSymbol = symbol,
+                earningsEventId = eventId,
+                eventLabel = eventLabel,
+                minutes = minutes,
+                customPrompt = customPrompt,
+            )
+        }
+    }
+
     private val _picker = MutableStateFlow(FeedTierPickerState())
     val picker: StateFlow<FeedTierPickerState> = _picker.asStateFlow()
 

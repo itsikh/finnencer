@@ -41,6 +41,7 @@ enum class AiJobType {
     PODCAST_BATCH,             // many articles → one podcast row
     SUMMARY_AND_PODCAST_BATCH, // many articles → summary AND a podcast derived from the summary
     REPORT_EARNINGS,           // one EarningsEvent → one EarningsReport
+    EARNINGS_BRIEF_AND_PODCAST,// one EarningsEvent → BRIEF report + a podcast derived from it
 }
 
 enum class AiJobStatus {

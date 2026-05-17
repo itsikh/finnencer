@@ -54,10 +54,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.LaunchedEffect
+import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.dao.ScoredArticleRow
 import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsStatus
+import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.screens.earnings.TierPickerSheetCore
 import io.itsikh.finnencer.ui.theme.FinnencerColors
@@ -72,15 +74,20 @@ fun TickerFeedScreen(
     onOpenArticle: (articleId: String) -> Unit,
     onOpenReport: (reportId: Long) -> Unit,
     onOpenPodcast: (podcastId: Long) -> Unit,
+    onOpenReader: () -> Unit = {},
 ) {
     val vm: TickerFeedViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val pastEarnings by vm.pastEarnings.collectAsState()
+    val earningsReports by vm.earningsReports.collectAsState()
+    val earningsBusy by vm.earningsBusy.collectAsState()
+    val earningsError by vm.earningsError.collectAsState()
     val picker by vm.picker.collectAsState()
     val selection by vm.selection.collectAsState()
     val batchSheet by vm.batchSheet.collectAsState()
     val articleAction by vm.action.collectAsState()
     val syncRunning by vm.syncRunning.collectAsState()
+    var earningsPodcastTarget by remember { mutableStateOf<EarningsEvent?>(null) }
 
     LaunchedEffect(batchSheet.producedPodcastId) {
         batchSheet.producedPodcastId?.let { pid ->
@@ -184,7 +191,33 @@ fun TickerFeedScreen(
                         )
                     }
                     items(pastEarnings, key = { "earn-${it.id}" }) { event ->
-                        EarningsCard(event = event, onTap = { vm.openPicker(event) })
+                        val reportsForEvent = earningsReports.filter { it.earningsEventId == event.id }
+                        EarningsCard(
+                            event = event,
+                            reports = reportsForEvent,
+                            busyTier = earningsBusy[event.id],
+                            errorMessage = earningsError[event.id],
+                            onClearError = { vm.clearEarningsError(event.id) },
+                            onHighlights = {
+                                vm.requestEarningsReport(event.id, ReportTier.BRIEF) { id -> onOpenReport(id) }
+                            },
+                            onDeepDive = {
+                                vm.requestEarningsReport(event.id, ReportTier.DEEP) { id -> onOpenReport(id) }
+                            },
+                            onMakePodcast = { earningsPodcastTarget = event },
+                            onOpenReport = { id -> onOpenReport(id) },
+                            onOpenReader = { report ->
+                                val ticker = state.ticker?.symbol ?: "Earnings"
+                                io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
+                                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
+                                        title = report.title,
+                                        body = report.contentMarkdown,
+                                        attribution = io.itsikh.finnencer.data.ai.friendlyModelLabel(report.model)?.let { "via $it" },
+                                    )
+                                )
+                                onOpenReader()
+                            },
+                        )
                     }
                     item {
                         Spacer(Modifier.height(4.dp))
@@ -251,6 +284,66 @@ fun TickerFeedScreen(
             onRescoreWithNote = vm::rescoreWithNote,
         )
     }
+
+    earningsPodcastTarget?.let { target ->
+        EarningsPodcastDialog(
+            quarter = "Q${target.fiscalQuarter} ${target.fiscalYear}",
+            onPick = { minutes ->
+                vm.requestEarningsPodcast(
+                    eventId = target.id,
+                    eventLabel = "Q${target.fiscalQuarter} ${target.fiscalYear}",
+                    minutes = minutes,
+                    customPrompt = null,
+                )
+                earningsPodcastTarget = null
+            },
+            onDismiss = { earningsPodcastTarget = null },
+        )
+    }
+}
+
+@Composable
+private fun EarningsPodcastDialog(
+    quarter: String,
+    onPick: (BundleSummarizer.PodcastMinutes) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Earnings podcast · $quarter") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Generates a 1-page highlights summary (if one isn't cached yet) and a multi-voice podcast scripted from it. Watch progress in Tasks.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FinnencerColors.TextSecondary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                                .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                .clickable { onPick(m) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${m.minutes} min",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = FinnencerColors.Amber,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -296,8 +389,23 @@ private fun SelectionActionBar(count: Int, onCancel: () -> Unit, onSummarize: ()
 }
 
 @Composable
-private fun EarningsCard(event: EarningsEvent, onTap: () -> Unit) {
-    GlassCard(onClick = onTap) {
+private fun EarningsCard(
+    event: EarningsEvent,
+    reports: List<io.itsikh.finnencer.data.entity.EarningsReport>,
+    busyTier: ReportTier?,
+    errorMessage: String?,
+    onClearError: () -> Unit,
+    onHighlights: () -> Unit,
+    onDeepDive: () -> Unit,
+    onMakePodcast: () -> Unit,
+    onOpenReport: (Long) -> Unit,
+    onOpenReader: (io.itsikh.finnencer.data.entity.EarningsReport) -> Unit,
+) {
+    val latestReport = reports.maxByOrNull { it.generatedAtMillis }
+    val briefReport = reports.firstOrNull { it.tier == ReportTier.BRIEF.name }
+    val deepReport = reports.firstOrNull { it.tier == ReportTier.DEEP.name }
+
+    GlassCard {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
@@ -317,33 +425,239 @@ private fun EarningsCard(event: EarningsEvent, onTap: () -> Unit) {
                     color = FinnencerColors.TextTertiary,
                 )
             }
-            if (event.actualEps != null || event.consensusEps != null) {
+            // Numeric extract: actual vs consensus + beat/miss percentage
+            // when we have both sides.
+            EarningsNumericExtract(event)
+
+            // Existing-report tags
+            if (reports.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    reports.forEach { r ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(FinnencerColors.Mint.copy(alpha = 0.15f))
+                                .border(1.dp, FinnencerColors.Mint.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                                .clickable { onOpenReport(r.id) }
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                r.tier.lowercase().replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.Mint,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
+
+            errorMessage?.let { msg ->
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    text = buildString {
-                        append("EPS ")
-                        append(fmtMoney(event.actualEps) ?: "—")
-                        if (event.consensusEps != null) {
-                            append("  vs est ")
-                            append(fmtMoney(event.consensusEps))
-                        }
-                        if (event.actualRevenue != null) {
-                            append("    REV ")
-                            append(fmtMoney(event.actualRevenue))
-                            event.consensusRevenue?.let { append("  vs est ${fmtMoney(it)}") }
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FinnencerColors.TextSecondary,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.Coral,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.TextButton(onClick = onClearError) {
+                        Text("Dismiss", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            // Action chips. Highlights = BRIEF, Deep dive = DEEP, podcast
+            // = combo job kicked off in the background.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EarningsActionChip(
+                    label = if (briefReport != null) "Highlights" else "Highlights",
+                    accent = FinnencerColors.Violet,
+                    busy = busyTier == ReportTier.BRIEF,
+                    onClick = onHighlights,
+                )
+                EarningsActionChip(
+                    label = "Deep dive",
+                    accent = FinnencerColors.Amber,
+                    busy = busyTier == ReportTier.DEEP,
+                    onClick = onDeepDive,
+                )
+                EarningsActionChip(
+                    label = "Podcast",
+                    accent = FinnencerColors.Mint,
+                    busy = false,
+                    onClick = onMakePodcast,
                 )
             }
-            Spacer(Modifier.height(8.dp))
+
+            // Inline preview of the most recent report so the user gets a
+            // quick read without leaving the screen.
+            latestReport?.let { r ->
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(FinnencerColors.SurfaceGlass)
+                        .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                r.tier.lowercase().replaceFirstChar { it.uppercase() } + " summary",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model)?.let {
+                                Text(
+                                    "via $it",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FinnencerColors.TextTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            r.contentMarkdown.take(280) + if (r.contentMarkdown.length > 280) "…" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextPrimary,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            EarningsActionChip(
+                                label = "Read mode",
+                                accent = FinnencerColors.Violet,
+                                busy = false,
+                                onClick = { onOpenReader(r) },
+                                small = true,
+                            )
+                            EarningsActionChip(
+                                label = "Open viewer",
+                                accent = FinnencerColors.Violet.copy(alpha = 0.7f),
+                                busy = false,
+                                onClick = { onOpenReport(r.id) },
+                                small = true,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EarningsNumericExtract(event: EarningsEvent) {
+    if (event.actualEps == null && event.consensusEps == null &&
+        event.actualRevenue == null && event.consensusRevenue == null
+    ) return
+    Spacer(Modifier.height(8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        ExtractRow(
+            label = "EPS",
+            actual = event.actualEps,
+            consensus = event.consensusEps,
+            format = ::fmtMoney,
+        )
+        ExtractRow(
+            label = "Rev",
+            actual = event.actualRevenue,
+            consensus = event.consensusRevenue,
+            format = ::fmtMoney,
+        )
+    }
+}
+
+@Composable
+private fun ExtractRow(
+    label: String,
+    actual: Double?,
+    consensus: Double?,
+    format: (Double?) -> String?,
+) {
+    val beat = if (actual != null && consensus != null && consensus != 0.0) {
+        (actual - consensus) / kotlin.math.abs(consensus) * 100.0
+    } else null
+    val beatColor = when {
+        beat == null -> FinnencerColors.TextSecondary
+        beat >= 0.5 -> FinnencerColors.Mint
+        beat <= -0.5 -> FinnencerColors.Coral
+        else -> FinnencerColors.TextSecondary
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = FinnencerColors.TextTertiary,
+            modifier = Modifier.width(34.dp),
+        )
+        Text(
+            format(actual) ?: "—",
+            style = MaterialTheme.typography.bodySmall,
+            color = FinnencerColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (consensus != null) {
+            Spacer(Modifier.width(8.dp))
             Text(
-                "Tap to generate report — BRIEF / STANDARD / DEEP — then optionally convert to podcast.",
-                style = MaterialTheme.typography.labelMedium,
-                color = FinnencerColors.Violet,
+                "vs est ${format(consensus)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = FinnencerColors.TextTertiary,
             )
         }
+        beat?.let { b ->
+            Spacer(Modifier.weight(1f))
+            Text(
+                (if (b >= 0) "▲ " else "▼ ") + "%.1f%%".format(kotlin.math.abs(b)),
+                style = MaterialTheme.typography.labelSmall,
+                color = beatColor,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EarningsActionChip(
+    label: String,
+    accent: Color,
+    busy: Boolean,
+    onClick: () -> Unit,
+    small: Boolean = false,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(accent.copy(alpha = 0.18f))
+            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+            .clickable(enabled = !busy, onClick = onClick)
+            .padding(
+                horizontal = if (small) 10.dp else 12.dp,
+                vertical = if (small) 6.dp else 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (busy) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                color = accent,
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            label,
+            style = if (small) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+            color = accent,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

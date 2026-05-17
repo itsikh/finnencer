@@ -2,6 +2,7 @@ package io.itsikh.finnencer.data.ai
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.Podcast
@@ -29,6 +30,7 @@ class BundleSummarizer @Inject constructor(
     private val tts: GeminiTts,
     private val newsDao: NewsDao,
     private val podcastDao: PodcastDao,
+    private val earningsDao: EarningsDao,
 ) {
 
     enum class Pages(val target: Int, val maxTokens: Int) {
@@ -115,6 +117,27 @@ class BundleSummarizer @Inject constructor(
             title = title.take(120),
             sourceId = articleIds.joinToString(","),
             sourceMaterial = source,
+            minutes = minutes,
+            customPrompt = customPrompt,
+        )
+    }
+
+    /**
+     * Render a podcast whose script-writer source is the markdown body of
+     * an [EarningsReport] (BRIEF / STANDARD / DEEP). Used by the per-stock
+     * "Make podcast" affordance on the past-earnings card.
+     */
+    suspend fun podcastFromEarningsReport(
+        reportId: Long,
+        minutes: PodcastMinutes,
+        customPrompt: String?,
+    ): Long {
+        val report = earningsDao.getReport(reportId)
+            ?: error("EarningsReport $reportId not found")
+        return renderPodcast(
+            title = "${report.tickerSymbol}  ·  ${minutes.minutes} min  ·  ${report.title.take(80)}",
+            sourceId = "earnings_report:$reportId",
+            sourceMaterial = report.contentMarkdown,
             minutes = minutes,
             customPrompt = customPrompt,
         )
