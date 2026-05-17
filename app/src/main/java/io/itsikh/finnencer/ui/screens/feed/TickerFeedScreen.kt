@@ -180,16 +180,45 @@ fun TickerFeedScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (pastEarnings.isNotEmpty()) {
-                    item {
+                // Earnings section is always rendered (even when empty)
+                // so users can find the feature. Empty state explains why
+                // there's nothing yet and offers a one-tap sync.
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                    ) {
                         Text(
                             "PAST EARNINGS",
                             style = MaterialTheme.typography.labelSmall,
                             color = FinnencerColors.TextTertiary,
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                            modifier = Modifier.weight(1f),
                         )
+                        val refreshingEarnings by vm.earningsSyncing.collectAsState()
+                        if (refreshingEarnings) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                color = FinnencerColors.Violet,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            androidx.compose.material3.TextButton(
+                                onClick = vm::refreshEarningsNow,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            ) {
+                                Text(
+                                    "Sync",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FinnencerColors.Violet,
+                                )
+                            }
+                        }
                     }
+                }
+                if (pastEarnings.isEmpty()) {
+                    item { EarningsEmptyState(syncError = vm.earningsSyncError.collectAsState().value) }
+                } else {
                     items(pastEarnings, key = { "earn-${it.id}" }) { event ->
                         val reportsForEvent = earningsReports.filter { it.earningsEventId == event.id }
                         EarningsCard(
@@ -207,7 +236,6 @@ fun TickerFeedScreen(
                             onMakePodcast = { earningsPodcastTarget = event },
                             onOpenReport = { id -> onOpenReport(id) },
                             onOpenReader = { report ->
-                                val ticker = state.ticker?.symbol ?: "Earnings"
                                 io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
                                     io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
                                         title = report.title,
@@ -219,15 +247,15 @@ fun TickerFeedScreen(
                             },
                         )
                     }
-                    item {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "NEWS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
+                }
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "NEWS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
                 if (rows.isEmpty()) {
                     item { EmptyFeedInline() }
@@ -384,6 +412,37 @@ private fun SelectionActionBar(count: Int, onCancel: () -> Unit, onSummarize: ()
                 ),
                 shape = RoundedCornerShape(12.dp),
             ) { Text("Summarize", fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
+
+@Composable
+private fun EarningsEmptyState(syncError: String?) {
+    GlassCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "No past earnings synced for this ticker yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Earnings discovery pulls 8-K filings from SEC EDGAR. " +
+                    "If you just added this ticker, tap Sync above; otherwise check Settings → API keys " +
+                    "and make sure the EDGAR User-Agent (just your email) is set — EDGAR returns HTTP 403 without it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FinnencerColors.TextSecondary,
+            )
+            syncError?.let { err ->
+                Text(
+                    "Last sync: $err",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.Coral,
+                )
+            }
         }
     }
 }

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -77,6 +78,7 @@ class TickerFeedViewModel @Inject constructor(
     private val bundleSummarizer: BundleSummarizer,
     private val scorer: ImportanceScorer,
     private val aiJobs: AiJobsRepository,
+    private val earningsSync: io.itsikh.finnencer.data.sync.EarningsCalendarSync,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -134,6 +136,40 @@ class TickerFeedViewModel @Inject constructor(
     val earningsError: StateFlow<Map<Long, String>> = _earningsError.asStateFlow()
     fun clearEarningsError(eventId: Long) {
         _earningsError.value = _earningsError.value - eventId
+    }
+
+    private val _earningsSyncing = MutableStateFlow(false)
+    val earningsSyncing: StateFlow<Boolean> = _earningsSyncing.asStateFlow()
+
+    /** Last error from a user-triggered earnings sync. */
+    private val _earningsSyncError = MutableStateFlow<String?>(null)
+    val earningsSyncError: StateFlow<String?> = _earningsSyncError.asStateFlow()
+
+    init {
+        // Kick off a one-shot earnings sync the first time the screen
+        // opens, in case the periodic SyncWorker hasn't run yet — this is
+        // what makes the new earnings section appear without making the
+        // user wait 15 minutes after adding a new ticker.
+        viewModelScope.launch {
+            val currentlyEmpty = earningsDao.observePastForTicker(symbol, System.currentTimeMillis(), limit = 1)
+                .first()
+                .isEmpty()
+            if (currentlyEmpty) refreshEarningsNow()
+        }
+    }
+
+    fun refreshEarningsNow() {
+        if (_earningsSyncing.value) return
+        _earningsSyncing.value = true
+        _earningsSyncError.value = null
+        viewModelScope.launch {
+            runCatching { earningsSync.runOnce() }
+                .onFailure { t ->
+                    AppLogger.w(TAG, "ad-hoc earnings sync failed: ${t.message}")
+                    _earningsSyncError.value = t.message ?: t.javaClass.simpleName
+                }
+            _earningsSyncing.value = false
+        }
     }
 
     /**

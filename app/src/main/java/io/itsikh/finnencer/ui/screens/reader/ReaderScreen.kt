@@ -213,7 +213,31 @@ fun ReaderScreen(onBack: () -> Unit) {
     ) { padding ->
         Box(modifier = Modifier
             .fillMaxSize()
-            .padding(padding)) {
+            .padding(padding)
+            // Right-side scroll indicator. Drawn on the OUTER (viewport-
+            // sized) Box on purpose — drawing it on the verticalScroll'd
+            // child would translate the bar by `-scrollState.value` along
+            // with the prose, dragging it off-screen as the user scrolls.
+            // size here is the viewport height; `barTop` already maps the
+            // scroll position into viewport-space, so the bar tracks
+            // progress visibly.
+            .drawWithContent {
+                drawContent()
+                val max = scrollState.maxValue
+                if (max > 0) {
+                    val viewport = size.height
+                    val total = viewport + max
+                    val barHeight = (viewport * viewport / total).coerceAtLeast(48f)
+                    val barTop = (scrollState.value / max.toFloat()) * (viewport - barHeight)
+                    drawRoundRect(
+                        color = palette.muted.copy(alpha = 0.65f),
+                        topLeft = androidx.compose.ui.geometry.Offset(size.width - 8f, barTop),
+                        size = androidx.compose.ui.geometry.Size(4f, barHeight),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f),
+                    )
+                }
+            }
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -224,27 +248,7 @@ fun ReaderScreen(onBack: () -> Unit) {
                     .clickable(
                         indication = null,
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    ) { chromeVisible = !chromeVisible }
-                    // Slim right-side scroll indicator. Vertical progress bar
-                    // pulled into the body via `drawWithContent` so it tracks
-                    // with the content but doesn't claim its own layout slot
-                    // (and doesn't push the prose inward).
-                    .drawWithContent {
-                        drawContent()
-                        val max = scrollState.maxValue
-                        if (max > 0) {
-                            val viewport = size.height
-                            val total = viewport + max
-                            val barHeight = (viewport * viewport / total).coerceAtLeast(40f)
-                            val barTop = (scrollState.value / max.toFloat()) * (viewport - barHeight)
-                            drawRoundRect(
-                                color = palette.muted.copy(alpha = 0.45f),
-                                topLeft = androidx.compose.ui.geometry.Offset(size.width - 6f, barTop),
-                                size = androidx.compose.ui.geometry.Size(3f, barHeight),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f),
-                            )
-                        }
-                    },
+                    ) { chromeVisible = !chromeVisible },
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Column(
