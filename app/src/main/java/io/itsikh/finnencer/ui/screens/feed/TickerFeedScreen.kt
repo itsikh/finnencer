@@ -92,6 +92,7 @@ fun TickerFeedScreen(
     val batchSheet by vm.batchSheet.collectAsState()
     val articleAction by vm.action.collectAsState()
     val syncRunning by vm.syncRunning.collectAsState()
+    val showDiagnoseButtons by vm.showDiagnoseButtons.collectAsState()
     var earningsPodcastTarget by remember { mutableStateOf<EarningsEvent?>(null) }
 
     LaunchedEffect(batchSheet.producedPodcastId) {
@@ -220,24 +221,26 @@ fun TickerFeedScreen(
                             }
                             // "Diagnose XBRL" pulls SEC EDGAR's parsed
                             // financial facts for this ticker and shows
-                            // the last 4 quarters in a dialog. Visibly
-                            // amber so users can find it when the
-                            // earnings card shows "data unavailable".
-                            Box(
-                                modifier = Modifier
-                                    .padding(horizontal = 4.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
-                                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
-                                    .clickable(onClick = vm::runXbrlDiagnose)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                            ) {
-                                Text(
-                                    "Diagnose XBRL",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = FinnencerColors.Amber,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
+                            // the last 4 quarters in a dialog. Hidden by
+                            // default — flip on in Settings → App when
+                            // troubleshooting EDGAR.
+                            if (showDiagnoseButtons) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(horizontal = 4.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                                        .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                                        .clickable(onClick = vm::runXbrlDiagnose)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                ) {
+                                    Text(
+                                        "Diagnose XBRL",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = FinnencerColors.Amber,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                             }
                         }
                     }
@@ -246,6 +249,7 @@ fun TickerFeedScreen(
                     item {
                         EarningsEmptyState(
                             syncError = vm.earningsSyncError.collectAsState().value,
+                            showDiagnose = showDiagnoseButtons,
                             onDiagnose = vm::runXbrlDiagnose,
                         )
                     }
@@ -561,7 +565,11 @@ private fun SelectionActionBar(count: Int, onCancel: () -> Unit, onSummarize: ()
 }
 
 @Composable
-private fun EarningsEmptyState(syncError: String?, onDiagnose: () -> Unit) {
+private fun EarningsEmptyState(
+    syncError: String?,
+    showDiagnose: Boolean,
+    onDiagnose: () -> Unit,
+) {
     GlassCard {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -587,21 +595,23 @@ private fun EarningsEmptyState(syncError: String?, onDiagnose: () -> Unit) {
                     color = FinnencerColors.Coral,
                 )
             }
-            Spacer(Modifier.height(2.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
-                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-                    .clickable(onClick = onDiagnose)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    "Diagnose XBRL connection",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = FinnencerColors.Amber,
-                    fontWeight = FontWeight.SemiBold,
-                )
+            if (showDiagnose) {
+                Spacer(Modifier.height(2.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                        .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDiagnose)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        "Diagnose XBRL connection",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = FinnencerColors.Amber,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }

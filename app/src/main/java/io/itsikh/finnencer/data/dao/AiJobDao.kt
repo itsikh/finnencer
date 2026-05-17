@@ -19,6 +19,9 @@ interface AiJobDao {
     @Query("SELECT * FROM ai_jobs WHERE id = :id")
     suspend fun get(id: String): AiJob?
 
+    @Query("SELECT * FROM ai_jobs WHERE id = :id")
+    fun observe(id: String): Flow<AiJob?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(job: AiJob)
 

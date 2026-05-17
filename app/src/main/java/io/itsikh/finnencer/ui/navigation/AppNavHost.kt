@@ -96,6 +96,7 @@ fun AppNavHost() {
                     onBack = { navController.popBackStack() },
                     onOpenPodcast = { id -> navController.navigate("podcast/$id") },
                     onOpenReader = { navController.navigate("reader") },
+                    onOpenReport = { id -> navController.navigate("report/$id") },
                 )
             }
             composable("cost") {

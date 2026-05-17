@@ -15,6 +15,7 @@ import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.dao.QueueItemDao
 import io.itsikh.finnencer.data.dao.TickerDao
+import io.itsikh.finnencer.data.db.ALL_MIGRATIONS
 import io.itsikh.finnencer.data.db.FinnencerDatabase
 import javax.inject.Singleton
 
@@ -26,10 +27,10 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): FinnencerDatabase =
         Room.databaseBuilder(context, FinnencerDatabase::class.java, FinnencerDatabase.NAME)
-            // No fallbackToDestructiveMigration — until schema stabilises we'll
-            // bump version + migrate. The DB is small and rebuilding it on first
-            // mismatch is acceptable for personal-use scope.
-            .fallbackToDestructiveMigration()
+            // Explicit migrations — no destructive fallback. A missing
+            // migration here will throw at startup rather than wipe the
+            // user's watchlist (which happened on v0.0.30; see #28).
+            .addMigrations(*ALL_MIGRATIONS)
             .build()
 
     @Provides fun provideTickerDao(db: FinnencerDatabase): TickerDao = db.tickerDao()

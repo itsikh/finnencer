@@ -55,12 +55,7 @@ class AiJobWorker @AssistedInject constructor(
                 AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
                 AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
                 AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
-                AiJobType.REPORT_EARNINGS -> {
-                    // Not yet routed through this worker — reports still run
-                    // synchronously from the tier picker sheet. Mark as
-                    // failed so the row doesn't get stuck.
-                    error("REPORT_EARNINGS not handled here yet")
-                }
+                AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
             }
         }.fold(
             onSuccess = { Result.success() },
@@ -156,6 +151,41 @@ class AiJobWorker @AssistedInject constructor(
         val minutesValue: Int,
         val customPrompt: String?,
     )
+
+    /**
+     * Standalone earnings-report job. Deep dive / Standard / Brief all
+     * route through here so the work persists across navigation. Tier
+     * is serialized by name; the worker reads it back via [ReportTier.valueOf].
+     */
+    data class EarningsReportInput(
+        val earningsEventId: Long,
+        val tierName: String,
+    )
+
+    private suspend fun runEarningsReport(jobId: String, json: String, title: String) {
+        val input = gson.fromJson(json, EarningsReportInput::class.java)
+        val tier = ReportTier.valueOf(input.tierName)
+        // De-dupe: if a report at this tier already exists for the event
+        // (another path produced it while this job was queued) reuse it
+        // instead of burning tokens to regenerate.
+        val event = earningsDao.getEvent(input.earningsEventId)
+            ?: error("EarningsEvent ${input.earningsEventId} not found")
+        val existing = earningsDao.observeReportsForTicker(event.tickerSymbol).first()
+            .firstOrNull { it.earningsEventId == event.id && it.tier == tier.name }
+        val reportId = existing?.id ?: reportGenerator.generate(event.id, tier)
+        val report = earningsDao.getReport(reportId)
+            ?: error("freshly generated report $reportId missing")
+        dao.markCompleted(
+            id = jobId,
+            status = AiJobStatus.COMPLETED.name,
+            resultKind = AiJobResultKind.EARNINGS_REPORT.name,
+            resultRefId = reportId.toString(),
+            resultText = null,
+            resultModel = report.model,
+            nowMs = System.currentTimeMillis(),
+        )
+        notifier.notifyCompleted(jobId, title, "${tier.name.lowercase()} report ready · open Tasks")
+    }
 
     private suspend fun runEarningsBriefAndPodcast(jobId: String, json: String, title: String) {
         val input = gson.fromJson(json, EarningsBriefAndPodcastInput::class.java)

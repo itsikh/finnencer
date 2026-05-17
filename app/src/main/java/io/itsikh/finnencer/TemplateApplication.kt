@@ -7,8 +7,14 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.core.work.SyncScheduler
+import io.itsikh.finnencer.data.repo.WatchlistRestorer
+import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -36,6 +42,7 @@ class TemplateApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var syncScheduler: SyncScheduler
+    @Inject lateinit var watchlistRestorer: WatchlistRestorer
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -51,6 +58,13 @@ class TemplateApplication : Application(), Configuration.Provider {
         // Idempotent: WorkManager keeps the existing periodic request if one
         // already exists with the same unique name and interval.
         syncScheduler.schedulePeriodic()
+        // Restore watchlist from the on-disk snapshot if the Room table
+        // ever ends up empty (e.g. after a destructive migration).
+        // Keeps the snapshot file fresh on every healthy start.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { watchlistRestorer.ensureRestored() }
+                .onFailure { AppLogger.e("App", "Watchlist restore failed", it) }
+        }
     }
 
     private fun createNotificationChannels() {

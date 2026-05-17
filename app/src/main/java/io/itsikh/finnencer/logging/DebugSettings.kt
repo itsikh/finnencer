@@ -50,6 +50,7 @@ class DebugSettings @Inject constructor(
     private val autoUpdateKey = booleanPreferencesKey("auto_update_enabled")
     private val autoBackupKey = booleanPreferencesKey("auto_backup_enabled")
     private val adminModeKey = booleanPreferencesKey("admin_mode_enabled")
+    private val showDiagnoseButtonsKey = booleanPreferencesKey("show_diagnose_buttons")
 
     /**
      * The current [LogLevel] as a [Flow]. Emits a new value whenever the level changes.
@@ -109,6 +110,22 @@ class DebugSettings @Inject constructor(
      */
     val adminMode: Flow<Boolean> = context.debugDataStore.data.map { prefs ->
         prefs[adminModeKey] ?: false
+    }
+
+    /**
+     * Whether the "Diagnose XBRL" buttons in the per-ticker earnings UI
+     * are visible. Defaults to `false` — they're a developer tool, not
+     * something the typical user needs while reading earnings reports.
+     * Re-enable from Settings → App when troubleshooting EDGAR.
+     */
+    val showDiagnoseButtons: Flow<Boolean> = context.debugDataStore.data.map { prefs ->
+        prefs[showDiagnoseButtonsKey] ?: false
+    }
+
+    suspend fun setShowDiagnoseButtons(show: Boolean) {
+        context.debugDataStore.edit { prefs ->
+            prefs[showDiagnoseButtonsKey] = show
+        }
     }
 
     /** Persists the admin mode flag. Call from a coroutine (e.g. `viewModelScope.launch`). */

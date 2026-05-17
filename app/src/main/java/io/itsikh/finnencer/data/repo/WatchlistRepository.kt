@@ -20,6 +20,7 @@ class WatchlistRepository @Inject constructor(
     private val tickerDao: TickerDao,
     private val finnhub: FinnhubService,
     private val apiKeys: ApiKeysRepository,
+    private val snapshotStore: WatchlistSnapshotStore,
 ) {
 
     fun observeAll(): Flow<List<Ticker>> = tickerDao.observeAll()
@@ -38,11 +39,23 @@ class WatchlistRepository @Inject constructor(
                 addedAtMillis = System.currentTimeMillis(),
             )
         )
+        refreshSnapshot()
     }
 
-    suspend fun remove(symbol: String) = tickerDao.delete(symbol.uppercase())
+    suspend fun remove(symbol: String) {
+        tickerDao.delete(symbol.uppercase())
+        refreshSnapshot()
+    }
 
-    suspend fun update(ticker: Ticker) = tickerDao.update(ticker)
+    suspend fun update(ticker: Ticker) {
+        tickerDao.update(ticker)
+        refreshSnapshot()
+    }
+
+    /** Rewrites the on-disk snapshot so the safety net stays current. */
+    private suspend fun refreshSnapshot() {
+        snapshotStore.save(tickerDao.getAll())
+    }
 
     suspend fun search(query: String): List<TickerSearchResult> {
         if (query.isBlank()) return emptyList()

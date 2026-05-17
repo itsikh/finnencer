@@ -76,6 +76,9 @@ class SettingsViewModel @Inject constructor(
     val autoBackupEnabled: StateFlow<Boolean> = debugSettings.autoBackupEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    val showDiagnoseButtons: StateFlow<Boolean> = debugSettings.showDiagnoseButtons
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     // ── GitHub token ──────────────────────────────────────────────────────────
 
     /** `true` if a GitHub PAT is currently stored in [SecureKeyManager]. */
@@ -118,6 +121,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAutoBackupEnabled(enabled: Boolean) {
         viewModelScope.launch { debugSettings.setAutoBackupEnabled(enabled) }
+    }
+
+    fun setShowDiagnoseButtons(show: Boolean) {
+        viewModelScope.launch { debugSettings.setShowDiagnoseButtons(show) }
     }
 
     /** Clears the in-memory [AppLogger] buffer. Does not affect crash log files on disk. */

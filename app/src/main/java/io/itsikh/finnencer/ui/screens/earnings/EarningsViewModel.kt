@@ -3,11 +3,14 @@ package io.itsikh.finnencer.ui.screens.earnings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.itsikh.finnencer.data.ai.ReportGenerator
+import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.EarningsDao
+import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.repo.AiJobsRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +29,8 @@ data class TierPickerState(
 @HiltViewModel
 class EarningsViewModel @Inject constructor(
     private val earningsDao: EarningsDao,
-    private val reportGenerator: ReportGenerator,
+    private val aiJobs: AiJobsRepository,
+    private val aiJobDao: AiJobDao,
 ) : ViewModel() {
 
     val upcoming: StateFlow<List<EarningsEvent>> =
@@ -102,20 +106,50 @@ class EarningsViewModel @Inject constructor(
         _picker.value = TierPickerState()
     }
 
+    /**
+     * Watches the in-flight job for the picker so we can auto-navigate to
+     * the report when it lands AND surface failures inline. If the user
+     * leaves the Earnings screen the ViewModel dies and this is canceled —
+     * the WorkManager job keeps running and the user can find the result
+     * in the Tasks tab.
+     */
+    private var pickerJobWatcher: Job? = null
+
     fun generate(tier: ReportTier) {
         val event = _picker.value.event ?: return
         _picker.value = _picker.value.copy(generating = true, error = null)
         viewModelScope.launch {
-            runCatching { reportGenerator.generate(event.id, tier) }
-                .onSuccess { id ->
-                    _picker.value = _picker.value.copy(generating = false, producedReportId = id)
+            val jobId = aiJobs.enqueueEarningsReport(
+                tickerSymbol = event.tickerSymbol,
+                earningsEventId = event.id,
+                eventLabel = "Q${event.fiscalQuarter} ${event.fiscalYear}",
+                tier = tier,
+            )
+            watchPickerJob(jobId)
+        }
+    }
+
+    private fun watchPickerJob(jobId: String) {
+        pickerJobWatcher?.cancel()
+        pickerJobWatcher = viewModelScope.launch {
+            aiJobDao.observe(jobId).collect { job ->
+                if (job == null) return@collect
+                when (AiJobStatus.valueOf(job.status)) {
+                    AiJobStatus.COMPLETED -> {
+                        _picker.value = _picker.value.copy(
+                            generating = false,
+                            producedReportId = job.resultRefId?.toLongOrNull(),
+                        )
+                    }
+                    AiJobStatus.FAILED, AiJobStatus.CANCELED -> {
+                        _picker.value = _picker.value.copy(
+                            generating = false,
+                            error = job.errorMessage ?: "Report failed",
+                        )
+                    }
+                    AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
                 }
-                .onFailure { t ->
-                    _picker.value = _picker.value.copy(
-                        generating = false,
-                        error = t.message ?: "Failed to generate report",
-                    )
-                }
+            }
         }
     }
 }

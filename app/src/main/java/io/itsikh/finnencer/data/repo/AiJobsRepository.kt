@@ -14,6 +14,7 @@ import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
+import io.itsikh.finnencer.data.entity.ReportTier
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 import javax.inject.Inject
@@ -84,6 +85,35 @@ class AiJobsRepository @Inject constructor(
      * generated) plus a podcast scripted from it. The worker decides which
      * model to use; the user just picks the podcast length.
      */
+    /**
+     * Standalone earnings report (BRIEF / STANDARD / DEEP) as a persistent
+     * background job. Lets the user navigate away mid-generation without
+     * losing the work — previously this ran in viewModelScope and was
+     * canceled on back-press.
+     */
+    suspend fun enqueueEarningsReport(
+        tickerSymbol: String,
+        earningsEventId: Long,
+        eventLabel: String,
+        tier: ReportTier,
+    ): String {
+        val id = UUID.randomUUID().toString()
+        val tierLabel = tier.name.lowercase().replaceFirstChar { it.uppercase() }
+        val title = "$tickerSymbol earnings · $eventLabel · $tierLabel"
+        val input = AiJobWorker.EarningsReportInput(
+            earningsEventId = earningsEventId,
+            tierName = tier.name,
+        )
+        return insertAndEnqueue(
+            id = id,
+            type = AiJobType.REPORT_EARNINGS,
+            title = title,
+            subtitle = null,
+            tickerSymbol = tickerSymbol,
+            inputJson = gson.toJson(input),
+        )
+    }
+
     suspend fun enqueueEarningsBriefAndPodcast(
         tickerSymbol: String,
         earningsEventId: Long,

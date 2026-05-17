@@ -7,11 +7,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ImportanceScorer
-import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.entity.NewsArticle
+import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.ScoredArticleRow
+import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
@@ -20,6 +21,8 @@ import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.data.repo.FeedPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import io.itsikh.finnencer.logging.AppLogger
+import io.itsikh.finnencer.logging.DebugSettings
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -72,8 +75,8 @@ class TickerFeedViewModel @Inject constructor(
     watchlist: WatchlistRepository,
     private val newsDao: NewsDao,
     private val earningsDao: EarningsDao,
+    private val aiJobDao: AiJobDao,
     private val scheduler: SyncScheduler,
-    private val reportGenerator: ReportGenerator,
     private val feedPrefs: FeedPreferences,
     private val bundleSummarizer: BundleSummarizer,
     private val scorer: ImportanceScorer,
@@ -83,7 +86,11 @@ class TickerFeedViewModel @Inject constructor(
     private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
     private val tickerDao: io.itsikh.finnencer.data.dao.TickerDao,
     private val cikLookup: io.itsikh.finnencer.data.providers.EdgarCikLookup,
+    debugSettings: DebugSettings,
 ) : ViewModel() {
+
+    val showDiagnoseButtons: StateFlow<Boolean> = debugSettings.showDiagnoseButtons
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
         ?: error("ticker feed opened without symbol")
@@ -251,8 +258,10 @@ class TickerFeedViewModel @Inject constructor(
 
     /**
      * Kick off (or re-open) an earnings report for [eventId] at the given
-     * [tier]. On success, [onProducedReport] is invoked with the new report
-     * id so the caller can navigate into the ReportViewer.
+     * [tier]. The work runs as a persistent AI job (WorkManager + Room) so
+     * navigating away or backgrounding the app no longer cancels it; the
+     * user can track progress in the Tasks tab and the same callback fires
+     * when the report lands as long as this ViewModel is still alive.
      */
     fun requestEarningsReport(eventId: Long, tier: ReportTier, onProducedReport: (Long) -> Unit) {
         // If a report at this tier already exists for the event, just open it.
@@ -265,16 +274,47 @@ class TickerFeedViewModel @Inject constructor(
         if (_earningsBusy.value[eventId] != null) return
         _earningsBusy.value = _earningsBusy.value + (eventId to tier)
         viewModelScope.launch {
-            runCatching { reportGenerator.generate(eventId, tier) }
-                .onSuccess { id ->
-                    _earningsBusy.value = _earningsBusy.value - eventId
-                    onProducedReport(id)
+            val event = earningsDao.getEvent(eventId)
+            val tickerForJob = event?.tickerSymbol ?: symbol
+            val label = if (event != null) "Q${event.fiscalQuarter} ${event.fiscalYear}" else tier.name
+            val jobId = aiJobs.enqueueEarningsReport(
+                tickerSymbol = tickerForJob,
+                earningsEventId = eventId,
+                eventLabel = label,
+                tier = tier,
+            )
+            watchEarningsJob(eventId, tier, jobId, onProducedReport)
+        }
+    }
+
+    private val watcherByEvent = mutableMapOf<Long, Job>()
+
+    private fun watchEarningsJob(
+        eventId: Long,
+        tier: ReportTier,
+        jobId: String,
+        onProducedReport: (Long) -> Unit,
+    ) {
+        watcherByEvent[eventId]?.cancel()
+        watcherByEvent[eventId] = viewModelScope.launch {
+            aiJobDao.observe(jobId).collect { job ->
+                if (job == null) return@collect
+                when (AiJobStatus.valueOf(job.status)) {
+                    AiJobStatus.COMPLETED -> {
+                        _earningsBusy.value = _earningsBusy.value - eventId
+                        job.resultRefId?.toLongOrNull()?.let(onProducedReport)
+                        watcherByEvent.remove(eventId)
+                    }
+                    AiJobStatus.FAILED, AiJobStatus.CANCELED -> {
+                        AppLogger.e(TAG, "earnings ${tier.name} for event=$eventId failed: ${job.errorMessage}")
+                        _earningsBusy.value = _earningsBusy.value - eventId
+                        _earningsError.value =
+                            _earningsError.value + (eventId to (job.errorMessage ?: "Report failed"))
+                        watcherByEvent.remove(eventId)
+                    }
+                    AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
                 }
-                .onFailure { t ->
-                    AppLogger.e(TAG, "earnings ${tier.name} for event=$eventId failed", t)
-                    _earningsBusy.value = _earningsBusy.value - eventId
-                    _earningsError.value = _earningsError.value + (eventId to (t.message ?: "Report failed"))
-                }
+            }
         }
     }
 
@@ -467,21 +507,40 @@ class TickerFeedViewModel @Inject constructor(
     fun openPicker(event: EarningsEvent) { _picker.value = FeedTierPickerState(event = event) }
     fun closePicker() { _picker.value = FeedTierPickerState() }
 
+    private var pickerJobWatcher: Job? = null
+
     fun generateReport(tier: ReportTier) {
         val event = _picker.value.event ?: return
         _picker.value = _picker.value.copy(generating = true, error = null)
         viewModelScope.launch {
-            runCatching { reportGenerator.generate(event.id, tier) }
-                .onSuccess { id ->
-                    _picker.value = _picker.value.copy(generating = false, producedReportId = id)
+            val jobId = aiJobs.enqueueEarningsReport(
+                tickerSymbol = event.tickerSymbol,
+                earningsEventId = event.id,
+                eventLabel = "Q${event.fiscalQuarter} ${event.fiscalYear}",
+                tier = tier,
+            )
+            pickerJobWatcher?.cancel()
+            pickerJobWatcher = launch {
+                aiJobDao.observe(jobId).collect { job ->
+                    if (job == null) return@collect
+                    when (AiJobStatus.valueOf(job.status)) {
+                        AiJobStatus.COMPLETED -> {
+                            _picker.value = _picker.value.copy(
+                                generating = false,
+                                producedReportId = job.resultRefId?.toLongOrNull(),
+                            )
+                        }
+                        AiJobStatus.FAILED, AiJobStatus.CANCELED -> {
+                            AppLogger.e(TAG, "report generation failed for event ${event.id}/$tier: ${job.errorMessage}")
+                            _picker.value = _picker.value.copy(
+                                generating = false,
+                                error = job.errorMessage ?: "Report failed",
+                            )
+                        }
+                        AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
+                    }
                 }
-                .onFailure { t ->
-                    AppLogger.e(TAG, "report generation failed for event ${event.id}/$tier", t)
-                    _picker.value = _picker.value.copy(
-                        generating = false,
-                        error = t.message ?: "Report failed",
-                    )
-                }
+            }
         }
     }
 

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
@@ -84,6 +85,7 @@ fun SettingsScreen(
     val autoBackup by viewModel.autoBackupEnabled.collectAsState()
     val showBugButton by viewModel.showBugButton.collectAsState()
     val adminMode by viewModel.adminMode.collectAsState()
+    val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val exportState by viewModel.exportState.collectAsState()
     val restoreState by viewModel.restoreState.collectAsState()
@@ -174,6 +176,19 @@ fun SettingsScreen(
                     icon = Icons.Default.AttachMoney,
                     iconTint = FinnencerColors.Mint,
                     onClick = onOpenCost,
+                )
+                SettingsRow(
+                    title = "Show diagnose buttons",
+                    subtitle = "Surface XBRL diagnostic buttons in per-ticker earnings — useful when troubleshooting EDGAR, off by default.",
+                    icon = Icons.Default.Engineering,
+                    iconTint = FinnencerColors.Amber,
+                    trailing = {
+                        Switch(
+                            checked = showDiagnoseButtons,
+                            onCheckedChange = viewModel::setShowDiagnoseButtons,
+                            colors = switchColors(),
+                        )
+                    },
                 )
             }
 

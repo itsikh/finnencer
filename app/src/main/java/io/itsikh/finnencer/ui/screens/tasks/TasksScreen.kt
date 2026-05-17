@@ -91,6 +91,7 @@ fun TasksScreen(
     onBack: () -> Unit,
     onOpenPodcast: (Long) -> Unit,
     onOpenReader: () -> Unit,
+    onOpenReport: (Long) -> Unit,
 ) {
     val vm: TasksViewModel = hiltViewModel()
     val jobs by vm.jobs.collectAsState()
@@ -143,7 +144,7 @@ fun TasksScreen(
                 items(running, key = { it.id }) { job ->
                     JobRow(
                         job = job,
-                        onOpen = { open(job, onOpenPodcast) },
+                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -155,7 +156,7 @@ fun TasksScreen(
                 items(finished, key = { it.id }) { job ->
                     JobRow(
                         job = job,
-                        onOpen = { open(job, onOpenPodcast) },
+                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -167,7 +168,7 @@ fun TasksScreen(
                 items(failed, key = { it.id }) { job ->
                     JobRow(
                         job = job,
-                        onOpen = { open(job, onOpenPodcast) },
+                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -179,10 +180,15 @@ fun TasksScreen(
     }
 }
 
-private fun open(job: AiJob, onOpenPodcast: (Long) -> Unit) {
+private fun open(
+    job: AiJob,
+    onOpenPodcast: (Long) -> Unit,
+    onOpenReport: (Long) -> Unit,
+) {
     val kind = job.resultKind ?: return
     when (AiJobResultKind.valueOf(kind)) {
         AiJobResultKind.PODCAST -> job.resultRefId?.toLongOrNull()?.let(onOpenPodcast)
+        AiJobResultKind.EARNINGS_REPORT -> job.resultRefId?.toLongOrNull()?.let(onOpenReport)
         // Combo: tapping the card expands the summary inline; the explicit
         // "Open podcast" button inside the expanded card opens the podcast.
         else -> Unit // INLINE_TEXT / SUMMARY_AND_PODCAST render in-place when expanded
@@ -222,7 +228,10 @@ private fun JobRow(
     var expanded by remember { mutableStateOf(false) }
     val statusColor = statusAccent(job.status)
     val hasInlineResult = job.resultText != null
-    val hasNavigable = job.resultKind == AiJobResultKind.PODCAST.name && job.resultRefId != null
+    val hasNavigable = (
+        job.resultKind == AiJobResultKind.PODCAST.name ||
+        job.resultKind == AiJobResultKind.EARNINGS_REPORT.name
+    ) && job.resultRefId != null
     val comboPodcastId: Long? = if (job.resultKind == AiJobResultKind.SUMMARY_AND_PODCAST.name) {
         job.resultRefId?.toLongOrNull()
     } else null
@@ -397,6 +406,7 @@ private fun typeLabel(type: String): String = when (type) {
     AiJobType.PODCAST_BATCH.name -> "Podcast"
     AiJobType.SUMMARY_AND_PODCAST_BATCH.name -> "Summary + podcast"
     AiJobType.REPORT_EARNINGS.name -> "Earnings report"
+    AiJobType.EARNINGS_BRIEF_AND_PODCAST.name -> "Earnings brief + podcast"
     else -> type
 }
 
