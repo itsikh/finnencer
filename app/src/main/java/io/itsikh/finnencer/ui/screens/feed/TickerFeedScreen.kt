@@ -220,24 +220,35 @@ fun TickerFeedScreen(
                             }
                             // "Diagnose XBRL" pulls SEC EDGAR's parsed
                             // financial facts for this ticker and shows
-                            // the last 4 quarters in a dialog. Lets the
-                            // user verify what numbers will reach the
-                            // report before generating one (#25).
-                            androidx.compose.material3.TextButton(
-                                onClick = vm::runXbrlDiagnose,
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            // the last 4 quarters in a dialog. Visibly
+                            // amber so users can find it when the
+                            // earnings card shows "data unavailable".
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                                    .clickable(onClick = vm::runXbrlDiagnose)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
                             ) {
                                 Text(
-                                    "Diagnose",
+                                    "Diagnose XBRL",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = FinnencerColors.Amber,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                             }
                         }
                     }
                 }
                 if (pastEarnings.isEmpty()) {
-                    item { EarningsEmptyState(syncError = vm.earningsSyncError.collectAsState().value) }
+                    item {
+                        EarningsEmptyState(
+                            syncError = vm.earningsSyncError.collectAsState().value,
+                            onDiagnose = vm::runXbrlDiagnose,
+                        )
+                    }
                 } else {
                     items(pastEarnings, key = { "earn-${it.id}" }) { event ->
                         val reportsForEvent = earningsReports.filter { it.earningsEventId == event.id }
@@ -549,11 +560,11 @@ private fun SelectionActionBar(count: Int, onCancel: () -> Unit, onSummarize: ()
 }
 
 @Composable
-private fun EarningsEmptyState(syncError: String?) {
+private fun EarningsEmptyState(syncError: String?, onDiagnose: () -> Unit) {
     GlassCard {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 "No past earnings synced for this ticker yet.",
@@ -573,6 +584,22 @@ private fun EarningsEmptyState(syncError: String?) {
                     "Last sync: $err",
                     style = MaterialTheme.typography.labelSmall,
                     color = FinnencerColors.Coral,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
+                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                    .clickable(onClick = onDiagnose)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "Diagnose XBRL connection",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FinnencerColors.Amber,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }

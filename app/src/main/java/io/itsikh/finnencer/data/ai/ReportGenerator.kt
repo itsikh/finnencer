@@ -34,6 +34,7 @@ class ReportGenerator @Inject constructor(
     private val earningsDao: EarningsDao,
     private val promptPrefs: PromptPreferences,
     private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
+    private val cikLookup: io.itsikh.finnencer.data.providers.EdgarCikLookup,
     @Suppress("unused") private val gson: Gson,
 ) {
 
@@ -61,7 +62,24 @@ class ReportGenerator @Inject constructor(
         // synchronously per report so the LLM always has real numbers
         // even when the periodic Finnhub numeric sync didn't (or
         // couldn't) backfill the EarningsEvent row.
-        val cik = ticker.cik
+        //
+        // If the Ticker row doesn't have a CIK yet (EDGAR sync failed
+        // earlier — e.g. while the User-Agent was still misconfigured —
+        // and the cached failure expired before the sync re-ran), look
+        // it up on-demand and persist so we don't refetch on every
+        // future report.
+        var cik = ticker.cik
+        if (cik == null) {
+            cik = runCatching { cikLookup.resolve(ticker.symbol) }
+                .onFailure { Log.w(TAG, "on-demand CIK lookup failed for ${ticker.symbol}: ${it.message}") }
+                .getOrNull()
+            if (cik != null) {
+                tickerDao.update(ticker.copy(cik = cik))
+                Log.i(TAG, "resolved CIK $cik for ${ticker.symbol} on-demand")
+            } else {
+                Log.w(TAG, "${ticker.symbol} has no CIK; XBRL section will be empty. EDGAR sync hasn't resolved it — check API keys → EDGAR User-Agent.")
+            }
+        }
         val xbrlQuarter = if (cik != null) {
             val eventDate = java.time.Instant.ofEpochMilli(event.scheduledAtMillis)
                 .atZone(java.time.ZoneId.systemDefault())

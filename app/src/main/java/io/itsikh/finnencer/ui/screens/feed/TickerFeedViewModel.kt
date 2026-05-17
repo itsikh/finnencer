@@ -82,6 +82,7 @@ class TickerFeedViewModel @Inject constructor(
     private val earningsNumericSync: io.itsikh.finnencer.data.sync.EarningsNumericSync,
     private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
     private val tickerDao: io.itsikh.finnencer.data.dao.TickerDao,
+    private val cikLookup: io.itsikh.finnencer.data.providers.EdgarCikLookup,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -177,11 +178,23 @@ class TickerFeedViewModel @Inject constructor(
         viewModelScope.launch {
             _xbrlDiag.value = XbrlDiagnostic(loading = true, ticker = symbol)
             val ticker = tickerDao.get(symbol)
-            val cik = ticker?.cik
+            // On-demand CIK resolution — same as ReportGenerator does
+            // before its XBRL fetch. If the Ticker row never got a CIK
+            // (EDGAR sync failed during the User-Agent-misconfigured
+            // era and the failure was cached), this is what unblocks
+            // the XBRL flow.
+            var cik = ticker?.cik
+            if (cik == null) {
+                cik = runCatching { cikLookup.resolve(symbol) }.getOrNull()
+                if (cik != null && ticker != null) {
+                    tickerDao.update(ticker.copy(cik = cik))
+                    AppLogger.i(TAG, "resolved CIK $cik for $symbol on-demand (diagnose)")
+                }
+            }
             if (cik == null) {
                 _xbrlDiag.value = XbrlDiagnostic(
                     ticker = symbol,
-                    error = "No CIK on this ticker yet — earnings sync hasn't resolved it. Tap Sync first, then retry.",
+                    error = "Couldn't resolve a CIK for $symbol. The SEC EDGAR ticker→CIK table didn't include it, or the EDGAR User-Agent (Settings → API keys) is rejecting requests. Bug-report logs will have the exact reason.",
                 )
                 return@launch
             }
