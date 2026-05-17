@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -215,6 +218,21 @@ fun TickerFeedScreen(
                                     color = FinnencerColors.Violet,
                                 )
                             }
+                            // "Diagnose XBRL" pulls SEC EDGAR's parsed
+                            // financial facts for this ticker and shows
+                            // the last 4 quarters in a dialog. Lets the
+                            // user verify what numbers will reach the
+                            // report before generating one (#25).
+                            androidx.compose.material3.TextButton(
+                                onClick = vm::runXbrlDiagnose,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            ) {
+                                Text(
+                                    "Diagnose",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FinnencerColors.Amber,
+                                )
+                            }
                         }
                     }
                 }
@@ -315,6 +333,11 @@ fun TickerFeedScreen(
         )
     }
 
+    val xbrlDiag by vm.xbrlDiag.collectAsState()
+    if (xbrlDiag.ticker != null) {
+        XbrlDiagDialog(state = xbrlDiag, onDismiss = vm::closeXbrlDiag)
+    }
+
     earningsPodcastTarget?.let { target ->
         EarningsPodcastDialog(
             quarter = "Q${target.fiscalQuarter} ${target.fiscalYear}",
@@ -375,6 +398,110 @@ private fun EarningsPodcastDialog(
         },
         confirmButton = {
             androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+/**
+ * Diagnostic dialog showing the raw SEC EDGAR XBRL company-facts result
+ * for the current ticker. Used to verify that the data the LLM will see
+ * during report generation is actually correct, BEFORE generating
+ * anything (and burning tokens on a maybe-empty report).
+ */
+@Composable
+private fun XbrlDiagDialog(
+    state: TickerFeedViewModel.XbrlDiagnostic,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("XBRL diagnose · ${state.ticker.orEmpty()}") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(min = 80.dp, max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.cik?.let {
+                    Text(
+                        "CIK $it",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                }
+                when {
+                    state.loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = FinnencerColors.Violet,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("Fetching companyfacts JSON from SEC…", color = FinnencerColors.TextSecondary)
+                    }
+                    state.error != null -> Text(state.error, color = FinnencerColors.Coral)
+                    state.quarters.isEmpty() -> Text(
+                        "No standalone quarter rows came back. Either SEC hasn't parsed this ticker's XBRL yet (very small caps), or the User-Agent in API keys was rejected. Check logs for 'XBRL' lines.",
+                        color = FinnencerColors.TextSecondary,
+                    )
+                    else -> {
+                        Text(
+                            "Most-recent ${state.quarters.size} quarters (10-Q/10-K standalone, 3-month periods):",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                        state.quarters.forEach { q ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(FinnencerColors.SurfaceGlass)
+                                    .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(10.dp))
+                                    .padding(10.dp),
+                            ) {
+                                Column {
+                                    Text(
+                                        "FY${q.fiscalYear} ${q.fiscalPeriod} · ${q.periodStart}→${q.periodEnd} · ${q.form}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = FinnencerColors.Mint,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    q.revenue?.let {
+                                        Text("Revenue  \$${"%,.0f".format(it)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = FinnencerColors.TextPrimary)
+                                    }
+                                    q.grossProfit?.let {
+                                        Text("Gross     \$${"%,.0f".format(it)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = FinnencerColors.TextPrimary)
+                                    }
+                                    q.netIncome?.let {
+                                        Text("Net inc   \$${"%,.0f".format(it)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = FinnencerColors.TextPrimary)
+                                    }
+                                    q.epsDiluted?.let {
+                                        Text("EPS dil   \$$it",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = FinnencerColors.TextPrimary)
+                                    }
+                                    q.accn?.let {
+                                        Text(
+                                            it,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = FinnencerColors.TextTertiary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
 }

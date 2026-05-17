@@ -80,6 +80,8 @@ class TickerFeedViewModel @Inject constructor(
     private val aiJobs: AiJobsRepository,
     private val earningsSync: io.itsikh.finnencer.data.sync.EarningsCalendarSync,
     private val earningsNumericSync: io.itsikh.finnencer.data.sync.EarningsNumericSync,
+    private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
+    private val tickerDao: io.itsikh.finnencer.data.dao.TickerDao,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -158,6 +160,47 @@ class TickerFeedViewModel @Inject constructor(
             if (currentlyEmpty) refreshEarningsNow()
         }
     }
+
+    // ── XBRL diagnostic (issue #25 verification path) ───────────────────
+    data class XbrlDiagnostic(
+        val loading: Boolean = false,
+        val ticker: String? = null,
+        val cik: String? = null,
+        val error: String? = null,
+        val quarters: List<io.itsikh.finnencer.data.providers.XbrlQuarter> = emptyList(),
+    )
+
+    private val _xbrlDiag = MutableStateFlow(XbrlDiagnostic())
+    val xbrlDiag: StateFlow<XbrlDiagnostic> = _xbrlDiag.asStateFlow()
+
+    fun runXbrlDiagnose() {
+        viewModelScope.launch {
+            _xbrlDiag.value = XbrlDiagnostic(loading = true, ticker = symbol)
+            val ticker = tickerDao.get(symbol)
+            val cik = ticker?.cik
+            if (cik == null) {
+                _xbrlDiag.value = XbrlDiagnostic(
+                    ticker = symbol,
+                    error = "No CIK on this ticker yet — earnings sync hasn't resolved it. Tap Sync first, then retry.",
+                )
+                return@launch
+            }
+            runCatching { xbrl.recentQuarters(cik, limit = 4) }
+                .onSuccess { qs ->
+                    _xbrlDiag.value = XbrlDiagnostic(ticker = symbol, cik = cik, quarters = qs)
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "XBRL diagnose failed", t)
+                    _xbrlDiag.value = XbrlDiagnostic(
+                        ticker = symbol,
+                        cik = cik,
+                        error = t.message ?: t.javaClass.simpleName,
+                    )
+                }
+        }
+    }
+
+    fun closeXbrlDiag() { _xbrlDiag.value = XbrlDiagnostic() }
 
     fun refreshEarningsNow() {
         if (_earningsSyncing.value) return

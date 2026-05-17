@@ -33,6 +33,7 @@ class ReportGenerator @Inject constructor(
     private val newsDao: NewsDao,
     private val earningsDao: EarningsDao,
     private val promptPrefs: PromptPreferences,
+    private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
     @Suppress("unused") private val gson: Gson,
 ) {
 
@@ -50,9 +51,49 @@ class ReportGenerator @Inject constructor(
         if (event.actualReportedAtMillis != null) {
             bundle.append("Reported: ${event.actualReportedAtMillis}\n")
         }
-        bundle.append("\n## Consensus vs actual\n")
-        bundle.append(" - EPS consensus: ${fmt(event.consensusEps)}  actual: ${fmt(event.actualEps)}\n")
-        bundle.append(" - Revenue consensus: ${fmt(event.consensusRevenue)}  actual: ${fmt(event.actualRevenue)}\n")
+        bundle.append("\n## Consensus (from Finnhub)\n")
+        bundle.append(" - EPS consensus: ${fmt(event.consensusEps)}\n")
+        bundle.append(" - Revenue consensus: ${fmt(event.consensusRevenue)}\n")
+
+        // ───── Actual results from SEC EDGAR XBRL ─────
+        // This is the authoritative source: the company's own
+        // mandatory-XBRL income statement, parsed by the SEC. Fetched
+        // synchronously per report so the LLM always has real numbers
+        // even when the periodic Finnhub numeric sync didn't (or
+        // couldn't) backfill the EarningsEvent row.
+        val cik = ticker.cik
+        val xbrlQuarter = if (cik != null) {
+            val eventDate = java.time.Instant.ofEpochMilli(event.scheduledAtMillis)
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate()
+            runCatching { xbrl.quarterNear(cik, eventDate, windowDays = 60) }
+                .onFailure { Log.w(TAG, "XBRL fetch failed for ${ticker.symbol}: ${it.message}") }
+                .getOrNull()
+        } else null
+
+        bundle.append("\n## Actual results (SEC EDGAR XBRL — authoritative)\n")
+        if (xbrlQuarter == null) {
+            bundle.append("(no XBRL filing found near this date; treat consensus block as ESTIMATE only)\n")
+            // Fall back to Finnhub-derived actuals if available — better
+            // than no numbers at all.
+            if (event.actualEps != null || event.actualRevenue != null) {
+                bundle.append(" - Fallback (Finnhub actuals): EPS=${fmt(event.actualEps)}, Revenue=${fmt(event.actualRevenue)}\n")
+            }
+        } else {
+            val spanLabel = when (xbrlQuarter.span) {
+                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.QUARTER -> "STANDALONE QUARTER"
+                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.ANNUAL -> "FULL FISCAL YEAR (annual aggregate — XBRL did not tag a standalone Q4)"
+                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.YTD -> "YTD CUMULATIVE"
+            }
+            bundle.append(" - Period: ${xbrlQuarter.periodStart} to ${xbrlQuarter.periodEnd} (FY${xbrlQuarter.fiscalYear} ${xbrlQuarter.fiscalPeriod}, ${xbrlQuarter.form}) — $spanLabel\n")
+            xbrlQuarter.revenue?.let { bundle.append(" - Revenue: \$${humanMoney(it)} (raw: $it)\n") }
+            xbrlQuarter.grossProfit?.let { bundle.append(" - Gross profit: \$${humanMoney(it)} (raw: $it)\n") }
+            xbrlQuarter.netIncome?.let { bundle.append(" - Net income: \$${humanMoney(it)} (raw: $it)\n") }
+            xbrlQuarter.epsDiluted?.let { bundle.append(" - EPS diluted: \$$it\n") }
+            xbrlQuarter.epsBasic?.let { bundle.append(" - EPS basic: \$$it\n") }
+            xbrlQuarter.accn?.let { bundle.append(" - SEC accession: $it\n") }
+            Log.i(TAG, "XBRL: ${ticker.symbol} ${xbrlQuarter.fiscalPeriod} FY${xbrlQuarter.fiscalYear} ${xbrlQuarter.span} rev=${xbrlQuarter.revenue} eps=${xbrlQuarter.epsDiluted}")
+        }
 
         val newsLimit = when (tier) {
             ReportTier.BRIEF -> 5; ReportTier.STANDARD -> 12; ReportTier.DEEP -> 25
@@ -123,6 +164,15 @@ class ReportGenerator @Inject constructor(
     }
 
     private fun fmt(d: Double?): String = if (d == null) "—" else "%.4f".format(d).trimEnd('0').trimEnd('.')
+
+    /** Format a large dollar amount as "39.33B" / "1.245B" / "456.7M" so
+     *  the LLM gets a human-readable hint alongside the raw value. */
+    private fun humanMoney(d: Double): String = when {
+        d >= 1_000_000_000_000.0 -> "%.2fT".format(d / 1_000_000_000_000.0)
+        d >= 1_000_000_000.0 -> "%.2fB".format(d / 1_000_000_000.0)
+        d >= 1_000_000.0 -> "%.1fM".format(d / 1_000_000.0)
+        else -> "%.0f".format(d)
+    }
 
     private companion object {
         const val TAG = "ReportGenerator"
