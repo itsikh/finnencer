@@ -26,6 +26,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.TextSnippet
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -153,6 +158,46 @@ fun ReaderScreen(onBack: () -> Unit) {
                         }
                     },
                     actions = {
+                        var shareMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { shareMenu = true }) {
+                            Icon(Icons.Default.Share, "Share", tint = palette.text)
+                        }
+                        DropdownMenu(
+                            expanded = shareMenu,
+                            onDismissRequest = { shareMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Share as text") },
+                                leadingIcon = { Icon(Icons.Default.TextSnippet, null) },
+                                onClick = {
+                                    shareMenu = false
+                                    payload?.let { p ->
+                                        val attribution = p.attribution?.let { " ($it)" }.orEmpty()
+                                        io.itsikh.finnencer.share.ShareHelpers.shareText(
+                                            context,
+                                            text = "${p.title}$attribution\n\n${p.body}",
+                                            subject = p.title,
+                                        )
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share as PDF") },
+                                leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                                onClick = {
+                                    shareMenu = false
+                                    payload?.let { p ->
+                                        io.itsikh.finnencer.share.ShareHelpers.shareTextAsPdf(
+                                            context = context,
+                                            title = p.title,
+                                            attribution = p.attribution,
+                                            body = p.body,
+                                            filename = p.title,
+                                        )
+                                    }
+                                },
+                            )
+                        }
                         IconButton(onClick = { settingsOpen = !settingsOpen }) {
                             Icon(Icons.Default.FormatSize, "Reader settings", tint = palette.text)
                         }
