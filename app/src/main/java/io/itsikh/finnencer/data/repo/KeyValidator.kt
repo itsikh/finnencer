@@ -157,12 +157,29 @@ class KeyValidator @Inject constructor(
     }
 
     private fun validateEdgar(userAgent: String): KeyTestResult {
+        // Up-front syntactic check — EDGAR's policy requires an email in
+        // the User-Agent so they can contact heavy callers. Reject obvious
+        // tokens / hex strings here with a tailored message instead of
+        // letting EDGAR 403 with a less-helpful one.
+        if (!userAgent.contains("@") || !userAgent.contains(".")) {
+            return KeyTestResult.BadFormat(
+                "Looks like a token, not an email. SEC EDGAR doesn't issue API keys — paste your email " +
+                    "here (e.g. \"finnencer your.name@example.com\"). The User-Agent value goes on every " +
+                    "request so SEC can contact you about heavy usage."
+            )
+        }
         // EDGAR validates the User-Agent on every request; Apple's CIK is the
         // standard sentinel.
+        //
+        // NOTE: we intentionally do NOT add an Accept-Encoding header here.
+        // OkHttp's BridgeInterceptor handles gzip transparently ONLY when it
+        // sets Accept-Encoding itself; adding our own disables the
+        // transparent decompression and the body comes back as raw gzip
+        // bytes, which then fails the JSON-body check below even when the
+        // User-Agent is perfectly valid.
         val req = Request.Builder()
             .url("https://data.sec.gov/submissions/CIK0000320193.json")
-            .addHeader("User-Agent", userAgent)
-            .addHeader("Accept-Encoding", "gzip, deflate")
+            .header("User-Agent", userAgent)
             .get()
             .build()
         okHttp.newCall(req).execute().use { resp ->
@@ -173,7 +190,12 @@ class KeyValidator @Inject constructor(
                         AppLogger.i(TAG, "EDGAR_UA ok")
                         KeyTestResult.Ok
                     } else {
-                        KeyTestResult.Failed("EDGAR returned an unexpected body — User-Agent likely rejected.")
+                        // Useful diagnostic: include the first 160 chars of
+                        // whatever EDGAR returned so a future failure tells
+                        // us what the surprise looks like instead of just
+                        // "unexpected body".
+                        val preview = body.take(160).replace("\n", " ")
+                        KeyTestResult.Failed("EDGAR returned an unexpected body — User-Agent likely rejected. Preview: $preview")
                     }
                 }
                 resp.code == 403 -> KeyTestResult.Failed(

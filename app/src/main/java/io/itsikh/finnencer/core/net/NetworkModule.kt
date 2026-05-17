@@ -82,9 +82,16 @@ class EdgarUserAgentInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val ua = repo.get(ApiKey.EDGAR_UA) ?: "finnencer (no-contact-set)"
+        // Intentionally NOT setting Accept-Encoding here. OkHttp's
+        // BridgeInterceptor handles gzip transparently — but ONLY when it
+        // sets the Accept-Encoding header itself. If we set it, OkHttp
+        // assumes the caller will decompress, and the response body comes
+        // back as raw gzip bytes. Retrofit + Gson then try to parse the
+        // binary as text and the EDGAR sync silently breaks even when the
+        // User-Agent is correct. Symptom: validator reports "EDGAR returned
+        // an unexpected body" and EarningsCalendarSync sees empty results.
         val req = chain.request().newBuilder()
             .header("User-Agent", ua)
-            .header("Accept-Encoding", "gzip, deflate")
             .build()
         return chain.proceed(req)
     }
