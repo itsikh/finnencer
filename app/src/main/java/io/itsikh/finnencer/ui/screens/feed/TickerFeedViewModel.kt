@@ -79,6 +79,7 @@ class TickerFeedViewModel @Inject constructor(
     private val scorer: ImportanceScorer,
     private val aiJobs: AiJobsRepository,
     private val earningsSync: io.itsikh.finnencer.data.sync.EarningsCalendarSync,
+    private val earningsNumericSync: io.itsikh.finnencer.data.sync.EarningsNumericSync,
 ) : ViewModel() {
 
     private val symbol: String = savedState.get<String>("symbol")?.uppercase()
@@ -163,10 +164,23 @@ class TickerFeedViewModel @Inject constructor(
         _earningsSyncing.value = true
         _earningsSyncError.value = null
         viewModelScope.launch {
+            // EDGAR seeds the rows (dates + status); Finnhub fills the
+            // numeric fields. Both must run for past-earnings cards to
+            // show beat/miss percentages rather than "—".
             runCatching { earningsSync.runOnce() }
                 .onFailure { t ->
-                    AppLogger.w(TAG, "ad-hoc earnings sync failed: ${t.message}")
+                    AppLogger.w(TAG, "ad-hoc EDGAR earnings sync failed: ${t.message}")
                     _earningsSyncError.value = t.message ?: t.javaClass.simpleName
+                }
+            runCatching { earningsNumericSync.runOnce() }
+                .onFailure { t ->
+                    AppLogger.w(TAG, "ad-hoc Finnhub numeric sync failed: ${t.message}")
+                    // Don't overwrite an existing EDGAR error; partial
+                    // success (rows but no numbers) is more useful than
+                    // total failure.
+                    if (_earningsSyncError.value == null) {
+                        _earningsSyncError.value = t.message ?: t.javaClass.simpleName
+                    }
                 }
             _earningsSyncing.value = false
         }

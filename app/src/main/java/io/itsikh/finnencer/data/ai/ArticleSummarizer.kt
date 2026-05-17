@@ -15,6 +15,7 @@ import javax.inject.Singleton
 class ArticleSummarizer @Inject constructor(
     private val router: AiRouter,
     private val newsDao: NewsDao,
+    private val promptPrefs: PromptPreferences,
 ) {
 
     /** Text + the model that produced it (for the attribution line in the UI). */
@@ -68,17 +69,18 @@ class ArticleSummarizer @Inject constructor(
             append("Ticker context: ").append(article.primaryTickerSymbol ?: "unknown").append('\n')
             append("Source publication: ").append(article.sourceName).append('\n')
         }
-        val system = buildString {
+        val baseSystem = buildString {
             append(SYSTEM_PROMPT)
             if (pagesTarget != null && pagesTarget > 0) {
                 append("\n\nTarget length: about ").append(pagesTarget).append(" pages of dense prose ")
                 append("(~").append(pagesTarget * 350).append(" words).")
             }
-            if (!customPrompt.isNullOrBlank()) {
-                append("\n\nAdditional user instructions (apply faithfully):\n")
-                append(customPrompt.trim())
-            }
         }
+        val system = promptPrefs.applyExtras(
+            base = baseSystem,
+            extra = promptPrefs.get(AiUsage.SUMMARY),
+            perCallCustom = customPrompt,
+        )
         val maxTokens = when {
             pagesTarget == null -> 600
             pagesTarget <= 2 -> 2_000

@@ -154,10 +154,16 @@ fun AppNavHost() {
                     onOpenKeys = { navController.navigate("keys") },
                     onOpenCost = { navController.navigate("cost") },
                     onOpenAiPrefs = { navController.navigate("ai_prefs") },
+                    onOpenAiPrompts = { navController.navigate("ai_prompts") },
                 )
             }
             composable("ai_prefs") {
                 io.itsikh.finnencer.ui.screens.settings.AiPrefsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable("ai_prompts") {
+                io.itsikh.finnencer.ui.screens.settings.PromptEditorScreen(
                     onBack = { navController.popBackStack() },
                 )
             }

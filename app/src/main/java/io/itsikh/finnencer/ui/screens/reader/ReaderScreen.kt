@@ -8,6 +8,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -257,35 +258,45 @@ fun ReaderScreen(onBack: () -> Unit) {
                         .padding(PaddingValues(horizontal = 22.dp, vertical = 24.dp)),
                 ) {
                     payload?.let { p ->
-                        Text(
-                            p.title,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = palette.text,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        p.attribution?.takeIf { it.isNotBlank() }?.let { att ->
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                att,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = palette.muted,
-                            )
+                        // SelectionContainer makes both the title and the
+                        // body long-press-selectable so the user can copy
+                        // any snippet out of Reader Mode. The tap-to-toggle-
+                        // chrome modifier above still works for short taps;
+                        // long-press now triggers Compose's selection
+                        // handles instead.
+                        SelectionContainer {
+                            Column {
+                                Text(
+                                    p.title,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = palette.text,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                p.attribution?.takeIf { it.isNotBlank() }?.let { att ->
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        att,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = palette.muted,
+                                    )
+                                }
+                                Spacer(Modifier.height(20.dp))
+                                Text(
+                                    p.body,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontFamily = FontFamily.Default,
+                                        fontSize = ReaderPreferences.FONT_STEPS[fontStep].sp,
+                                        lineHeight = (ReaderPreferences.FONT_STEPS[fontStep] * 1.55f).sp,
+                                        lineBreak = LineBreak.Paragraph,
+                                        lineHeightStyle = LineHeightStyle(
+                                            alignment = LineHeightStyle.Alignment.Center,
+                                            trim = LineHeightStyle.Trim.None,
+                                        ),
+                                    ),
+                                    color = palette.text,
+                                )
+                            }
                         }
-                        Spacer(Modifier.height(20.dp))
-                        Text(
-                            p.body,
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontFamily = FontFamily.Default, // Inter / system serif fallback
-                                fontSize = ReaderPreferences.FONT_STEPS[fontStep].sp,
-                                lineHeight = (ReaderPreferences.FONT_STEPS[fontStep] * 1.55f).sp,
-                                lineBreak = LineBreak.Paragraph,
-                                lineHeightStyle = LineHeightStyle(
-                                    alignment = LineHeightStyle.Alignment.Center,
-                                    trim = LineHeightStyle.Trim.None,
-                                ),
-                            ),
-                            color = palette.text,
-                        )
                         Spacer(Modifier.height(48.dp))
                     } ?: Text(
                         "Nothing to read.",

@@ -12,6 +12,7 @@ import io.itsikh.finnencer.data.ai.ImportanceScorer
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.data.sync.EarningsCalendarSync
+import io.itsikh.finnencer.data.sync.EarningsNumericSync
 import io.itsikh.finnencer.data.sync.NewsSyncEngine
 
 /**
@@ -27,6 +28,7 @@ class SyncWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val engine: NewsSyncEngine,
     private val earningsSync: EarningsCalendarSync,
+    private val earningsNumericSync: EarningsNumericSync,
     private val scorer: ImportanceScorer,
     private val notifier: AlertNotifier,
     private val apiKeys: ApiKeysRepository,
@@ -45,12 +47,19 @@ class SyncWorker @AssistedInject constructor(
         val ingestStats = engine.runOnce()
         Log.i(TAG, "ingest done: $ingestStats")
 
-        // Stage 1b — earnings calendar (cheap; same Finnhub key).
+        // Stage 1b — earnings discovery. EDGAR seeds filing dates;
+        // Finnhub fills in consensus + actual EPS / revenue so the
+        // ReportGenerator doesn't have to write "Earnings data
+        // unavailable" into every brief (#20).
+        val earningsInserted = runCatching { earningsSync.runOnce() }
+            .onFailure { Log.e(TAG, "EDGAR earnings sync failed", it) }
+            .getOrDefault(0)
+        Log.i(TAG, "EDGAR earnings: $earningsInserted new rows")
         if (apiKeys.isConfigured(ApiKey.FINNHUB)) {
-            val earningsInserted = runCatching { earningsSync.runOnce() }
-                .onFailure { Log.e(TAG, "earnings sync failed", it) }
+            val numericUpdated = runCatching { earningsNumericSync.runOnce() }
+                .onFailure { Log.e(TAG, "Finnhub earnings numeric sync failed", it) }
                 .getOrDefault(0)
-            Log.i(TAG, "earnings calendar: $earningsInserted new rows")
+            Log.i(TAG, "Finnhub earnings numbers: $numericUpdated rows updated")
         }
 
         // Stage 2 — score newly-ingested articles with Claude Haiku. Skipped

@@ -32,6 +32,7 @@ class ReportGenerator @Inject constructor(
     private val tickerDao: TickerDao,
     private val newsDao: NewsDao,
     private val earningsDao: EarningsDao,
+    private val promptPrefs: PromptPreferences,
     @Suppress("unused") private val gson: Gson,
 ) {
 
@@ -83,11 +84,15 @@ class ReportGenerator @Inject constructor(
         }
 
         // ───────── Prompt template ─────────
-        val (usage, system, maxTokens) = when (tier) {
+        val (usage, baseSystem, maxTokens) = when (tier) {
             ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, BRIEF_PROMPT, 1500)
             ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, STANDARD_PROMPT, 3500)
             ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DEEP_PROMPT, 6500)
         }
+        val system = promptPrefs.applyExtras(
+            base = baseSystem,
+            extra = promptPrefs.get(usage),
+        )
 
         Log.i(TAG, "generating ${tier.name} report for ${ticker.symbol}")
         val completion = router.complete(

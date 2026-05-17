@@ -24,6 +24,7 @@ class ImportanceScorer @Inject constructor(
     private val router: AiRouter,
     private val newsDao: NewsDao,
     private val gson: Gson,
+    private val promptPrefs: PromptPreferences,
 ) {
 
     data class ScorerStats(
@@ -90,7 +91,10 @@ class ImportanceScorer @Inject constructor(
         }
         val completion = router.complete(
             usage = AiUsage.SCORING,
-            system = SYSTEM_PROMPT + noteBlock,
+            system = promptPrefs.applyExtras(
+                base = SYSTEM_PROMPT + noteBlock,
+                extra = promptPrefs.get(AiUsage.SCORING),
+            ),
             userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
             maxTokens = 600,
             temperature = 0.0,
@@ -139,7 +143,10 @@ class ImportanceScorer @Inject constructor(
 
         val completion = router.complete(
             usage = AiUsage.SCORING,
-            system = SYSTEM_PROMPT,
+            system = promptPrefs.applyExtras(
+                base = SYSTEM_PROMPT,
+                extra = promptPrefs.get(AiUsage.SCORING),
+            ),
             userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
             maxTokens = 1200,
             temperature = 0.0,

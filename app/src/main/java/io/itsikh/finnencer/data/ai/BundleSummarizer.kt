@@ -31,6 +31,7 @@ class BundleSummarizer @Inject constructor(
     private val newsDao: NewsDao,
     private val podcastDao: PodcastDao,
     private val earningsDao: EarningsDao,
+    private val promptPrefs: PromptPreferences,
 ) {
 
     enum class Pages(val target: Int, val maxTokens: Int) {
@@ -68,16 +69,17 @@ class BundleSummarizer @Inject constructor(
                 append('\n')
             }
         }
-        val system = buildString {
+        val baseSystem = buildString {
             append(BASE_SUMMARY_SYSTEM)
             append("\n\nTarget length: about ").append(pages.target).append(" pages of dense prose ")
             append("(~").append(pages.target * 350).append(" words). ")
             append("Synthesize across all ").append(articles.size).append(" articles — do NOT list per-article summaries.")
-            if (!customPrompt.isNullOrBlank()) {
-                append("\n\nAdditional user instructions (apply faithfully):\n")
-                append(customPrompt.trim())
-            }
         }
+        val system = promptPrefs.applyExtras(
+            base = baseSystem,
+            extra = promptPrefs.get(AiUsage.SUMMARY),
+            perCallCustom = customPrompt,
+        )
         val completion = router.complete(
             usage = AiUsage.SUMMARY,
             system = system,
@@ -194,18 +196,19 @@ class BundleSummarizer @Inject constructor(
         runCatching {
             podcastDao.update(podcastDao.get(id)!!.copy(status = PodcastGenerationStatus.GENERATING.name))
 
-            val scriptSystem = buildString {
+            val baseScriptSystem = buildString {
                 append(DIALOGUE_SYSTEM)
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
                 append("(~").append(minutes.charBudget).append(" characters of dialogue). ")
                 append("Pace the conversation so the entire script lands within ±15% of that target. ")
                 append("Number of turns should scale with duration (rule of thumb: ")
                 append(minutes.minutes * 2).append(" total turns).")
-                if (!customPrompt.isNullOrBlank()) {
-                    append("\n\nAdditional user instructions (apply faithfully):\n")
-                    append(customPrompt.trim())
-                }
             }
+            val scriptSystem = promptPrefs.applyExtras(
+                base = baseScriptSystem,
+                extra = promptPrefs.get(AiUsage.PODCAST_SCRIPT),
+                perCallCustom = customPrompt,
+            )
             val maxTokens = (minutes.charBudget / 3).coerceIn(1500, 9000)
             val script = router.complete(
                 usage = AiUsage.PODCAST_SCRIPT,

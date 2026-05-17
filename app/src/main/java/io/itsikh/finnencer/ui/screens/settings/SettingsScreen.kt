@@ -73,6 +73,7 @@ fun SettingsScreen(
     onOpenKeys: () -> Unit = {},
     onOpenCost: () -> Unit = {},
     onOpenAiPrefs: () -> Unit = {},
+    onOpenAiPrompts: () -> Unit = {},
 ) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
@@ -138,6 +139,13 @@ fun SettingsScreen(
                     icon = Icons.Default.AutoAwesome,
                     iconTint = FinnencerColors.Violet,
                     onClick = onOpenAiPrefs,
+                )
+                SettingsRow(
+                    title = "Prompts",
+                    subtitle = "Add persistent instructions to each AI workload — page counts, podcast length, tone, etc.",
+                    icon = Icons.Default.AutoAwesome,
+                    iconTint = FinnencerColors.Violet,
+                    onClick = onOpenAiPrompts,
                 )
             }
 
