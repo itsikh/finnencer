@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.data.repo.AiJobsRepository
+import io.itsikh.finnencer.data.repo.QueueRepository
 import io.itsikh.finnencer.data.repo.TickerSearchResult
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import kotlinx.coroutines.FlowPreview
@@ -38,6 +39,7 @@ data class TickerSettingsSheetState(
 class WatchlistViewModel @Inject constructor(
     private val repo: WatchlistRepository,
     aiJobs: AiJobsRepository,
+    queue: QueueRepository,
 ) : ViewModel() {
 
     val tickers: StateFlow<List<Ticker>> =
@@ -47,6 +49,10 @@ class WatchlistViewModel @Inject constructor(
 
     /** Number of queued + running AI jobs — drives the badge on the Tasks icon. */
     val activeJobCount: StateFlow<Int> = aiJobs.observeActiveCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /** Open ("to do") queue size — drives the badge on the Queue icon. */
+    val queueCount: StateFlow<Int> = queue.observeIncompleteCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val _addSheet = MutableStateFlow(AddSheetState())

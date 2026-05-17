@@ -48,7 +48,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -96,6 +98,12 @@ fun ReportViewerScreen(
                 },
                 actions = {
                     report?.let { r ->
+                        QueueToggleIconButton(
+                            kind = QueueItemKind.EARNINGS_REPORT,
+                            refId = r.id.toString(),
+                            title = r.title,
+                            subtitle = "${r.tier} · ${io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model) ?: r.model}",
+                        )
                         IconButton(onClick = { onListen(r.id) }) {
                             Icon(
                                 Icons.Default.Headphones,

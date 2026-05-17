@@ -57,8 +57,10 @@ import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.AiJobResultKind
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
+import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.components.QueueTogglePill
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -330,6 +332,12 @@ private fun JobRow(
                                     )
                                 }
                             }
+                            QueueTogglePill(
+                                kind = QueueItemKind.BATCH_SUMMARY,
+                                refId = job.id,
+                                title = job.title,
+                                subtitle = job.resultModel?.let { "via ${friendlyModelLabel(it)}" },
+                            )
                         }
                         job.resultModel?.takeIf { it.isNotBlank() }?.let { id ->
                             Spacer(Modifier.height(8.dp))

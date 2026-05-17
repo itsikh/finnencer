@@ -110,4 +110,14 @@ interface EarningsDao {
 
     @Query("DELETE FROM earnings_reports WHERE id = :id")
     suspend fun deleteReport(id: Long)
+
+    /** Bulk delete used by the multi-select flow in the global Earnings
+     *  screen and by the per-ticker report-tag long-press path (#26). */
+    @Query("DELETE FROM earnings_reports WHERE id IN (:ids)")
+    suspend fun deleteReports(ids: List<Long>)
+
+    /** Wipe every cached report. Wired behind an explicit "Delete all"
+     *  confirm dialog in the Earnings screen header. */
+    @Query("DELETE FROM earnings_reports")
+    suspend fun deleteAllReports()
 }

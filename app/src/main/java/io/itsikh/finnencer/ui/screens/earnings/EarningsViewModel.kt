@@ -25,7 +25,7 @@ data class TierPickerState(
 
 @HiltViewModel
 class EarningsViewModel @Inject constructor(
-    earningsDao: EarningsDao,
+    private val earningsDao: EarningsDao,
     private val reportGenerator: ReportGenerator,
 ) : ViewModel() {
 
@@ -41,6 +41,58 @@ class EarningsViewModel @Inject constructor(
 
     private val _picker = MutableStateFlow(TierPickerState())
     val picker: StateFlow<TierPickerState> = _picker.asStateFlow()
+
+    // ── Selection mode for bulk delete (#26) ────────────────────────────
+    private val _selectedReportIds = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedReportIds: StateFlow<Set<Long>> = _selectedReportIds.asStateFlow()
+
+    /** True whenever the user is in multi-select mode. We treat "selection
+     *  empty" as "not in select mode" — entering is triggered by adding
+     *  the first id via long-press. */
+    val isSelecting: StateFlow<Boolean> = _selectedReportIds
+        .mapState { it.isNotEmpty() }
+
+    private fun <T, R> StateFlow<T>.mapState(transform: (T) -> R): StateFlow<R> =
+        kotlinx.coroutines.flow.MutableStateFlow(transform(value)).also { out ->
+            viewModelScope.launch {
+                collect { out.value = transform(it) }
+            }
+        }.asStateFlow()
+
+    fun toggleReportSelection(reportId: Long) {
+        _selectedReportIds.value = _selectedReportIds.value.toMutableSet().also {
+            if (!it.add(reportId)) it.remove(reportId)
+        }
+    }
+
+    fun selectAllReports() {
+        _selectedReportIds.value = recentReports.value.map { it.id }.toSet()
+    }
+
+    fun invertReportSelection() {
+        val all = recentReports.value.map { it.id }.toSet()
+        _selectedReportIds.value = all - _selectedReportIds.value
+    }
+
+    fun clearReportSelection() {
+        _selectedReportIds.value = emptySet()
+    }
+
+    fun deleteSelectedReports() {
+        val ids = _selectedReportIds.value.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            earningsDao.deleteReports(ids)
+            _selectedReportIds.value = emptySet()
+        }
+    }
+
+    fun deleteAllReports() {
+        viewModelScope.launch {
+            earningsDao.deleteAllReports()
+            _selectedReportIds.value = emptySet()
+        }
+    }
 
     fun openTierPicker(event: EarningsEvent) {
         _picker.value = TierPickerState(event = event)

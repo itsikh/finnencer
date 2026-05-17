@@ -266,6 +266,7 @@ fun TickerFeedScreen(
                             },
                             onMakePodcast = { earningsPodcastTarget = event },
                             onOpenReport = { id -> onOpenReport(id) },
+                            onDeleteReport = { id -> vm.deleteReport(id) },
                             onOpenReader = { report ->
                                 io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
                                     io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
@@ -606,6 +607,7 @@ private fun EarningsEmptyState(syncError: String?, onDiagnose: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EarningsCard(
     event: EarningsEvent,
@@ -617,6 +619,7 @@ private fun EarningsCard(
     onDeepDive: () -> Unit,
     onMakePodcast: () -> Unit,
     onOpenReport: (Long) -> Unit,
+    onDeleteReport: (Long) -> Unit,
     onOpenReader: (io.itsikh.finnencer.data.entity.EarningsReport) -> Unit,
 ) {
     val latestReport = reports.maxByOrNull { it.generatedAtMillis }
@@ -647,8 +650,11 @@ private fun EarningsCard(
             // when we have both sides.
             EarningsNumericExtract(event)
 
-            // Existing-report tags
+            // Existing-report tags. Long-press deletes the specific
+            // report (#26) — confirmed by dialog because the only undo
+            // is to regenerate, which costs tokens.
             if (reports.isNotEmpty()) {
+                var reportPendingDelete by remember { mutableStateOf<io.itsikh.finnencer.data.entity.EarningsReport?>(null) }
                 Spacer(Modifier.height(8.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -660,7 +666,10 @@ private fun EarningsCard(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(FinnencerColors.Mint.copy(alpha = 0.15f))
                                 .border(1.dp, FinnencerColors.Mint.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                                .clickable { onOpenReport(r.id) }
+                                .combinedClickable(
+                                    onClick = { onOpenReport(r.id) },
+                                    onLongClick = { reportPendingDelete = r },
+                                )
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                         ) {
                             Text(
@@ -671,6 +680,31 @@ private fun EarningsCard(
                             )
                         }
                     }
+                }
+                reportPendingDelete?.let { target ->
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { reportPendingDelete = null },
+                        title = { Text("Delete ${target.tier.lowercase()} report?") },
+                        text = {
+                            Text(
+                                "Removes this cached ${target.tier.lowercase()} report. The underlying earnings calendar entry stays. You can regenerate later.",
+                                color = FinnencerColors.TextSecondary,
+                            )
+                        },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(onClick = {
+                                onDeleteReport(target.id)
+                                reportPendingDelete = null
+                            }) {
+                                Text("Delete", color = FinnencerColors.Coral)
+                            }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(onClick = { reportPendingDelete = null }) {
+                                Text("Cancel")
+                            }
+                        },
+                    )
                 }
             }
 

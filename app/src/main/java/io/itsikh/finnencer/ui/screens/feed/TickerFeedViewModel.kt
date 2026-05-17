@@ -142,6 +142,13 @@ class TickerFeedViewModel @Inject constructor(
         _earningsError.value = _earningsError.value - eventId
     }
 
+    /** Delete a single cached AI report (used by long-press on a report
+     *  tag in the per-ticker earnings card — #26). The underlying
+     *  EarningsEvent row stays untouched. */
+    fun deleteReport(reportId: Long) {
+        viewModelScope.launch { earningsDao.deleteReport(reportId) }
+    }
+
     private val _earningsSyncing = MutableStateFlow(false)
     val earningsSyncing: StateFlow<Boolean> = _earningsSyncing.asStateFlow()
 

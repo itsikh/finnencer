@@ -49,7 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
+import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +78,16 @@ fun PodcastPlayerScreen(onBack: () -> Unit) {
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = FinnencerColors.TextPrimary,
+                        )
+                    }
+                },
+                actions = {
+                    podcast?.let { p ->
+                        QueueToggleIconButton(
+                            kind = QueueItemKind.PODCAST,
+                            refId = p.id.toString(),
+                            title = p.title,
+                            subtitle = p.durationMs?.let { "${it / 1000 / 60} min" },
                         )
                     }
                 },

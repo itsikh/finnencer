@@ -13,6 +13,7 @@ import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
+import io.itsikh.finnencer.data.dao.QueueItemDao
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.db.FinnencerDatabase
 import javax.inject.Singleton
@@ -38,4 +39,5 @@ object DatabaseModule {
     @Provides fun providePodcastDao(db: FinnencerDatabase): PodcastDao = db.podcastDao()
     @Provides fun provideApiUsageDao(db: FinnencerDatabase): ApiUsageDao = db.apiUsageDao()
     @Provides fun provideAiJobDao(db: FinnencerDatabase): AiJobDao = db.aiJobDao()
+    @Provides fun provideQueueItemDao(db: FinnencerDatabase): QueueItemDao = db.queueItemDao()
 }

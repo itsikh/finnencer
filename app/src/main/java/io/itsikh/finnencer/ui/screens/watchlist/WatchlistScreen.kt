@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -57,6 +58,7 @@ fun WatchlistScreen(
     onOpenEarnings: () -> Unit,
     onOpenPodcasts: () -> Unit,
     onOpenTasks: () -> Unit,
+    onOpenQueue: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
@@ -64,6 +66,7 @@ fun WatchlistScreen(
     val addSheet by vm.addSheet.collectAsState()
     val settingsSheet by vm.settingsSheet.collectAsState()
     val activeJobs by vm.activeJobCount.collectAsState()
+    val queueCount by vm.queueCount.collectAsState()
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -101,6 +104,31 @@ fun WatchlistScreen(
                                 ) {
                                     Text(
                                         activeJobs.toString(),
+                                        color = FinnencerColors.TextOnAccent,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    IconButton(onClick = onOpenQueue) {
+                        Box {
+                            Icon(
+                                Icons.Default.Bookmark,
+                                contentDescription = "Queue",
+                                tint = if (queueCount > 0) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                            )
+                            if (queueCount > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .clip(CircleShape)
+                                        .background(FinnencerColors.Violet)
+                                        .padding(horizontal = 4.dp),
+                                ) {
+                                    Text(
+                                        queueCount.toString(),
                                         color = FinnencerColors.TextOnAccent,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,

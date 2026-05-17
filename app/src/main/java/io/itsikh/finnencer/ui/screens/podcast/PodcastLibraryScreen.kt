@@ -47,10 +47,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
+import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.share.ShareHelpers
 import io.itsikh.finnencer.share.WavToM4a
 import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -270,6 +272,13 @@ private fun PodcastRow(
                 }
             }
             if (isReady) {
+                QueueToggleIconButton(
+                    kind = QueueItemKind.PODCAST,
+                    refId = podcast.id.toString(),
+                    title = podcast.title,
+                    subtitle = podcast.durationMs?.let { "${it / 1000 / 60} min" },
+                    modifier = Modifier.size(36.dp),
+                )
                 IconButton(onClick = onShare, enabled = !isSharing, modifier = Modifier.size(36.dp)) {
                     if (isSharing) {
                         CircularProgressIndicator(

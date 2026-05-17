@@ -48,7 +48,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 import java.time.Instant
 import java.time.ZoneId
@@ -85,6 +87,15 @@ fun ArticleDetailScreen(
                     }
                 },
                 actions = {
+                    state.article?.let { a ->
+                        QueueToggleIconButton(
+                            kind = QueueItemKind.ARTICLE,
+                            refId = a.id,
+                            title = a.title,
+                            subtitle = a.sourceName,
+                            tickerSymbol = a.primaryTickerSymbol,
+                        )
+                    }
                     state.article?.url?.let { url ->
                         IconButton(onClick = {
                             runCatching {

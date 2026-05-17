@@ -27,6 +27,7 @@ import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastFromReportScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastLibraryScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
+import io.itsikh.finnencer.ui.screens.queue.QueueScreen
 import io.itsikh.finnencer.ui.screens.reader.ReaderScreen
 import io.itsikh.finnencer.ui.screens.tasks.TasksScreen
 import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
@@ -75,9 +76,19 @@ fun AppNavHost() {
                     onOpenEarnings = { navController.navigate("earnings") },
                     onOpenPodcasts = { navController.navigate("podcasts") },
                     onOpenTasks = { navController.navigate("tasks") },
+                    onOpenQueue = { navController.navigate("queue") },
                     onOpenTickerFeed = { symbol ->
                         navController.navigate("ticker/$symbol")
                     },
+                )
+            }
+            composable("queue") {
+                QueueScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenArticle = { id -> navController.navigate("article/$id") },
+                    onOpenReport = { id -> navController.navigate("report/$id") },
+                    onOpenPodcast = { id -> navController.navigate("podcast/$id") },
+                    onOpenTasks = { navController.navigate("tasks") },
                 )
             }
             composable("tasks") {
