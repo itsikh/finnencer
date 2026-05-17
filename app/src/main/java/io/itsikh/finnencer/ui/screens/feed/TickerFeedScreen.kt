@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package io.itsikh.finnencer.ui.screens.feed
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -8,6 +9,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -346,7 +348,10 @@ private fun EarningsPodcastDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = FinnencerColors.TextSecondary,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     BundleSummarizer.PodcastMinutes.entries.forEach { m ->
                         Row(
                             modifier = Modifier
@@ -491,7 +496,10 @@ private fun EarningsCard(
             // Existing-report tags
             if (reports.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     reports.forEach { r ->
                         Box(
                             modifier = Modifier
@@ -528,9 +536,12 @@ private fun EarningsCard(
             }
 
             Spacer(Modifier.height(10.dp))
-            // Action chips. Highlights = BRIEF, Deep dive = DEEP, podcast
-            // = combo job kicked off in the background.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // FlowRow so chips wrap to a new line as whole chips when they
+            // don't fit on one row (#22), rather than text breaking inside.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 EarningsActionChip(
                     label = if (briefReport != null) "Highlights" else "Highlights",
                     accent = FinnencerColors.Violet,
@@ -589,7 +600,10 @@ private fun EarningsCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             EarningsActionChip(
                                 label = "Read mode",
                                 accent = FinnencerColors.Violet,
@@ -713,6 +727,8 @@ private fun EarningsActionChip(
         }
         Text(
             label,
+            maxLines = 1,
+            softWrap = false,
             style = if (small) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             color = accent,
             fontWeight = FontWeight.SemiBold,

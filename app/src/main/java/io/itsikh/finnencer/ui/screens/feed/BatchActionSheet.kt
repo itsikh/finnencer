@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package io.itsikh.finnencer.ui.screens.feed
 
 import androidx.compose.foundation.background
@@ -5,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -122,7 +124,10 @@ fun BatchActionSheet(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(top = 4.dp),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     BundleSummarizer.Pages.entries.forEach { p ->
                         SelectableChip(
                             label = "${p.target} pages",
@@ -164,7 +169,10 @@ fun BatchActionSheet(
                 }
 
                 if (podcastEnabled) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         BundleSummarizer.PodcastMinutes.entries.forEach { m ->
                             SelectableChip(
                                 label = "${m.minutes} min",
@@ -231,6 +239,8 @@ private fun SelectableChip(
     ) {
         Text(
             label,
+            maxLines = 1,
+            softWrap = false,
             style = MaterialTheme.typography.labelLarge,
             color = if (selected) accent else FinnencerColors.TextSecondary,
             fontWeight = FontWeight.SemiBold,

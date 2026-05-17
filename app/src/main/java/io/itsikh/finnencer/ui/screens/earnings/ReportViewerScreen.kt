@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package io.itsikh.finnencer.ui.screens.earnings
 
 import androidx.compose.foundation.background
@@ -6,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -60,6 +62,7 @@ fun ReportViewerScreen(
     val vm: ReportViewerViewModel = hiltViewModel()
     val report by vm.report.collectAsState()
     val action by vm.action.collectAsState()
+    val isStale by vm.isStale.collectAsState()
     var podcastPickerOpen by remember { mutableStateOf(false) }
 
     // Navigate to the newly-produced report when a regenerate/upgrade
@@ -139,6 +142,14 @@ fun ReportViewerScreen(
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
 
+            if (isStale) {
+                StaleBanner(
+                    busy = action.regenerating,
+                    onRegenerate = vm::regenerate,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+
             // Action chips so the user can re-run / upgrade / make a
             // podcast / open in Reader from inside the report itself
             // instead of having to back out to the ticker feed (#21).
@@ -185,7 +196,10 @@ fun ReportViewerScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = FinnencerColors.TextSecondary,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         BundleSummarizer.PodcastMinutes.entries.forEach { m ->
                             Row(
                                 modifier = Modifier
@@ -242,6 +256,51 @@ fun ReportViewerScreen(
     }
 }
 
+/**
+ * Amber banner shown above a stale report — its cached markdown says
+ * "data unavailable" but the underlying earnings event now has actual
+ * numbers (Finnhub sync filled them in after the original generation).
+ * One-tap regenerate so the user doesn't have to dig through the action
+ * chips to figure out why their old brief is empty.
+ */
+@Composable
+private fun StaleBanner(
+    busy: Boolean,
+    onRegenerate: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(FinnencerColors.Amber.copy(alpha = 0.14f))
+            .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Earnings results have since landed",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.Amber,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "This brief was generated before the actual numbers were available. Regenerate to refresh with the latest data.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FinnencerColors.TextSecondary,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            ActionChip(
+                label = "Regenerate",
+                accent = FinnencerColors.Amber,
+                busy = busy,
+                onClick = onRegenerate,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ReportActionRow(
     currentTier: ReportTier?,
@@ -257,9 +316,13 @@ private fun ReportActionRow(
         ReportTier.DEEP -> null
         null -> null
     }
-    Row(
+    // FlowRow so chips wrap to a new line *as whole chips* when they don't
+    // fit on one row, instead of text breaking mid-word inside a chip
+    // (#22 — "Podcas/t" on the S918B at default font scale).
+    FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ActionChip(
             label = "Regenerate",
@@ -319,6 +382,8 @@ private fun ActionChip(
             style = MaterialTheme.typography.labelLarge,
             color = accent,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

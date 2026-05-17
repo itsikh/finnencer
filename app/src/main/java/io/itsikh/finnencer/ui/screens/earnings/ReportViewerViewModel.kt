@@ -51,6 +51,31 @@ class ReportViewerViewModel @Inject constructor(
         .map { it }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /**
+     * Whether the currently-loaded report is "stale" — i.e. its cached
+     * markdown contains the LLM's standard "data unavailable" phrasing,
+     * but the underlying earnings event now has actual EPS or revenue
+     * numbers. Happens when a BRIEF was generated before the periodic
+     * Finnhub numeric sync had filled in the actuals; opening the same
+     * report months later still shows the stale "pre-print" framing
+     * even though the data is now available. Surfaced as a banner so
+     * the user can one-tap regenerate.
+     */
+    val isStale: StateFlow<Boolean> = earningsDao.observeReport(reportId)
+        .map { r ->
+            if (r == null) return@map false
+            val eventId = r.earningsEventId ?: return@map false
+            if (!containsStaleLanguage(r.contentMarkdown)) return@map false
+            val event = earningsDao.getEvent(eventId) ?: return@map false
+            event.actualEps != null || event.actualRevenue != null
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    private fun containsStaleLanguage(markdown: String): Boolean {
+        val lower = markdown.lowercase()
+        return STALE_PHRASES.any { it in lower }
+    }
+
     private val _action = MutableStateFlow(ReportViewerActionState())
     val action: StateFlow<ReportViewerActionState> = _action.asStateFlow()
 
@@ -151,5 +176,25 @@ class ReportViewerViewModel @Inject constructor(
         _action.value = _action.value.copy(podcastQueued = false)
     }
 
-    private companion object { const val TAG = "ReportViewerVM" }
+    private companion object {
+        const val TAG = "ReportViewerVM"
+
+        /**
+         * Phrases the LLM falls back to when the source bundle had null
+         * actuals. Lowercased; matched case-insensitively against the
+         * report body. Keep tight enough not to false-positive on a
+         * normal report (e.g. avoid bare "unavailable" — common word).
+         */
+        private val STALE_PHRASES = listOf(
+            "earnings data unavailable",
+            "data unavailable at time of publication",
+            "results have not yet been reported",
+            "have not yet reported",
+            "pre-report positioning",
+            "pre-print setup",
+            "this brief is a pre-print",
+            "results have not yet been released",
+            "not yet been reported",
+        )
+    }
 }
