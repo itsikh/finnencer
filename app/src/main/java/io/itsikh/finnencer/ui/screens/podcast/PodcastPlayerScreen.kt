@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Forward30
@@ -88,18 +91,28 @@ fun PodcastPlayerScreen(onBack: () -> Unit) {
         }
 
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                // Defense for small phones (Samsung S918B fits the controls
+                // by a hair) — if the column ever exceeds the viewport the
+                // user can still reach the speed chips.
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(8.dp))
 
-            // Art panel
+            // Art panel. Capped at 260dp tall so the play controls + speed
+            // chips below it stay above the Samsung gesture bar on a 6.8"
+            // phone. On larger displays it still scales up to a sensible
+            // square.
             GlassCard {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(1f)
+                        .heightIn(min = 180.dp, max = 260.dp)
                         .padding(24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -154,6 +167,12 @@ fun PodcastPlayerScreen(onBack: () -> Unit) {
                     )
                 }
             }
+
+            // Bottom safe-area spacer — Scaffold's contentPadding already
+            // includes navigationBars, but Samsung's gesture strip sits
+            // partially inside the inset and chips of size ~36dp benefit
+            // from a small extra cushion.
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
