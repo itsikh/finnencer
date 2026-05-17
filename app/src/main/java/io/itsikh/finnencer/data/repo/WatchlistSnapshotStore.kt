@@ -2,7 +2,6 @@ package io.itsikh.finnencer.data.repo
 
 import android.content.Context
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.Ticker
@@ -34,14 +33,18 @@ class WatchlistSnapshotStore @Inject constructor(
 ) {
     private val file: File get() = File(context.filesDir, FILE_NAME)
     private val gson = Gson()
-    private val listType = object : TypeToken<List<Ticker>>() {}.type
 
     fun hasSnapshot(): Boolean = file.exists() && file.length() > 0
 
     fun load(): List<Ticker> {
         if (!hasSnapshot()) return emptyList()
         return runCatching {
-            gson.fromJson<List<Ticker>>(file.readText(), listType) ?: emptyList()
+            // Array<T>::class.java avoids TypeToken<List<Ticker>>, which
+            // R8 full-mode breaks by stripping generic signatures on
+            // anonymous subclasses (crash on app load in v0.0.31).
+            gson.fromJson(file.readText(), Array<Ticker>::class.java)
+                ?.toList()
+                ?: emptyList()
         }.getOrElse {
             AppLogger.e(TAG, "Failed to read watchlist snapshot — ignoring", it)
             emptyList()
@@ -54,7 +57,9 @@ class WatchlistSnapshotStore @Inject constructor(
         // ever transiently returns 0 rows.
         if (tickers.isEmpty() && hasSnapshot()) return
         runCatching {
-            file.writeText(gson.toJson(tickers))
+            // Serialize as Array<Ticker> for symmetry with load() so the
+            // JSON stays a plain array and we don't pull in TypeToken.
+            file.writeText(gson.toJson(tickers.toTypedArray()))
         }.onFailure {
             AppLogger.e(TAG, "Failed to write watchlist snapshot", it)
         }
