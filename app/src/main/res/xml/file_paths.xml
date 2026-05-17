@@ -2,4 +2,10 @@
 <paths>
     <cache-path name="updates" path="updates/" />
     <files-path name="attachments" path="attachments/" />
+    <!-- Generated PDFs / transcoded podcast m4a files exposed for sharing
+         via ACTION_SEND. Lives in cache so the OS can reclaim space. -->
+    <cache-path name="share" path="share/" />
+    <!-- Podcasts are stored under filesDir/podcasts (see BundleSummarizer);
+         expose them too so we can share the raw .wav as a fallback. -->
+    <files-path name="podcasts" path="podcasts/" />
 </paths>
