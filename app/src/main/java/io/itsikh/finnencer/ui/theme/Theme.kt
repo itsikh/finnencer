@@ -9,10 +9,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
 /**
- * Glass Modern theme. Always dark — there is no light mode for this app.
+ * Terminal Pro theme. Always dark — there is no light mode for this app.
  *
- * Wraps Material3 with our color/typography overrides and paints the
- * full-canvas radial gradient as the bottommost layer.
+ * Replaces the previous Glass Modern radial gradient with a flat
+ * near-black canvas. Data hierarchy is communicated by type weight and
+ * mono numeric treatment, not by surface elevation.
  */
 @Composable
 fun FinnencerTheme(content: @Composable () -> Unit) {
@@ -25,14 +26,14 @@ fun FinnencerTheme(content: @Composable () -> Unit) {
         onSecondary = FinnencerColors.TextOnAccent,
         tertiary = FinnencerColors.Amber,
         onTertiary = FinnencerColors.TextOnAccent,
-        background = FinnencerColors.BgTop,
+        background = FinnencerColors.Canvas,
         onBackground = FinnencerColors.TextPrimary,
         surface = FinnencerColors.Surface,
         onSurface = FinnencerColors.TextPrimary,
         surfaceVariant = FinnencerColors.SurfaceGlass,
         onSurfaceVariant = FinnencerColors.TextSecondary,
-        outline = FinnencerColors.SurfaceBorder,
-        outlineVariant = FinnencerColors.SurfaceBorderStrong,
+        outline = FinnencerColors.Hairline,
+        outlineVariant = FinnencerColors.HairlineStrong,
         error = FinnencerColors.Coral,
         onError = FinnencerColors.TextOnAccent,
     )
@@ -44,7 +45,7 @@ fun FinnencerTheme(content: @Composable () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(appBackgroundBrush()),
+                    .background(FinnencerColors.Canvas),
             ) {
                 content()
             }

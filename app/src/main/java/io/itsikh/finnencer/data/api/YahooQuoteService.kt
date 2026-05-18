@@ -26,16 +26,17 @@ import retrofit2.http.Url
  */
 interface YahooQuoteService {
 
-    /** Fetch one symbol's chart meta. We don't consume the candle
-     *  series, only the `meta` block, but `range=1d&interval=1d`
-     *  keeps the payload tiny. `includePrePost=true` ensures
-     *  `regularMarketPrice` reflects the latest extended-hours trade
-     *  when one is available. */
+    /** Fetch one symbol's chart meta + close-price series. We default
+     *  to a 5-day window at 15-minute granularity so the watchlist row
+     *  can render a ~130-point sparkline. `meta.regularMarketPrice`
+     *  still reflects the latest trade regardless of range, and
+     *  `includePrePost=true` keeps that current during extended hours.
+     *  Response is still small (~3-5 KB per symbol). */
     @GET("v8/finance/chart/{symbol}")
     suspend fun chart(
         @Path("symbol") symbol: String,
-        @Query("interval") interval: String = "1d",
-        @Query("range") range: String = "1d",
+        @Query("interval") interval: String = "15m",
+        @Query("range") range: String = "5d",
         @Query("includePrePost") includePrePost: Boolean = true,
     ): YahooChartResponse
 
@@ -56,6 +57,20 @@ data class YahooChartEnvelope(
 
 data class YahooChartResult(
     @SerializedName("meta") val meta: YahooChartMeta,
+    @SerializedName("indicators") val indicators: YahooChartIndicators? = null,
+)
+
+/**
+ * Yahoo's candle series block. We only consume the `close` array — it's
+ * the cheapest source for a sparkline that matches what users see on
+ * Yahoo's website.
+ */
+data class YahooChartIndicators(
+    @SerializedName("quote") val quote: List<YahooChartQuoteSeries>? = null,
+)
+
+data class YahooChartQuoteSeries(
+    @SerializedName("close") val close: List<Double?>? = null,
 )
 
 /**

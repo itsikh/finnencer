@@ -1,6 +1,7 @@
 package io.itsikh.finnencer.data.repo
 
 import io.itsikh.finnencer.data.api.YahooChartMeta
+import io.itsikh.finnencer.data.api.YahooChartResult
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,10 @@ data class TickerQuote(
     val price: Double,
     val change: Double,
     val changePercent: Double,
+    /** Recent close-price series for the row sparkline. Already
+     *  null-filtered and trimmed to the last [SPARK_POINTS]. May be
+     *  empty for symbols where Yahoo returned no candle data. */
+    val closes: List<Double> = emptyList(),
     val asOfMillis: Long = System.currentTimeMillis(),
 )
 
@@ -121,43 +126,54 @@ class QuotePoller @Inject constructor(
      * usable price.
      */
     private suspend fun fetchOneSymbol(symbol: String): TickerQuote? {
-        val meta = runCatching { service.chart(symbol).chart.result?.firstOrNull()?.meta }
+        val result = runCatching { service.chart(symbol).chart.result?.firstOrNull() }
             .getOrElse { primaryErr ->
                 AppLogger.w(TAG, "query1 chart failed for $symbol (${primaryErr.message}); trying query2")
                 runCatching {
                     service.chartAt(
                         "https://query2.finance.yahoo.com/v8/finance/chart/" +
-                            "$symbol?interval=1d&range=1d&includePrePost=true",
-                    ).chart.result?.firstOrNull()?.meta
+                            "$symbol?interval=15m&range=5d&includePrePost=true",
+                    ).chart.result?.firstOrNull()
                 }.getOrElse { fallbackErr ->
                     AppLogger.w(TAG, "query2 chart also failed for $symbol: ${fallbackErr.message}")
                     null
                 }
             }
-        return meta?.let { toQuote(it) }
+        return result?.let { toQuote(it) }
     }
 
     /**
-     * Build a [TickerQuote] from Yahoo's chart meta. Percent change is
-     * derived from `regularMarketPrice` against `chartPreviousClose`
-     * (falling back to `previousClose` if the former is missing).
-     * Returns null if Yahoo didn't include a usable current price.
+     * Build a [TickerQuote] from a chart result. Percent change is
+     * derived from `regularMarketPrice` vs `chartPreviousClose`
+     * (falling back to `previousClose`). The candle close series is
+     * null-filtered and trimmed to [SPARK_POINTS] so each row's
+     * sparkline draws from a bounded, contiguous list. Returns null if
+     * Yahoo didn't include a usable current price.
      */
-    private fun toQuote(meta: YahooChartMeta): TickerQuote? {
+    private fun toQuote(result: YahooChartResult): TickerQuote? {
+        val meta: YahooChartMeta = result.meta
         val price = meta.regularMarketPrice ?: return null
         val prev = meta.chartPreviousClose ?: meta.previousClose
         val change = if (prev != null) price - prev else 0.0
         val pct = if (prev != null && prev != 0.0) (price - prev) / prev * 100.0 else 0.0
+
+        val closes = result.indicators?.quote?.firstOrNull()?.close
+            ?.filterNotNull()
+            .orEmpty()
+        val trimmed = if (closes.size > SPARK_POINTS) closes.takeLast(SPARK_POINTS) else closes
+
         return TickerQuote(
             symbol = meta.symbol.uppercase(),
             price = price,
             change = change,
             changePercent = pct,
+            closes = trimmed,
         )
     }
 
     private companion object {
         const val TAG = "QuotePoller"
         const val POLL_INTERVAL_MS = 60_000L
+        const val SPARK_POINTS = 64
     }
 }
