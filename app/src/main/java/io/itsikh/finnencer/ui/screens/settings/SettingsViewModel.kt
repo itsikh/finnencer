@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import io.itsikh.finnencer.bugreport.GitHubIssuesClient
 import io.itsikh.finnencer.data.repo.EndOfPodcastAction
 import io.itsikh.finnencer.data.repo.PodcastPreferences
+import io.itsikh.finnencer.data.repo.ThemePreferences
+import io.itsikh.finnencer.ui.theme.ThemeId
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.DebugSettings
 import io.itsikh.finnencer.logging.LogLevel
@@ -59,6 +61,7 @@ class SettingsViewModel @Inject constructor(
     private val secureKeyManager: SecureKeyManager,
     private val updateManager: AppUpdateManager,
     private val podcastPrefs: PodcastPreferences,
+    private val themePrefs: ThemePreferences,
     private val jobConcurrencyPrefs: io.itsikh.finnencer.data.repo.JobConcurrencyPreferences,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -91,6 +94,12 @@ class SettingsViewModel @Inject constructor(
      *  exposes a stepper bounded by the prefs' min/max. */
     val podcastCharsPerMinute: StateFlow<Int> = podcastPrefs.charsPerMinute
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PodcastPreferences.CHARS_PER_MIN_DEFAULT)
+
+    /** Currently-selected color theme. The settings screen exposes a
+     *  swatch picker to change it; the actual palette swap happens at
+     *  app root via [io.itsikh.finnencer.ui.theme.FinnencerTheme]. */
+    val themeId: StateFlow<ThemeId> = themePrefs.themeId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ThemePreferences.DEFAULT)
 
     val podcastConcurrency: StateFlow<Int> = jobConcurrencyPrefs.podcastConcurrency
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
@@ -152,6 +161,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastCharsPerMinute(value: Int) {
         viewModelScope.launch { podcastPrefs.setCharsPerMinute(value) }
+    }
+
+    fun setThemeId(id: ThemeId) {
+        viewModelScope.launch { themePrefs.setThemeId(id) }
     }
 
     fun setPodcastConcurrency(n: Int) {

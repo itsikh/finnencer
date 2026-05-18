@@ -96,6 +96,7 @@ fun SettingsScreen(
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
+    val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
@@ -209,6 +210,14 @@ fun SettingsScreen(
                 PodcastCharsPerMinRow(
                     current = podcastCharsPerMin,
                     onChange = viewModel::setPodcastCharsPerMinute,
+                )
+            }
+
+            // ───────── Appearance ─────────
+            SettingsSection(title = "Appearance") {
+                ThemePickerRow(
+                    current = themeId,
+                    onPick = viewModel::setThemeId,
                 )
             }
 
@@ -727,4 +736,89 @@ private fun updateSubtitle(state: SettingsViewModel.UpdateState): String = when 
     is SettingsViewModel.UpdateState.Downloading -> "Downloading update…"
     is SettingsViewModel.UpdateState.ReadyToInstall -> "Ready to install"
     is SettingsViewModel.UpdateState.Error -> "Error: ${state.message}"
+}
+
+/**
+ * Theme picker — one row per bundled palette. Each row shows the
+ * palette's display name plus four swatches (canvas / ink / up / down)
+ * so the user can preview the color feel before committing. Tapping
+ * a row applies the theme immediately.
+ */
+@Composable
+private fun ThemePickerRow(
+    current: io.itsikh.finnencer.ui.theme.ThemeId,
+    onPick: (io.itsikh.finnencer.ui.theme.ThemeId) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            "Color theme",
+            style = MaterialTheme.typography.titleSmall,
+            color = FinnencerColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "Applies immediately. Up = green, down = red across every theme so signals stay consistent.",
+            style = MaterialTheme.typography.labelSmall,
+            color = FinnencerColors.TextTertiary,
+        )
+        Spacer(Modifier.size(10.dp))
+        io.itsikh.finnencer.ui.theme.Palettes.all.forEach { palette ->
+            ThemeOption(
+                palette = palette,
+                selected = palette.id == current,
+                onPick = { onPick(palette.id) },
+            )
+            Spacer(Modifier.size(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun ThemeOption(
+    palette: io.itsikh.finnencer.ui.theme.FinnencerPalette,
+    selected: Boolean,
+    onPick: () -> Unit,
+) {
+    val border = if (selected) FinnencerColors.Violet else FinnencerColors.HairlineStrong
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(if (selected) 2.dp else 1.dp, border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onPick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                palette.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (palette.isLight) "LIGHT" else "DARK",
+                style = MaterialTheme.typography.labelSmall,
+                color = FinnencerColors.TextTertiary,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ThemeSwatch(palette.canvas, border = palette.hairlineStrong)
+            ThemeSwatch(palette.textPrimary, border = palette.hairlineStrong)
+            ThemeSwatch(palette.mint, border = palette.hairlineStrong)
+            ThemeSwatch(palette.coral, border = palette.hairlineStrong)
+            ThemeSwatch(palette.violet, border = palette.hairlineStrong)
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(color: androidx.compose.ui.graphics.Color, border: androidx.compose.ui.graphics.Color) {
+    Box(
+        modifier = Modifier
+            .size(22.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(color)
+            .border(1.dp, border, RoundedCornerShape(4.dp)),
+    )
 }

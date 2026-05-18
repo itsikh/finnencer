@@ -5,38 +5,71 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 
 /**
- * Terminal Pro theme. Always dark — there is no light mode for this app.
+ * Terminal Pro theme. Picks one of the bundled [FinnencerPalette]s
+ * by [themeId] and pushes it into [FinnencerColors] so every token
+ * reader in the app re-reads from the new palette automatically.
  *
- * Replaces the previous Glass Modern radial gradient with a flat
- * near-black canvas. Data hierarchy is communicated by type weight and
- * mono numeric treatment, not by surface elevation.
+ * The palette is applied via [SideEffect] so the mutation happens
+ * after the composition is committed, avoiding mid-composition
+ * cascading recompositions.
  */
 @Composable
-fun FinnencerTheme(content: @Composable () -> Unit) {
-    val colorScheme = darkColorScheme(
-        primary = FinnencerColors.Violet,
-        onPrimary = FinnencerColors.TextOnAccent,
-        primaryContainer = FinnencerColors.VioletDim,
-        onPrimaryContainer = FinnencerColors.TextPrimary,
-        secondary = FinnencerColors.Mint,
-        onSecondary = FinnencerColors.TextOnAccent,
-        tertiary = FinnencerColors.Amber,
-        onTertiary = FinnencerColors.TextOnAccent,
-        background = FinnencerColors.Canvas,
-        onBackground = FinnencerColors.TextPrimary,
-        surface = FinnencerColors.Surface,
-        onSurface = FinnencerColors.TextPrimary,
-        surfaceVariant = FinnencerColors.SurfaceGlass,
-        onSurfaceVariant = FinnencerColors.TextSecondary,
-        outline = FinnencerColors.Hairline,
-        outlineVariant = FinnencerColors.HairlineStrong,
-        error = FinnencerColors.Coral,
-        onError = FinnencerColors.TextOnAccent,
-    )
+fun FinnencerTheme(
+    themeId: ThemeId = ThemeId.TERMINAL_PRO,
+    content: @Composable () -> Unit,
+) {
+    val palette = Palettes.byId(themeId)
+    SideEffect { FinnencerColors.setPalette(palette) }
+
+    val colorScheme = if (palette.isLight) {
+        lightColorScheme(
+            primary = palette.violet,
+            onPrimary = palette.textOnAccent,
+            primaryContainer = palette.violetDim,
+            onPrimaryContainer = palette.textPrimary,
+            secondary = palette.mint,
+            onSecondary = palette.textOnAccent,
+            tertiary = palette.amber,
+            onTertiary = palette.textOnAccent,
+            background = palette.canvas,
+            onBackground = palette.textPrimary,
+            surface = palette.surface,
+            onSurface = palette.textPrimary,
+            surfaceVariant = palette.surface,
+            onSurfaceVariant = palette.textSecondary,
+            outline = palette.hairline,
+            outlineVariant = palette.hairlineStrong,
+            error = palette.coral,
+            onError = palette.textOnAccent,
+        )
+    } else {
+        darkColorScheme(
+            primary = palette.violet,
+            onPrimary = palette.textOnAccent,
+            primaryContainer = palette.violetDim,
+            onPrimaryContainer = palette.textPrimary,
+            secondary = palette.mint,
+            onSecondary = palette.textOnAccent,
+            tertiary = palette.amber,
+            onTertiary = palette.textOnAccent,
+            background = palette.canvas,
+            onBackground = palette.textPrimary,
+            surface = palette.surface,
+            onSurface = palette.textPrimary,
+            surfaceVariant = palette.surface,
+            onSurfaceVariant = palette.textSecondary,
+            outline = palette.hairline,
+            outlineVariant = palette.hairlineStrong,
+            error = palette.coral,
+            onError = palette.textOnAccent,
+        )
+    }
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -45,7 +78,7 @@ fun FinnencerTheme(content: @Composable () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(FinnencerColors.Canvas),
+                    .background(palette.canvas),
             ) {
                 content()
             }
