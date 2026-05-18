@@ -59,6 +59,7 @@ class SettingsViewModel @Inject constructor(
     private val secureKeyManager: SecureKeyManager,
     private val updateManager: AppUpdateManager,
     private val podcastPrefs: PodcastPreferences,
+    private val jobConcurrencyPrefs: io.itsikh.finnencer.data.repo.JobConcurrencyPreferences,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -84,6 +85,12 @@ class SettingsViewModel @Inject constructor(
 
     val endOfPodcastAction: StateFlow<EndOfPodcastAction> = podcastPrefs.endOfPodcastAction
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), EndOfPodcastAction.STOP)
+
+    val podcastConcurrency: StateFlow<Int> = jobConcurrencyPrefs.podcastConcurrency
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
+
+    val summaryConcurrency: StateFlow<Int> = jobConcurrencyPrefs.summaryConcurrency
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
 
     // ── GitHub token ──────────────────────────────────────────────────────────
 
@@ -135,6 +142,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setEndOfPodcastAction(value: EndOfPodcastAction) {
         viewModelScope.launch { podcastPrefs.setEndOfPodcastAction(value) }
+    }
+
+    fun setPodcastConcurrency(n: Int) {
+        viewModelScope.launch { jobConcurrencyPrefs.setPodcastConcurrency(n) }
+    }
+
+    fun setSummaryConcurrency(n: Int) {
+        viewModelScope.launch { jobConcurrencyPrefs.setSummaryConcurrency(n) }
     }
 
     /** Clears the in-memory [AppLogger] buffer. Does not affect crash log files on disk. */

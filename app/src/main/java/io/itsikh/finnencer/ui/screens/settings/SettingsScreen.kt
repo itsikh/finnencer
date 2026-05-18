@@ -95,6 +95,8 @@ fun SettingsScreen(
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
+    val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
+    val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val exportState by viewModel.exportState.collectAsState()
     val restoreState by viewModel.restoreState.collectAsState()
@@ -202,6 +204,22 @@ fun SettingsScreen(
                 EndOfPodcastRow(
                     current = endOfPodcastAction,
                     onPick = viewModel::setEndOfPodcastAction,
+                )
+            }
+
+            // ───────── Background jobs ─────────
+            SettingsSection(title = "Background jobs") {
+                ConcurrencyStepperRow(
+                    title = "Podcasts at a time",
+                    subtitle = "How many podcast generation jobs run in parallel. 1 = strict queue, 10 = max parallelism. Higher values risk Anthropic rate limits and memory pressure.",
+                    value = podcastConcurrency,
+                    onChange = viewModel::setPodcastConcurrency,
+                )
+                ConcurrencyStepperRow(
+                    title = "Article summaries at a time",
+                    subtitle = "How many summary / report jobs run in parallel. 1 = strict queue.",
+                    value = summaryConcurrency,
+                    onChange = viewModel::setSummaryConcurrency,
                 )
             }
 
@@ -497,6 +515,90 @@ private fun EndOfPodcastAction.label(): String = when (this) {
     EndOfPodcastAction.STOP -> "Stop"
     EndOfPodcastAction.CONTINUE -> "Continue"
     EndOfPodcastAction.SHUFFLE -> "Mix"
+}
+
+/**
+ * Stepper row for an integer setting clamped to 1..10. The user can tap
+ * −/+ buttons or any of the 1-10 chips to pick a value. Used for the
+ * podcast and summary concurrency limits in the Background jobs section.
+ */
+@Composable
+private fun ConcurrencyStepperRow(
+    title: String,
+    subtitle: String,
+    value: Int,
+    onChange: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+            Spacer(Modifier.size(10.dp))
+            // Big readout of the current value.
+            Box(
+                modifier = Modifier
+                    .size(width = 56.dp, height = 36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FinnencerColors.Violet.copy(alpha = 0.20f))
+                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    value.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            (1..10).forEach { n ->
+                val selected = n == value
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (selected) FinnencerColors.Violet.copy(alpha = 0.28f)
+                            else FinnencerColors.SurfaceGlass
+                        )
+                        .border(
+                            1.dp,
+                            if (selected) FinnencerColors.Violet
+                            else FinnencerColors.TextTertiary.copy(alpha = 0.35f),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable { onChange(n) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        n.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selected) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun backupSubtitle(

@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import io.itsikh.finnencer.core.notifications.NotificationChannels
+import io.itsikh.finnencer.core.work.JobConcurrencyGate
 import io.itsikh.finnencer.core.work.SyncScheduler
+import io.itsikh.finnencer.data.repo.JobConcurrencyPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRestorer
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.GlobalExceptionHandler
@@ -43,6 +45,8 @@ class TemplateApplication : Application(), Configuration.Provider {
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var syncScheduler: SyncScheduler
     @Inject lateinit var watchlistRestorer: WatchlistRestorer
+    @Inject lateinit var jobConcurrencyGate: JobConcurrencyGate
+    @Inject lateinit var jobConcurrencyPrefs: JobConcurrencyPreferences
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -61,9 +65,22 @@ class TemplateApplication : Application(), Configuration.Provider {
         // Restore watchlist from the on-disk snapshot if the Room table
         // ever ends up empty (e.g. after a destructive migration).
         // Keeps the snapshot file fresh on every healthy start.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        appScope.launch {
             runCatching { watchlistRestorer.ensureRestored() }
                 .onFailure { AppLogger.e("App", "Watchlist restore failed", it) }
+        }
+        // Keep the in-memory concurrency gate in sync with the user's
+        // Settings → Background jobs preferences. Defaults to 1/1 so a
+        // batch of podcasts runs serially unless the user opts up.
+        appScope.launch {
+            kotlinx.coroutines.flow.combine(
+                jobConcurrencyPrefs.podcastConcurrency,
+                jobConcurrencyPrefs.summaryConcurrency,
+            ) { p, s -> p to s }.collect { (podcast, summary) ->
+                jobConcurrencyGate.setLimit(JobConcurrencyGate.Kind.PODCAST, podcast)
+                jobConcurrencyGate.setLimit(JobConcurrencyGate.Kind.SUMMARY, summary)
+            }
         }
     }
 

@@ -40,38 +40,53 @@ class AiJobWorker @AssistedInject constructor(
     private val gson: Gson,
     private val reportGenerator: ReportGenerator,
     private val earningsDao: EarningsDao,
+    private val concurrencyGate: JobConcurrencyGate,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         val jobId = inputData.getString(KEY_JOB_ID) ?: return Result.failure()
         val job = dao.get(jobId) ?: return Result.failure()
 
-        dao.markRunning(job.id, AiJobStatus.RUNNING.name, System.currentTimeMillis())
-        AppLogger.i(TAG, "running ${job.type} ${job.id} (${job.title})")
+        // Pick a gate so the user can serialize batches (Settings →
+        // Background jobs). Defaults to 1 of each kind → enqueuing 10
+        // podcasts runs them one at a time.
+        val type = AiJobType.valueOf(job.type)
+        val gateKind = when (type) {
+            AiJobType.PODCAST_BATCH,
+            AiJobType.SUMMARY_AND_PODCAST_BATCH,
+            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> JobConcurrencyGate.Kind.PODCAST
+            AiJobType.SUMMARY_BATCH,
+            AiJobType.REPORT_EARNINGS -> JobConcurrencyGate.Kind.SUMMARY
+        }
 
-        return runCatching {
-            when (AiJobType.valueOf(job.type)) {
-                AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
-                AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
-                AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
-                AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
-                AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
-            }
-        }.fold(
-            onSuccess = { Result.success() },
-            onFailure = { t ->
-                val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
-                AppLogger.e(TAG, "ai job ${job.id} failed: $friendly", t)
-                dao.markFailed(
-                    job.id,
-                    AiJobStatus.FAILED.name,
-                    friendly,
-                    System.currentTimeMillis(),
-                )
-                notifier.notifyFailed(job.id, job.title, friendly)
-                Result.failure()
-            }
-        )
+        return concurrencyGate.withPermit(gateKind, label = "${job.type} ${job.id}") {
+            dao.markRunning(job.id, AiJobStatus.RUNNING.name, System.currentTimeMillis())
+            AppLogger.i(TAG, "running ${job.type} ${job.id} (${job.title})")
+
+            runCatching {
+                when (type) {
+                    AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
+                    AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
+                    AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
+                    AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
+                    AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
+                }
+            }.fold(
+                onSuccess = { Result.success() },
+                onFailure = { t ->
+                    val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
+                    AppLogger.e(TAG, "ai job ${job.id} failed: $friendly", t)
+                    dao.markFailed(
+                        job.id,
+                        AiJobStatus.FAILED.name,
+                        friendly,
+                        System.currentTimeMillis(),
+                    )
+                    notifier.notifyFailed(job.id, job.title, friendly)
+                    Result.failure()
+                }
+            )
+        }
     }
 
     private suspend fun runSummary(jobId: String, tickerSymbol: String?, json: String, title: String) {

@@ -38,6 +38,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -105,6 +106,19 @@ fun TasksScreen(
     val finished = jobs.filter { it.status == AiJobStatus.COMPLETED.name }
     val failed = jobs.filter { it.status == AiJobStatus.FAILED.name || it.status == AiJobStatus.CANCELED.name }
 
+    // 1 Hz "now" tick so each RUNNING row's elapsed-seconds label updates
+    // without the user having to leave and re-enter the screen. Only ticks
+    // when something is actually running, so an idle Tasks screen stays
+    // composition-quiet.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val hasRunning = running.any { it.status == AiJobStatus.RUNNING.name }
+    androidx.compose.runtime.LaunchedEffect(hasRunning) {
+        while (hasRunning) {
+            kotlinx.coroutines.delay(1_000)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -149,6 +163,7 @@ fun TasksScreen(
                 items(running, key = { it.id }) { job ->
                     JobRow(
                         job = job,
+                        nowMs = nowMs,
                         onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
@@ -162,6 +177,7 @@ fun TasksScreen(
                 items(finished, key = { it.id }) { job ->
                     JobRow(
                         job = job,
+                        nowMs = nowMs,
                         onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
@@ -175,6 +191,7 @@ fun TasksScreen(
                 items(failed, key = { it.id }) { job ->
                     JobRow(
                         job = job,
+                        nowMs = nowMs,
                         onOpen = { open(job, onOpenPodcast, onOpenReport) },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
@@ -228,6 +245,7 @@ private fun SectionHeader(label: String, count: Int) {
 @Composable
 private fun JobRow(
     job: AiJob,
+    nowMs: Long,
     onOpen: () -> Unit,
     onOpenPodcast: (Long) -> Unit,
     onOpenReader: () -> Unit,
@@ -265,7 +283,10 @@ private fun JobRow(
                         append(typeLabel(job.type))
                         job.tickerSymbol?.let { append(" · ").append(it) }
                         if (job.status == AiJobStatus.RUNNING.name && job.startedAtMillis != null) {
-                            val secs = ((System.currentTimeMillis() - job.startedAtMillis) / 1000).coerceAtLeast(0)
+                            // Use the screen-level [nowMs] tick (1 Hz) so the
+                            // counter actually advances while the user is
+                            // looking at it.
+                            val secs = ((nowMs - job.startedAtMillis) / 1000).coerceAtLeast(0)
                             append(" · ").append(secs).append("s")
                         }
                     }
