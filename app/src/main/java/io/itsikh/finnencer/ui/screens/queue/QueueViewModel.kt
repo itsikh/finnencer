@@ -18,7 +18,15 @@ enum class QueueTab { TODO, DONE }
 @HiltViewModel
 class QueueViewModel @Inject constructor(
     private val repo: QueueRepository,
+    private val viewModePrefs: io.itsikh.finnencer.data.repo.ViewModePreferences,
 ) : ViewModel() {
+
+    val groupedByTicker: StateFlow<Boolean> = viewModePrefs.queueGrouped
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setGroupedByTicker(value: Boolean) {
+        viewModelScope.launch { viewModePrefs.setQueueGrouped(value) }
+    }
 
     val todoItems: StateFlow<List<QueueItem>> =
         repo.observeIncomplete()

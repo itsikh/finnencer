@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -53,6 +54,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -86,6 +88,12 @@ fun QueueScreen(
     val done by vm.doneItems.collectAsState()
     val selected by vm.selectedIds.collectAsState()
     val isSelecting by vm.isSelecting.collectAsState()
+    val grouped by vm.groupedByTicker.collectAsState()
+
+    // Session-only expand/collapse map for ticker groups. Default
+    // expanded so the first time you flip into grouped mode you see
+    // your items, not empty headers.
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     val listState = rememberLazyListState()
     val renderItems = if (tab == QueueTab.TODO) todo else done
@@ -175,6 +183,15 @@ fun QueueScreen(
                         }
                     },
                     actions = {
+                        // Toggle: flat list ↔ grouped-by-ticker
+                        IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                            Icon(
+                                if (grouped) androidx.compose.material.icons.Icons.Default.Summarize
+                                else androidx.compose.material.icons.Icons.Default.Bookmark,
+                                contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                                tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                            )
+                        }
                         if (tab == QueueTab.DONE && done.isNotEmpty()) {
                             TextButton(onClick = { clearDoneConfirm = true }) {
                                 Text(
@@ -224,13 +241,70 @@ fun QueueScreen(
             if (renderItems.isEmpty()) {
                 EmptyQueue(tab = tab, onOpenTasks = onOpenTasks)
             } else {
+                // Shared row-builder so the flat and grouped paths
+                // produce identical QueueRow instances (same tap /
+                // mark-done / reorder semantics).
+                val rowFor: @androidx.compose.runtime.Composable (
+                    item: io.itsikh.finnencer.data.entity.QueueItem,
+                    isFirst: Boolean,
+                    isLast: Boolean,
+                    showReorder: Boolean,
+                ) -> Unit = { item, isFirst, isLast, showReorder ->
+                    val isPodcast = item.kind == QueueItemKind.PODCAST.name
+                    QueueRow(
+                        item = item,
+                        selected = item.id in selected,
+                        selectionMode = isSelecting,
+                        isFirst = isFirst,
+                        isLast = isLast,
+                        showReorder = showReorder,
+                        primaryActionIsPlay = isPodcast,
+                        onTap = {
+                            AppLogger.i("Queue", "row tap: kind=${item.kind} refId=${item.refId} selecting=$isSelecting")
+                            if (isSelecting) {
+                                vm.toggleSelection(item.id)
+                            } else {
+                                when (item.kind) {
+                                    QueueItemKind.ARTICLE.name -> onOpenArticle(item.refId)
+                                    QueueItemKind.ARTICLE_SUMMARY.name -> onOpenArticle(item.refId)
+                                    QueueItemKind.BATCH_SUMMARY.name -> onOpenTasks()
+                                    QueueItemKind.EARNINGS_REPORT.name ->
+                                        item.refId.toLongOrNull()?.let(onOpenReport)
+                                    QueueItemKind.PODCAST.name -> {
+                                        val pid = item.refId.toLongOrNull()
+                                        if (pid != null) onOpenPodcast(pid)
+                                        else AppLogger.w("Queue", "podcast row had non-numeric refId='${item.refId}'")
+                                    }
+                                }
+                            }
+                        },
+                        onLongPress = { vm.toggleSelection(item.id) },
+                        onComplete = {
+                            if (tab == QueueTab.TODO) vm.markDone(item.id)
+                            else vm.markUndone(item.id)
+                        },
+                        onPrimaryAction = {
+                            if (isPodcast) {
+                                item.refId.toLongOrNull()?.let(onOpenPodcast)
+                                    ?: vm.markDone(item.id)
+                            } else if (tab == QueueTab.TODO) {
+                                vm.markDone(item.id)
+                            } else {
+                                vm.markUndone(item.id)
+                            }
+                        },
+                        onMoveUp = { vm.moveTodoUp(item.id) },
+                        onMoveDown = { vm.moveTodoDown(item.id) },
+                    )
+                }
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (tab == QueueTab.TODO) {
+                    if (tab == QueueTab.TODO && !grouped) {
                         item {
                             Text(
                                 "Tap ↑ / ↓ to reorder. Long-press a row to multi-select.",
@@ -239,56 +313,46 @@ fun QueueScreen(
                             )
                         }
                     }
-                    itemsIndexed(renderItems, key = { _, it -> it.id }) { index, item ->
-                        val isPodcast = item.kind == QueueItemKind.PODCAST.name
-                        QueueRow(
-                            item = item,
-                            selected = item.id in selected,
-                            selectionMode = isSelecting,
-                            isFirst = index == 0,
-                            isLast = index == renderItems.lastIndex,
-                            showReorder = tab == QueueTab.TODO && !isSelecting,
-                            primaryActionIsPlay = isPodcast,
-                            onTap = {
-                                AppLogger.i("Queue", "row tap: kind=${item.kind} refId=${item.refId} selecting=$isSelecting")
-                                if (isSelecting) {
-                                    vm.toggleSelection(item.id)
-                                } else {
-                                    when (item.kind) {
-                                        QueueItemKind.ARTICLE.name -> onOpenArticle(item.refId)
-                                        QueueItemKind.ARTICLE_SUMMARY.name -> onOpenArticle(item.refId)
-                                        QueueItemKind.BATCH_SUMMARY.name -> onOpenTasks()
-                                        QueueItemKind.EARNINGS_REPORT.name ->
-                                            item.refId.toLongOrNull()?.let(onOpenReport)
-                                        QueueItemKind.PODCAST.name -> {
-                                            val pid = item.refId.toLongOrNull()
-                                            if (pid != null) onOpenPodcast(pid)
-                                            else AppLogger.w("Queue", "podcast row had non-numeric refId='${item.refId}'")
-                                        }
-                                    }
+
+                    if (grouped) {
+                        // Group by tickerSymbol with null/blank → "Other".
+                        // Within each ticker, items keep their existing
+                        // sort order (sortOrder for TODO, completed-at
+                        // for DONE — already the order in renderItems).
+                        val buckets = renderItems.groupBy { item ->
+                            item.tickerSymbol?.takeIf { it.isNotBlank() }
+                                ?: io.itsikh.finnencer.ui.components.UNGROUPED_TICKER
+                        }
+                        val tickers = io.itsikh.finnencer.ui.components.sortedTickerGroups(buckets.keys)
+                        for (ticker in tickers) {
+                            val bucketItems = buckets[ticker].orEmpty()
+                            item(key = "header-$ticker") {
+                                io.itsikh.finnencer.ui.components.TickerGroupHeader(
+                                    ticker = ticker,
+                                    count = bucketItems.size,
+                                    expanded = expandedGroups[ticker] ?: true,
+                                    onToggle = {
+                                        val curr = expandedGroups[ticker] ?: true
+                                        expandedGroups[ticker] = !curr
+                                    },
+                                )
+                            }
+                            val expanded = expandedGroups[ticker] ?: true
+                            if (expanded) {
+                                items(bucketItems, key = { it.id }) { row ->
+                                    rowFor(row, false, false, false)
                                 }
-                            },
-                            onLongPress = { vm.toggleSelection(item.id) },
-                            onComplete = {
-                                if (tab == QueueTab.TODO) vm.markDone(item.id)
-                                else vm.markUndone(item.id)
-                            },
-                            onPrimaryAction = {
-                                // Podcast rows: tap-to-play. Falls back to
-                                // mark-done if refId is malformed (defensive,
-                                // shouldn't happen with toString(podcast.id)).
-                                if (isPodcast) {
-                                    item.refId.toLongOrNull()?.let(onOpenPodcast)
-                                        ?: vm.markDone(item.id)
-                                } else if (tab == QueueTab.TODO) {
-                                    vm.markDone(item.id)
-                                } else {
-                                    vm.markUndone(item.id)
-                                }
-                            },
-                            onMoveUp = { vm.moveTodoUp(item.id) },
-                            onMoveDown = { vm.moveTodoDown(item.id) },
-                        )
+                            }
+                        }
+                    } else {
+                        itemsIndexed(renderItems, key = { _, it -> it.id }) { index, item ->
+                            rowFor(
+                                item,
+                                index == 0,
+                                index == renderItems.lastIndex,
+                                tab == QueueTab.TODO && !isSelecting,
+                            )
+                        }
                     }
                     item { Spacer(Modifier.height(40.dp)) }
                 }

@@ -19,12 +19,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -39,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,10 +76,18 @@ import javax.inject.Inject
 @HiltViewModel
 class TasksViewModel @Inject constructor(
     private val repo: AiJobsRepository,
+    private val viewModePrefs: io.itsikh.finnencer.data.repo.ViewModePreferences,
 ) : ViewModel() {
 
     val jobs: StateFlow<List<AiJob>> = repo.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val groupedByTicker: StateFlow<Boolean> = viewModePrefs.tasksGrouped
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setGroupedByTicker(value: Boolean) {
+        viewModelScope.launch { viewModePrefs.setTasksGrouped(value) }
+    }
 
     fun delete(id: String) {
         viewModelScope.launch { repo.delete(id) }
@@ -106,6 +117,8 @@ fun TasksScreen(
     val running = jobs.filter { it.status == AiJobStatus.QUEUED.name || it.status == AiJobStatus.RUNNING.name }
     val finished = jobs.filter { it.status == AiJobStatus.COMPLETED.name }
     val failed = jobs.filter { it.status == AiJobStatus.FAILED.name || it.status == AiJobStatus.CANCELED.name }
+    val grouped by vm.groupedByTicker.collectAsState()
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     // 1 Hz "now" tick so each RUNNING row's elapsed-seconds label updates
     // without the user having to leave and re-enter the screen. Only ticks
@@ -138,6 +151,14 @@ fun TasksScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                        Icon(
+                            if (grouped) Icons.Default.Summarize
+                            else Icons.Default.Bookmark,
+                            contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                            tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                        )
+                    }
                     if (finished.isNotEmpty() || failed.isNotEmpty()) {
                         TextButton(onClick = vm::clearFinished) {
                             Text("Clear", color = FinnencerColors.TextSecondary)
@@ -152,6 +173,25 @@ fun TasksScreen(
             EmptyState(modifier = Modifier.padding(padding))
             return@Scaffold
         }
+        // Shared row builder so flat (3-status-sections) and grouped
+        // (per-ticker folder) paths produce identical JobRow instances.
+        val jobRow: @androidx.compose.runtime.Composable (AiJob) -> Unit = { job ->
+            JobRow(
+                job = job,
+                nowMs = nowMs,
+                onOpen = {
+                    if (job.status == AiJobStatus.COMPLETED.name) {
+                        open(job, onOpenPodcast, onOpenReport)
+                    } else {
+                        onOpenTaskDetail(job.id)
+                    }
+                },
+                onOpenPodcast = onOpenPodcast,
+                onOpenReader = onOpenReader,
+                onDelete = { vm.delete(job.id) },
+                onRetry = { vm.retry(job.id) },
+            )
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -159,76 +199,46 @@ fun TasksScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (running.isNotEmpty()) {
-                item { SectionHeader("Running", running.size) }
-                items(running, key = { it.id }) { job ->
-                    JobRow(
-                        job = job,
-                        nowMs = nowMs,
-                        onOpen = {
-                            // Running / waiting / failed → live detail
-                            // screen so the user can see what's
-                            // happening and retry if needed. Completed
-                            // jobs go straight to the produced artifact.
-                            if (job.status == AiJobStatus.COMPLETED.name) {
-                                open(job, onOpenPodcast, onOpenReport)
-                            } else {
-                                onOpenTaskDetail(job.id)
-                            }
-                        },
-                        onOpenPodcast = onOpenPodcast,
-                        onOpenReader = onOpenReader,
-                        onDelete = { vm.delete(job.id) },
-                        onRetry = { vm.retry(job.id) },
-                    )
+            if (grouped) {
+                // Folder-per-ticker view: ignore the running/finished/failed
+                // split (status is already shown on each row's icon) and
+                // group everything by AiJob.tickerSymbol. Status info is
+                // preserved via StatusIcon on each row.
+                val buckets = jobs.groupBy { job ->
+                    job.tickerSymbol?.takeIf { it.isNotBlank() }
+                        ?: io.itsikh.finnencer.ui.components.UNGROUPED_TICKER
                 }
-            }
-            if (finished.isNotEmpty()) {
-                item { SectionHeader("Finished", finished.size) }
-                items(finished, key = { it.id }) { job ->
-                    JobRow(
-                        job = job,
-                        nowMs = nowMs,
-                        onOpen = {
-                            // Running / waiting / failed → live detail
-                            // screen so the user can see what's
-                            // happening and retry if needed. Completed
-                            // jobs go straight to the produced artifact.
-                            if (job.status == AiJobStatus.COMPLETED.name) {
-                                open(job, onOpenPodcast, onOpenReport)
-                            } else {
-                                onOpenTaskDetail(job.id)
-                            }
-                        },
-                        onOpenPodcast = onOpenPodcast,
-                        onOpenReader = onOpenReader,
-                        onDelete = { vm.delete(job.id) },
-                        onRetry = { vm.retry(job.id) },
-                    )
+                val tickers = io.itsikh.finnencer.ui.components.sortedTickerGroups(buckets.keys)
+                for (ticker in tickers) {
+                    val bucket = buckets[ticker].orEmpty()
+                    item(key = "header-$ticker") {
+                        io.itsikh.finnencer.ui.components.TickerGroupHeader(
+                            ticker = ticker,
+                            count = bucket.size,
+                            expanded = expandedGroups[ticker] ?: true,
+                            onToggle = {
+                                val curr = expandedGroups[ticker] ?: true
+                                expandedGroups[ticker] = !curr
+                            },
+                        )
+                    }
+                    val expanded = expandedGroups[ticker] ?: true
+                    if (expanded) {
+                        items(bucket, key = { it.id }) { job -> jobRow(job) }
+                    }
                 }
-            }
-            if (failed.isNotEmpty()) {
-                item { SectionHeader("Failed", failed.size) }
-                items(failed, key = { it.id }) { job ->
-                    JobRow(
-                        job = job,
-                        nowMs = nowMs,
-                        onOpen = {
-                            // Running / waiting / failed → live detail
-                            // screen so the user can see what's
-                            // happening and retry if needed. Completed
-                            // jobs go straight to the produced artifact.
-                            if (job.status == AiJobStatus.COMPLETED.name) {
-                                open(job, onOpenPodcast, onOpenReport)
-                            } else {
-                                onOpenTaskDetail(job.id)
-                            }
-                        },
-                        onOpenPodcast = onOpenPodcast,
-                        onOpenReader = onOpenReader,
-                        onDelete = { vm.delete(job.id) },
-                        onRetry = { vm.retry(job.id) },
-                    )
+            } else {
+                if (running.isNotEmpty()) {
+                    item { SectionHeader("Running", running.size) }
+                    items(running, key = { it.id }) { job -> jobRow(job) }
+                }
+                if (finished.isNotEmpty()) {
+                    item { SectionHeader("Finished", finished.size) }
+                    items(finished, key = { it.id }) { job -> jobRow(job) }
+                }
+                if (failed.isNotEmpty()) {
+                    item { SectionHeader("Failed", failed.size) }
+                    items(failed, key = { it.id }) { job -> jobRow(job) }
                 }
             }
             item { Spacer(Modifier.height(40.dp)) }

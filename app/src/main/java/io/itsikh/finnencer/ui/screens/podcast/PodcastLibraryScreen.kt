@@ -15,8 +15,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,10 +69,18 @@ import javax.inject.Inject
 class PodcastLibraryViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val podcastDao: PodcastDao,
+    private val viewModePrefs: io.itsikh.finnencer.data.repo.ViewModePreferences,
 ) : ViewModel() {
 
     val podcasts: StateFlow<List<Podcast>> = podcastDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val groupedByTicker: StateFlow<Boolean> = viewModePrefs.podcastsGrouped
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setGroupedByTicker(value: Boolean) {
+        viewModelScope.launch { viewModePrefs.setPodcastsGrouped(value) }
+    }
 
     private val _sharingId = MutableStateFlow<Long?>(null)
     /** Non-null while an m4a transcode is in flight; renders a spinner on the row. */
@@ -179,6 +189,8 @@ fun PodcastLibraryScreen(
     var pendingDelete by remember { mutableStateOf<Podcast?>(null) }
     var clearFailedConfirm by remember { mutableStateOf(false) }
     val failedCount = items.count { it.status == PodcastGenerationStatus.FAILED.name }
+    val grouped by vm.groupedByTicker.collectAsState()
+    val expandedGroups = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -201,6 +213,14 @@ fun PodcastLibraryScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                        Icon(
+                            if (grouped) androidx.compose.material.icons.Icons.Default.Summarize
+                            else androidx.compose.material.icons.Icons.Default.Bookmark,
+                            contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                            tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                        )
+                    }
                     if (failedCount > 0) {
                         TextButton(onClick = { clearFailedConfirm = true }) {
                             Text(
@@ -229,14 +249,47 @@ fun PodcastLibraryScreen(
                     )
                 }
             }
-            items(items, key = { it.id }) { p ->
-                PodcastRow(
-                    podcast = p,
-                    isSharing = sharingId == p.id,
-                    onOpen = onOpenPodcast,
-                    onShare = { vm.share(p) },
-                    onDelete = { pendingDelete = p },
-                )
+            if (grouped && items.isNotEmpty()) {
+                val buckets = items.groupBy { p ->
+                    io.itsikh.finnencer.ui.components.tickerFromPodcastTitle(p.title)
+                }
+                val tickers = io.itsikh.finnencer.ui.components.sortedTickerGroups(buckets.keys)
+                for (ticker in tickers) {
+                    val bucket = buckets[ticker].orEmpty()
+                    item(key = "header-$ticker") {
+                        io.itsikh.finnencer.ui.components.TickerGroupHeader(
+                            ticker = ticker,
+                            count = bucket.size,
+                            expanded = expandedGroups[ticker] ?: true,
+                            onToggle = {
+                                val curr = expandedGroups[ticker] ?: true
+                                expandedGroups[ticker] = !curr
+                            },
+                        )
+                    }
+                    val expanded = expandedGroups[ticker] ?: true
+                    if (expanded) {
+                        items(bucket, key = { it.id }) { p ->
+                            PodcastRow(
+                                podcast = p,
+                                isSharing = sharingId == p.id,
+                                onOpen = onOpenPodcast,
+                                onShare = { vm.share(p) },
+                                onDelete = { pendingDelete = p },
+                            )
+                        }
+                    }
+                }
+            } else if (!grouped) {
+                items(items, key = { it.id }) { p ->
+                    PodcastRow(
+                        podcast = p,
+                        isSharing = sharingId == p.id,
+                        onOpen = onOpenPodcast,
+                        onShare = { vm.share(p) },
+                        onDelete = { pendingDelete = p },
+                    )
+                }
             }
             item { Spacer(Modifier.height(40.dp)) }
         }
