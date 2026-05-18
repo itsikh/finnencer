@@ -1,7 +1,9 @@
 package io.itsikh.finnencer.ui.screens.podcast
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,12 +49,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.QueueItemKind
-import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.theme.MonoStyles
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,19 +82,30 @@ fun PodcastPlayerScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        podcast?.title ?: "Podcast",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = FinnencerColors.TextPrimary,
-                    )
+                    Column {
+                        Text(
+                            "NOW PLAYING",
+                            style = MonoStyles.Brand,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                        val sub = podcast?.let { p ->
+                            val durMin = p.durationMs?.let { "  ·  ${it / 1000 / 60} MIN" } ?: ""
+                            "${p.voiceHost.uppercase()}  ·  ${p.voiceAnalyst?.uppercase() ?: "—"}$durMin"
+                        } ?: "—"
+                        Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
+                    }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = FinnencerColors.TextPrimary,
-                        )
+                    Row(
+                        modifier = Modifier
+                            .padding(start = 8.dp, end = 2.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(6.dp))
+                            .clickable(onClick = onBack)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("← BACK", style = MonoStyles.NavLabel, color = FinnencerColors.TextSecondary)
                     }
                 },
                 actions = {
@@ -129,49 +144,26 @@ fun PodcastPlayerScreen(
         ) {
             Spacer(Modifier.height(8.dp))
 
-            // Art panel. A soft violet→mint radial-ish gradient with a big
-            // headphones glyph reads better than the bare "Charon · Aoede"
-            // voice-pair label that used to occupy this card.
-            GlassCard {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 180.dp, max = 240.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    // Subtle accent backdrop
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                androidx.compose.ui.graphics.Brush.radialGradient(
-                                    colors = listOf(
-                                        FinnencerColors.Violet.copy(alpha = 0.20f),
-                                        Color.Transparent,
-                                    ),
-                                )
-                            )
-                    )
-                    Icon(
-                        imageVector = Icons.Default.Headphones,
-                        contentDescription = null,
-                        tint = FinnencerColors.Violet.copy(alpha = 0.70f),
-                        modifier = Modifier.size(96.dp),
-                    )
-                }
-            }
+            // Geometric art block. AI-generated podcasts don't have
+            // real album art, so we draw a square with diagonal
+            // hatching and the ticker (parsed from the title's leading
+            // segment) printed huge in the middle. Reads as
+            // intentional rather than as "no image".
+            ArtBlock(
+                ticker = io.itsikh.finnencer.ui.components.tickerFromPodcastTitle(p.title),
+                subtitle = p.title.substringAfter("·").trim().take(40).uppercase(),
+            )
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    p.title,
-                    style = MaterialTheme.typography.headlineSmall,
+                    p.title.uppercase(),
+                    style = MonoStyles.NavLabel,
                     color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "${p.voiceHost} · ${p.voiceAnalyst ?: "—"}",
-                    style = MaterialTheme.typography.labelSmall,
+                    "${p.voiceHost.uppercase()}  ·  ${p.voiceAnalyst?.uppercase() ?: "—"}",
+                    style = MonoStyles.BrandSub,
                     color = FinnencerColors.TextTertiary,
                 )
             }
@@ -348,8 +340,8 @@ private fun PlayerControls(
             ),
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(fmt(positionMs), style = MaterialTheme.typography.labelMedium, color = FinnencerColors.TextSecondary)
-            Text(fmt(durationMs), style = MaterialTheme.typography.labelMedium, color = FinnencerColors.TextSecondary)
+            Text(fmt(positionMs), style = MonoStyles.NavLabel, color = FinnencerColors.TextSecondary)
+            Text(fmt(durationMs), style = MonoStyles.NavLabel, color = FinnencerColors.TextSecondary)
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -382,36 +374,95 @@ private fun PlayerControls(
                 Icon(Icons.Default.Forward30, contentDescription = "+30s", tint = FinnencerColors.TextPrimary, modifier = Modifier.size(36.dp))
             }
         }
-        // Speed chips. Equal-weight so all five fit in one row on any
-        // phone (Samsung S918B previously wrapped "2.0x" to a second
-        // line). Labels drop the .0 suffix to save horizontal space.
+        // Speed chips. Equal-weight so all five fit in one row.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { s ->
-                FilterChip(
-                    modifier = Modifier.weight(1f),
+                SpeedChip(
+                    label = formatSpeedLabel(s).uppercase(),
                     selected = speed == s,
                     onClick = { onSpeed(s) },
-                    label = {
-                        Text(
-                            formatSpeedLabel(s),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = FinnencerColors.SurfaceGlass,
-                        labelColor = FinnencerColors.TextSecondary,
-                        selectedContainerColor = FinnencerColors.Violet.copy(alpha = 0.25f),
-                        selectedLabelColor = FinnencerColors.TextPrimary,
-                    ),
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
+    }
+}
+
+/**
+ * Geometric art card for an AI-generated podcast — no real cover
+ * exists, so we paint a violet diagonal-hatch backdrop with the
+ * ticker (parsed from title) huge in the center. Keeps the player
+ * visually distinctive without faking album art.
+ */
+@Composable
+private fun ArtBlock(ticker: String, subtitle: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(4.dp))
+            .background(FinnencerColors.Surface)
+            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(4.dp)),
+    ) {
+        // diagonal hatch
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val gap = 28.dp.toPx()
+            val w = size.width
+            val h = size.height
+            var off = -h
+            while (off < w + h) {
+                drawLine(
+                    color = FinnencerColors.Violet.copy(alpha = 0.20f),
+                    start = androidx.compose.ui.geometry.Offset(off, 0f),
+                    end = androidx.compose.ui.geometry.Offset(off + h, h),
+                    strokeWidth = 1f,
+                )
+                off += gap
+            }
+        }
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = ticker.uppercase(),
+                style = MonoStyles.Brand.copy(fontSize = 80.sp, letterSpacing = 0.06.em),
+                color = FinnencerColors.TextPrimary,
+            )
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    text = subtitle,
+                    style = MonoStyles.BrandSub,
+                    color = FinnencerColors.TextSecondary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeedChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val border = if (selected) FinnencerColors.Violet else FinnencerColors.HairlineStrong
+    val color = if (selected) FinnencerColors.Violet else FinnencerColors.TextSecondary
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = MonoStyles.NavLabel, color = color)
     }
 }
 
