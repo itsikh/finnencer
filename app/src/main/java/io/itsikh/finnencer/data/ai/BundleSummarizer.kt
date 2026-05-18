@@ -42,7 +42,16 @@ class BundleSummarizer @Inject constructor(
 
     enum class PodcastMinutes(val minutes: Int) {
         FIVE(5), TEN(10), FIFTEEN(15), TWENTY(20), THIRTY(30);
-        val charBudget: Int get() = minutes * 600 // ~150 wpm spoken English
+        /**
+         * 1,000 characters per requested minute. Calibrated against
+         * real-world Gemini "Charon"/"Aoede" output, which speaks
+         * ~130–140 wpm — at the prior 600-chars/min budget a 15-min
+         * request landed at ~7 min of audio. Erring on the long side
+         * (15 min target → 15k chars → ≈18 min spoken) is safer than
+         * underbudgeting, since the user can stop early but can't
+         * extend a too-short podcast.
+         */
+        val charBudget: Int get() = minutes * 1000
     }
 
     /** Output of [summarizeText]: the prose plus the id of whichever model

@@ -55,6 +55,17 @@ class PodcastPlayerViewModel @Inject constructor(
     private val podcastId: Long = savedState.get<String>("podcastId")?.toLongOrNull()
         ?: error("player opened without podcastId")
 
+    /**
+     * Where this player was opened from — drives the implicit
+     * "play through" behavior. When `"queue"`, the player advances to
+     * the next podcast on completion regardless of the user's global
+     * Stop/Continue/Mix preference (the explicit act of opening from a
+     * queue signals "play through the queue"). Default "direct"
+     * preserves the user's saved preference for library / notification
+     * / direct-link entry points.
+     */
+    val launchSource: String = savedState.get<String>("from") ?: "direct"
+
     val podcast: StateFlow<Podcast?> = podcastDao.observe(podcastId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -133,7 +144,16 @@ class PodcastPlayerViewModel @Inject constructor(
             }
             val incompletePodcasts = queueRepo.observeIncomplete().first()
                 .filter { it.kind == QueueItemKind.PODCAST.name && it.refId != refId }
-            val nextRefId: String? = when (prefs.endOfPodcastAction.first()) {
+            // When the player was opened from the queue, the user is
+            // implicitly playing through it — override a global STOP
+            // setting to CONTINUE for this listening session. The
+            // explicit Mix preference is still honored even from the
+            // queue, since "Mix" is a stronger intent than the default.
+            val savedAction = prefs.endOfPodcastAction.first()
+            val effectiveAction = if (launchSource == "queue" && savedAction == EndOfPodcastAction.STOP) {
+                EndOfPodcastAction.CONTINUE
+            } else savedAction
+            val nextRefId: String? = when (effectiveAction) {
                 EndOfPodcastAction.STOP -> null
                 EndOfPodcastAction.CONTINUE -> incompletePodcasts.firstOrNull()?.refId
                 EndOfPodcastAction.SHUFFLE -> incompletePodcasts.randomOrNull()?.refId

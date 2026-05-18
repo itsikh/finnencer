@@ -58,7 +58,11 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @Composable
 fun PodcastPlayerScreen(
     onBack: () -> Unit,
-    onOpenPodcast: (Long) -> Unit = {},
+    /** Called on auto-play-next with (nextPodcastId, launchSource).
+     *  launchSource is passed through so a podcast opened from the
+     *  queue keeps the "play through" behavior all the way down the
+     *  chain. */
+    onOpenPodcast: (Long, String) -> Unit = { _, _ -> },
     onOpenReader: () -> Unit = {},
 ) {
     val vm: PodcastPlayerViewModel = hiltViewModel()
@@ -66,7 +70,7 @@ fun PodcastPlayerScreen(
     val ui by vm.ui.collectAsState()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        vm.navigateToNext.collect { nextId -> onOpenPodcast(nextId) }
+        vm.navigateToNext.collect { nextId -> onOpenPodcast(nextId, vm.launchSource) }
     }
 
     Scaffold(

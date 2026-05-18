@@ -88,7 +88,11 @@ fun AppNavHost() {
                     onBack = { navController.popBackStack() },
                     onOpenArticle = { id -> navController.navigate("article/$id") },
                     onOpenReport = { id -> navController.navigate("report/$id") },
-                    onOpenPodcast = { id -> navController.navigate("podcast/$id") },
+                    // Tag this launch with from=queue so the player VM
+                    // overrides a global STOP setting to CONTINUE for
+                    // this listening session — the user implicitly
+                    // wants to play through the queue.
+                    onOpenPodcast = { id -> navController.navigate("podcast/$id?from=queue") },
                     onOpenTasks = { navController.navigate("tasks") },
                 )
             }
@@ -151,15 +155,25 @@ fun AppNavHost() {
                     onFailed = { navController.popBackStack() },
                 )
             }
-            composable("podcast/{podcastId}") {
+            composable(
+                route = "podcast/{podcastId}?from={from}",
+                arguments = listOf(
+                    androidx.navigation.navArgument("from") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = "direct"
+                        nullable = false
+                    },
+                ),
+            ) {
                 PodcastPlayerScreen(
                     onBack = { navController.popBackStack() },
                     // Auto-play-next: replace the current podcast route
-                    // with the next one in the queue so Back doesn't
-                    // accumulate a deep stack of every podcast played.
-                    onOpenPodcast = { nextId ->
-                        navController.navigate("podcast/$nextId") {
-                            popUpTo("podcast/{podcastId}") { inclusive = true }
+                    // with the next one. Preserve the `from` source so a
+                    // chain that started in the queue keeps the implicit
+                    // "play through" behavior all the way down.
+                    onOpenPodcast = { nextId, source ->
+                        navController.navigate("podcast/$nextId?from=$source") {
+                            popUpTo("podcast/{podcastId}?from={from}") { inclusive = true }
                         }
                     },
                     onOpenReader = { navController.navigate("reader") },
@@ -168,7 +182,7 @@ fun AppNavHost() {
             composable("podcasts") {
                 PodcastLibraryScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenPodcast = { id -> navController.navigate("podcast/$id") },
+                    onOpenPodcast = { id -> navController.navigate("podcast/$id?from=library") },
                 )
             }
             composable("ticker/{symbol}") {

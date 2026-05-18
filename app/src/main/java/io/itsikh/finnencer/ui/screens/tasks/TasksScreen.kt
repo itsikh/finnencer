@@ -448,9 +448,37 @@ private fun JobRow(
                                     )
                                 }
                             }
+                            // Route the queue pill at the artifact the user
+                            // actually wants to consume — not the AiJob.
+                            // Before this, every Queue add from Tasks went
+                            // in as BATCH_SUMMARY, which routed back to the
+                            // Tasks page on tap from the Queue. For podcast
+                            // jobs (PODCAST or SUMMARY_AND_PODCAST) we now
+                            // queue the Podcast row id so tapping opens the
+                            // player; for earnings reports we queue the
+                            // report id; INLINE_TEXT (summary-only) keeps
+                            // BATCH_SUMMARY so the expandable Tasks card
+                            // remains the destination.
+                            val pillKind: QueueItemKind
+                            val pillRefId: String
+                            when (job.resultKind) {
+                                AiJobResultKind.PODCAST.name,
+                                AiJobResultKind.SUMMARY_AND_PODCAST.name -> {
+                                    pillKind = QueueItemKind.PODCAST
+                                    pillRefId = job.resultRefId ?: job.id
+                                }
+                                AiJobResultKind.EARNINGS_REPORT.name -> {
+                                    pillKind = QueueItemKind.EARNINGS_REPORT
+                                    pillRefId = job.resultRefId ?: job.id
+                                }
+                                else -> {
+                                    pillKind = QueueItemKind.BATCH_SUMMARY
+                                    pillRefId = job.id
+                                }
+                            }
                             QueueTogglePill(
-                                kind = QueueItemKind.BATCH_SUMMARY,
-                                refId = job.id,
+                                kind = pillKind,
+                                refId = pillRefId,
                                 title = job.title,
                                 subtitle = job.resultModel?.let { "via ${friendlyModelLabel(it)}" },
                             )

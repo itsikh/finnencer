@@ -25,6 +25,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -58,8 +60,16 @@ fun FloatingBugButton(
 ) {
     if (!visible) return
 
-    var offsetX by remember { mutableFloatStateOf(16f) }
-    var offsetY by remember { mutableFloatStateOf(400f) }
+    // Default starting position: 16dp from the left edge, ~80% down
+    // the screen so the button sits in the lower area instead of
+    // covering header / search content. Still freely draggable
+    // anywhere; this is just where it spawns on first show.
+    val density = LocalDensity.current
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
+    val initialOffsetX = with(density) { 16.dp.toPx() }
+    val initialOffsetY = with(density) { (screenHeightDp * 0.80f).dp.toPx() }
+    var offsetX by remember { mutableFloatStateOf(initialOffsetX) }
+    var offsetY by remember { mutableFloatStateOf(initialOffsetY) }
     var capturing by remember { mutableStateOf(false) }
     val view = LocalView.current
 
