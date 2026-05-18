@@ -34,6 +34,7 @@ class GeminiTts @Inject constructor(
     private val service: GeminiService,
     private val apiUsageDao: ApiUsageDao,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
+    private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
 ) {
 
     /** Reasonable default voice pair: Charon (host) + Aoede (analyst). */
@@ -84,6 +85,12 @@ class GeminiTts @Inject constructor(
 
         FileOutputStream(pcmTmp).use { pcmOut ->
             for ((idx, chunk) in chunks.withIndex()) {
+                progressReporter.update(
+                    io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
+                    ((idx.toFloat() / chunks.size) * 100).toInt().coerceIn(0, 100),
+                    "Chunk ${idx + 1} of ${chunks.size}" +
+                        if (cachedChunks > 0) " ($cachedChunks reused from cache)" else "",
+                )
                 val chunkFile = cacheDir?.let { File(it, "chunk_$idx.pcm") }
                 val bytes: ByteArray = if (chunkFile != null && chunkFile.exists() && chunkFile.length() > 0) {
                     cachedChunks++

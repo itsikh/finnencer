@@ -45,6 +45,24 @@ object AppLogger {
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
     /**
+     * Live stream of every log line that lands in the buffer. The Task
+     * Detail screen subscribes to this and filters by tag pattern to
+     * tail the per-job activity log (#43). Replay 0 — the screen shows
+     * the buffer snapshot on first composition then live-tails new
+     * entries.
+     */
+    private val _stream = kotlinx.coroutines.flow.MutableSharedFlow<LogEntry>(
+        replay = 0,
+        extraBufferCapacity = 256,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val stream: kotlinx.coroutines.flow.SharedFlow<LogEntry> = _stream
+
+    /** Return a snapshot of the current in-memory buffer for one-shot
+     *  initialization of the log tail UI. */
+    fun snapshot(): List<LogEntry> = logBuffer.toList()
+
+    /**
      * Active log level. Entries below this level are discarded.
      * Defaults to [LogLevel.DEBUG] in debug builds and [LogLevel.WARN] in release builds.
      * Updated at startup from persisted [DebugSettings.logLevel] and live when the user
@@ -127,6 +145,9 @@ object AppLogger {
         while (logBuffer.size > BUFFER_SIZE) {
             logBuffer.pollFirst()
         }
+        // Publish on the live stream — non-blocking; if the UI isn't
+        // collecting fast enough, oldest in-flight entries are dropped.
+        _stream.tryEmit(entry)
 
         when (level) {
             LogLevel.DEBUG -> Log.d(tag, message)

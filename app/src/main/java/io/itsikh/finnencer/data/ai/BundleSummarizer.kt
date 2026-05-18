@@ -33,6 +33,7 @@ class BundleSummarizer @Inject constructor(
     private val earningsDao: EarningsDao,
     private val promptPrefs: PromptPreferences,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
+    private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
 ) {
 
     enum class Pages(val target: Int, val maxTokens: Int) {
@@ -278,13 +279,28 @@ class BundleSummarizer @Inject constructor(
             // re-billing the LLM (#42).
             val script: String = if (preservedScript != null) {
                 AppLogger.i(TAG, "podcast $id: reusing persisted script (${preservedScript.length} chars)")
+                progressReporter.update(
+                    io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
+                    100,
+                    "Reusing script from prior attempt (${preservedScript.length} chars)",
+                )
                 preservedScript
             } else {
+                progressReporter.update(
+                    io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
+                    0,
+                    "Asking Claude for a ${minutes.minutes}-minute dialogue",
+                )
                 val freshScript = generateScript(
                     scriptSystem = scriptSystem,
                     source = sourceMaterial,
                     maxTokens = maxTokens,
                     targetChars = minutes.charBudget,
+                )
+                progressReporter.update(
+                    io.itsikh.finnencer.data.entity.AiJobStage.PERSISTING_SCRIPT,
+                    100,
+                    "Script ready (${freshScript.length} chars)",
                 )
                 // Best-effort persistence — if the row was deleted (user
                 // hit "Clear failed") or the DB write is transiently
@@ -305,6 +321,11 @@ class BundleSummarizer @Inject constructor(
             // Phase 2: synthesize. Chunk PCMs are cached under a stable
             // per-podcast dir so a partial failure resumes mid-podcast
             // instead of regenerating earlier chunks (#1).
+            progressReporter.update(
+                io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
+                0,
+                "Starting voice synthesis",
+            )
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }
             val cacheDir = File(context.filesDir, "podcasts/cache/podcast_$id")
             val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
@@ -364,6 +385,11 @@ class BundleSummarizer @Inject constructor(
         var rounds = 0
         val minAcceptable = (targetChars * TARGET_THRESHOLD).toInt()
         AppLogger.i(TAG, "podcast script initial pass: len=${combined.length}/$targetChars stop=$stop")
+        progressReporter.update(
+            io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
+            ((combined.length.toFloat() / targetChars) * 100).toInt().coerceIn(0, 100),
+            "Initial pass: ${combined.length}/$targetChars chars (stop=${stop ?: "ok"})",
+        )
 
         while (rounds < MAX_CONTINUATIONS && combined.length < minAcceptable) {
             val reason = when (stop) {
@@ -395,6 +421,11 @@ class BundleSummarizer @Inject constructor(
             stop = next.stopReason
             rounds++
             AppLogger.i(TAG, "podcast script continuation $rounds ok (len=${combined.length}/$targetChars stop=$stop)")
+            progressReporter.update(
+                io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
+                ((combined.length.toFloat() / targetChars) * 100).toInt().coerceIn(0, 100),
+                "Continuation $rounds: ${combined.length}/$targetChars chars (stop=${stop ?: "ok"})",
+            )
         }
 
         if (combined.length < minAcceptable) {

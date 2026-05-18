@@ -40,7 +40,7 @@ import io.itsikh.finnencer.data.entity.Ticker
         AiJob::class,
         QueueItem::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {

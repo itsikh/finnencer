@@ -10,6 +10,10 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Used by AiJobWorker.setForeground so an AI job that's waiting
+         for usable internet can outlive WorkManager's 10-minute job cap
+         (#43). Required on Android 14+ for FGS type "dataSync". -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
@@ -61,6 +65,17 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- Android 14+ requires the foreground service type to be
+             declared on the <service> element itself, not just at
+             setForeground time. Merge with the WorkManager-library
+             declaration so AiJobWorker's setForeground call (used to
+             wait for usable network without WorkManager's 10-min
+             cap) doesn't crash on start (#43). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <!-- Use the Hilt-driven WorkManager Configuration.Provider from
              TemplateApplication instead of WorkManager's auto-init. -->

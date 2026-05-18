@@ -50,7 +50,17 @@ class NetworkAvailability @Inject constructor(
      * unregistered, even on cancellation.
      */
     suspend fun awaitNetwork(maxWaitMs: Long): Boolean {
-        if (isConnected()) return true
+        // If the device is already "connected per Android" but the actual
+        // host we wanted is unreachable (carrier blocking a specific
+        // domain, transient DNS hiccup, captive portal that passes
+        // validation), returning instantly would compress our retry
+        // backoff to ~0ms (#43 regression). Apply the full delay first
+        // so retries are actually spaced out; the early-return only
+        // helps the "no network at all" → "network back" transition.
+        if (isConnected()) {
+            kotlinx.coroutines.delay(maxWaitMs)
+            return true
+        }
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
 
         return withTimeoutOrNull(maxWaitMs) {

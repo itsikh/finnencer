@@ -13,7 +13,16 @@ import androidx.room.PrimaryKey
  * EarningsReport, NewsArticle, or arbitrary user text).
  */
 enum class PodcastSourceType { REPORT, ARTICLE, CUSTOM_TEXT }
-enum class PodcastGenerationStatus { PENDING, GENERATING, READY, FAILED }
+enum class PodcastGenerationStatus {
+    PENDING,
+    GENERATING,
+    /** Waiting indefinitely until the AI endpoints (Anthropic, Gemini)
+     *  become reachable. The worker is alive — see the foreground
+     *  notification — but no LLM/TTS calls are being made yet (#43). */
+    WAITING_FOR_NETWORK,
+    READY,
+    FAILED,
+}
 
 @Entity(tableName = "podcasts")
 data class Podcast(

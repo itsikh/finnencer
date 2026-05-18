@@ -48,6 +48,8 @@ class PodcastPlayerViewModel @Inject constructor(
     podcastDao: PodcastDao,
     private val queueRepo: QueueRepository,
     private val prefs: PodcastPreferences,
+    private val aiJobDao: io.itsikh.finnencer.data.dao.AiJobDao,
+    private val aiJobsRepo: io.itsikh.finnencer.data.repo.AiJobsRepository,
 ) : ViewModel() {
 
     private val podcastId: Long = savedState.get<String>("podcastId")?.toLongOrNull()
@@ -192,6 +194,45 @@ class PodcastPlayerViewModel @Inject constructor(
     }
 
     private companion object { const val TAG = "PodcastPlayerVM" }
+
+    /** Surfaced via [retryStatus] so the player screen can flash a toast
+     *  if the retry couldn't find the originating AI job (e.g. user
+     *  cleared it from the Tasks screen). */
+    sealed interface RetryStatus {
+        data object Idle : RetryStatus
+        data object Retrying : RetryStatus
+        data object Success : RetryStatus
+        data class Error(val message: String) : RetryStatus
+    }
+
+    private val _retryStatus = MutableStateFlow<RetryStatus>(RetryStatus.Idle)
+    val retryStatus: StateFlow<RetryStatus> = _retryStatus.asStateFlow()
+
+    /**
+     * Re-run whichever AI job produced this podcast row, reusing the
+     * same Podcast row id so v0.0.40's per-chunk cache + persisted
+     * script kick in (#43). If no AI job rows reference this podcast
+     * (rare — e.g. produced via the legacy `podcast/from-report/{id}`
+     * direct-call path) surfaces an error so the user can navigate back
+     * to the source screen and tap Listen again.
+     */
+    fun retry() {
+        viewModelScope.launch {
+            _retryStatus.value = RetryStatus.Retrying
+            val job = aiJobDao.findByResultRefId(podcastId.toString())
+            if (job == null) {
+                _retryStatus.value = RetryStatus.Error(
+                    "No AI job is associated with this podcast. Open the source screen (earnings report or ticker feed) and try again from there."
+                )
+                return@launch
+            }
+            runCatching { aiJobsRepo.retry(job.id) }
+                .onSuccess { _retryStatus.value = RetryStatus.Success }
+                .onFailure { _retryStatus.value = RetryStatus.Error(it.message ?: "Retry failed") }
+        }
+    }
+
+    fun clearRetryStatus() { _retryStatus.value = RetryStatus.Idle }
 
     fun playPause() {
         val c = controller ?: return

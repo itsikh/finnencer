@@ -29,6 +29,7 @@ import io.itsikh.finnencer.ui.screens.podcast.PodcastLibraryScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
 import io.itsikh.finnencer.ui.screens.queue.QueueScreen
 import io.itsikh.finnencer.ui.screens.reader.ReaderScreen
+import io.itsikh.finnencer.ui.screens.tasks.TaskDetailScreen
 import io.itsikh.finnencer.ui.screens.tasks.TasksScreen
 import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
 import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
@@ -97,6 +98,22 @@ fun AppNavHost() {
                     onOpenPodcast = { id -> navController.navigate("podcast/$id") },
                     onOpenReader = { navController.navigate("reader") },
                     onOpenReport = { id -> navController.navigate("report/$id") },
+                    onOpenTaskDetail = { jobId -> navController.navigate("task/$jobId") },
+                )
+            }
+            composable("task/{jobId}") {
+                TaskDetailScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenResult = { job ->
+                        when (job.resultKind) {
+                            io.itsikh.finnencer.data.entity.AiJobResultKind.PODCAST.name,
+                            io.itsikh.finnencer.data.entity.AiJobResultKind.SUMMARY_AND_PODCAST.name ->
+                                job.resultRefId?.toLongOrNull()?.let { navController.navigate("podcast/$it") }
+                            io.itsikh.finnencer.data.entity.AiJobResultKind.EARNINGS_REPORT.name ->
+                                job.resultRefId?.toLongOrNull()?.let { navController.navigate("report/$it") }
+                            else -> Unit
+                        }
+                    },
                 )
             }
             composable("cost") {

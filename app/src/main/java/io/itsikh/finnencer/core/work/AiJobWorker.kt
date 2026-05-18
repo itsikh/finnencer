@@ -1,38 +1,65 @@
 package io.itsikh.finnencer.core.work
 
+import android.app.Notification
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.google.gson.Gson
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import io.itsikh.finnencer.MainActivity
+import io.itsikh.finnencer.core.net.EndpointReachability
 import io.itsikh.finnencer.core.notifications.AiJobNotifier
+import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.EarningsDao
+import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.AiJobResultKind
+import io.itsikh.finnencer.data.entity.AiJobStage
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
+import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.ReportTier
-import kotlinx.coroutines.flow.first
 import io.itsikh.finnencer.logging.AppLogger
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
- * Single CoroutineWorker that handles every queued [AiJobType]. Reads
- * the row from Room, dispatches to the matching domain component, persists
- * the produced artifact, and writes the final status back. The user sees
+ * Single CoroutineWorker that handles every queued [AiJobType]. Reads the
+ * row from Room, dispatches to the matching domain component, persists the
+ * produced artifact, and writes the final status back. The user sees
  * progress / completion via the Tasks screen (Room flow) and a system
  * notification (this worker calls [AiJobNotifier] on success/failure).
  *
- * IDs come in as a "jobId" input data string. The worker does not get the
- * payload from input data — it reads `AiJob.inputJson` from Room so that
- * a process restart can resume cleanly without losing arguments.
+ * ## Pre-flight network gate (#43)
+ *
+ * Before any LLM call, the worker probes the hostnames the pipeline needs
+ * (Anthropic + optionally Gemini) via DNS. If any are unreachable — even
+ * when Android reports the device as "connected" — the worker enters a
+ * polling loop, recheck every 60s. The Podcast row (if any) is flipped
+ * to `WAITING_FOR_NETWORK` and a foreground-service notification keeps
+ * the user informed and the worker alive past the 10-minute single-run
+ * cap.
+ *
+ * ## Stage reporting
+ *
+ * Every phase calls [JobProgressReporter.update] (via the [JobIdContext]
+ * coroutine-context element) so the Tasks list and Task Detail screen
+ * can show "what's happening right now" in real time.
  */
 @HiltWorker
 class AiJobWorker @AssistedInject constructor(
-    @Assisted appContext: Context,
+    @Assisted private val appContext: Context,
     @Assisted params: WorkerParameters,
     private val dao: AiJobDao,
     private val bundle: BundleSummarizer,
@@ -40,72 +67,196 @@ class AiJobWorker @AssistedInject constructor(
     private val gson: Gson,
     private val reportGenerator: ReportGenerator,
     private val earningsDao: EarningsDao,
+    private val podcastDao: PodcastDao,
     private val concurrencyGate: JobConcurrencyGate,
-    private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
+    private val endpointReachability: EndpointReachability,
+    private val progressReporter: JobProgressReporter,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         val jobId = inputData.getString(KEY_JOB_ID) ?: return Result.failure()
         val job = dao.get(jobId) ?: return Result.failure()
-
-        // Pre-flight: if the device is plainly offline, fail-fast with
-        // the friendly "no internet" message instead of burning ~3 min
-        // of retries before giving the user the same message (#42).
-        if (!networkAvailability.isConnected()) {
-            val msg = "No internet connection. Check your network and try again."
-            AppLogger.w(TAG, "ai job ${job.id} pre-flight: no network — failing fast")
-            dao.markFailed(job.id, AiJobStatus.FAILED.name, msg, System.currentTimeMillis())
-            notifier.notifyFailed(job.id, job.title, msg)
-            return Result.failure()
-        }
-
-        // Pick a gate so the user can serialize batches (Settings →
-        // Background jobs). Defaults to 1 of each kind → enqueuing 10
-        // podcasts runs them one at a time.
         val type = AiJobType.valueOf(job.type)
-        val gateKind = when (type) {
-            AiJobType.PODCAST_BATCH,
-            AiJobType.SUMMARY_AND_PODCAST_BATCH,
-            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> JobConcurrencyGate.Kind.PODCAST
-            AiJobType.SUMMARY_BATCH,
-            AiJobType.REPORT_EARNINGS -> JobConcurrencyGate.Kind.SUMMARY
-        }
 
-        return concurrencyGate.withPermit(gateKind, label = "${job.type} ${job.id}") {
-            dao.markRunning(job.id, AiJobStatus.RUNNING.name, System.currentTimeMillis())
-            AppLogger.i(TAG, "running ${job.type} ${job.id} (${job.title})")
+        return withContext(JobIdContext(jobId)) {
+            // Promote to foreground IMMEDIATELY. Without this the worker
+            // is killed after ~10 minutes and the "wait for the user to
+            // get back to wifi" loop can't outlive that. setForeground
+            // also surfaces a notification so the user can see + cancel
+            // the job from the shade.
+            runCatching {
+                setForeground(buildForegroundInfo(jobId, job.title, "Starting…"))
+            }.onFailure {
+                // Some OEMs reject setForeground for short workers — log
+                // and continue. The 10-min cap will apply but normal
+                // jobs complete in well under that.
+                AppLogger.w(TAG, "setForeground rejected for $jobId: ${it.message}")
+            }
 
             runCatching {
-                when (type) {
-                    AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
-                    AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
-                    AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
-                    AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
-                    AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
-                }
-            }.fold(
-                onSuccess = { Result.success() },
-                onFailure = { t ->
-                    val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
-                    AppLogger.e(TAG, "ai job ${job.id} failed: $friendly", t)
-                    dao.markFailed(
-                        job.id,
-                        AiJobStatus.FAILED.name,
-                        friendly,
-                        System.currentTimeMillis(),
+                // Phase 1: pre-flight + WAITING_FOR_NETWORK wait loop.
+                // Run BEFORE acquiring the concurrency gate so a waiting
+                // job doesn't hold a permit that other jobs could use.
+                waitForReachableEndpoints(jobId, job.title, type)
+
+                if (isStopped) return@runCatching Result.failure()
+
+                // Phase 2: under the gate, run the actual pipeline.
+                concurrencyGate.withPermit(gateKind(type), label = "${job.type} ${job.id}") {
+                    dao.markRunning(job.id, AiJobStatus.RUNNING.name, System.currentTimeMillis())
+                    AppLogger.i(TAG, "running ${job.type} ${job.id} (${job.title})")
+                    progressReporter.update(AiJobStage.GENERATING_SCRIPT, 0, "Starting work")
+                    runCatching {
+                        when (type) {
+                            AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
+                            AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
+                            AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
+                            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
+                            AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
+                        }
+                    }.fold(
+                        onSuccess = {
+                            progressReporter.update(AiJobStage.DONE, 100, "Complete")
+                            Result.success()
+                        },
+                        onFailure = { t ->
+                            handleFailure(job.id, job.title, t)
+                            Result.failure()
+                        }
                     )
-                    notifier.notifyFailed(job.id, job.title, friendly)
-                    Result.failure()
                 }
-            )
+            }.getOrElse { t ->
+                handleFailure(job.id, job.title, t)
+                Result.failure()
+            }
         }
     }
 
+    private suspend fun handleFailure(jobId: String, title: String, t: Throwable) {
+        val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
+        AppLogger.e(TAG, "ai job $jobId failed: $friendly", t)
+        progressReporter.updateExplicit(jobId, AiJobStage.FAILED, 0, friendly)
+        dao.markFailed(jobId, AiJobStatus.FAILED.name, friendly, System.currentTimeMillis())
+        notifier.notifyFailed(jobId, title, friendly)
+    }
+
+    /**
+     * Block until every endpoint in [endpointsFor(type)] resolves via
+     * DNS. Polls every [POLL_INTERVAL_MS]. Keeps the foreground
+     * notification current with which hosts are still down so the user
+     * isn't staring at a blank "waiting" message.
+     */
+    private suspend fun waitForReachableEndpoints(jobId: String, title: String, type: AiJobType) {
+        val needed = endpointsFor(type)
+        progressReporter.update(
+            AiJobStage.CONNECTIVITY_CHECK,
+            0,
+            "Checking ${needed.joinToString(", ") { it.host }}",
+        )
+
+        var report = endpointReachability.probe(needed)
+        if (report.allReachable) return
+
+        // First failure — also mark any existing Podcast row so the
+        // player screen shows WAITING_FOR_NETWORK rather than
+        // GENERATING when there's clearly nothing happening yet.
+        val podcastRowId = dao.get(jobId)?.resultRefId?.toLongOrNull()
+            ?.takeIf { type.producesPodcast() }
+
+        var pollCount = 0
+        while (!report.allReachable && !isStopped) {
+            val unreachable = report.unreachable.joinToString(", ") { it.host }
+            val detail = "Waiting for $unreachable to come back…"
+            progressReporter.update(AiJobStage.WAITING_FOR_NETWORK, 0, detail)
+            podcastRowId?.let { id ->
+                podcastDao.get(id)?.let { existing ->
+                    runCatching {
+                        podcastDao.update(
+                            existing.copy(
+                                status = PodcastGenerationStatus.WAITING_FOR_NETWORK.name,
+                                generationError = detail,
+                            )
+                        )
+                    }
+                }
+            }
+            runCatching {
+                setForeground(buildForegroundInfo(jobId, title, detail))
+            }
+            AppLogger.i(TAG, "ai job $jobId: $detail; poll #${++pollCount}, sleeping ${POLL_INTERVAL_MS / 1000}s")
+            delay(POLL_INTERVAL_MS)
+            report = endpointReachability.probe(needed)
+        }
+        if (!isStopped) {
+            AppLogger.i(TAG, "ai job $jobId: all endpoints reachable after $pollCount poll(s), proceeding")
+            progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "All endpoints reachable")
+        }
+    }
+
+    private fun endpointsFor(type: AiJobType): List<EndpointReachability.Endpoint> = when (type) {
+        // Summary and report jobs only use Anthropic.
+        AiJobType.SUMMARY_BATCH,
+        AiJobType.REPORT_EARNINGS -> listOf(EndpointReachability.Endpoint.ANTHROPIC)
+        // Anything that renders audio also needs Gemini.
+        AiJobType.PODCAST_BATCH,
+        AiJobType.SUMMARY_AND_PODCAST_BATCH,
+        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> listOf(
+            EndpointReachability.Endpoint.ANTHROPIC,
+            EndpointReachability.Endpoint.GEMINI_AI_STUDIO,
+        )
+    }
+
+    private fun gateKind(type: AiJobType): JobConcurrencyGate.Kind = when (type) {
+        AiJobType.PODCAST_BATCH,
+        AiJobType.SUMMARY_AND_PODCAST_BATCH,
+        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> JobConcurrencyGate.Kind.PODCAST
+        AiJobType.SUMMARY_BATCH,
+        AiJobType.REPORT_EARNINGS -> JobConcurrencyGate.Kind.SUMMARY
+    }
+
+    private fun buildForegroundInfo(jobId: String, title: String, statusText: String): ForegroundInfo {
+        val openIntent = Intent(appContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val openPi = PendingIntent.getActivity(
+            appContext,
+            jobId.hashCode(),
+            openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification: Notification = NotificationCompat.Builder(appContext, NotificationChannels.AI_JOBS)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(statusText)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(openPi)
+            .build()
+        val notifId = jobId.hashCode()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ForegroundInfo(notifId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(notifId, notification)
+        }
+    }
+
+    private fun AiJobType.producesPodcast(): Boolean = when (this) {
+        AiJobType.PODCAST_BATCH,
+        AiJobType.SUMMARY_AND_PODCAST_BATCH,
+        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> true
+        else -> false
+    }
+
+    // ─── pipeline dispatch ────────────────────────────────────────────────
+
     private suspend fun runSummary(jobId: String, tickerSymbol: String?, json: String, title: String) {
+        progressReporter.update(AiJobStage.GENERATING_SUMMARY, 0, "Calling Claude")
         val input = gson.fromJson(json, SummaryInput::class.java)
         val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
             ?: BundleSummarizer.Pages.TWO
         val result = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
+        progressReporter.update(AiJobStage.FINALIZING, 95, "Saving summary")
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -128,11 +279,9 @@ class AiJobWorker @AssistedInject constructor(
             minutes = minutes,
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
-            // Persist the row id the moment Bundle creates/reuses it so a
-            // retry after a mid-generation process kill finds the same
-            // row instead of inserting a duplicate (#39).
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
+        progressReporter.update(AiJobStage.FINALIZING, 95, "Saving podcast")
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -197,6 +346,7 @@ class AiJobWorker @AssistedInject constructor(
     )
 
     private suspend fun runEarningsReport(jobId: String, json: String, title: String) {
+        progressReporter.update(AiJobStage.GENERATING_REPORT, 0, "Resolving / generating earnings report")
         val input = gson.fromJson(json, EarningsReportInput::class.java)
         val tier = ReportTier.valueOf(input.tierName)
         // De-dupe: if a report at this tier already exists for the event
@@ -209,6 +359,7 @@ class AiJobWorker @AssistedInject constructor(
         val reportId = existing?.id ?: reportGenerator.generate(event.id, tier)
         val report = earningsDao.getReport(reportId)
             ?: error("freshly generated report $reportId missing")
+        progressReporter.update(AiJobStage.FINALIZING, 95, "Saving report")
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -229,6 +380,7 @@ class AiJobWorker @AssistedInject constructor(
             ?: error("EarningsEvent ${input.earningsEventId} not found")
         // Look for an existing BRIEF report for this event; only generate a
         // new one if there isn't one already, so re-runs don't burn tokens.
+        progressReporter.update(AiJobStage.GENERATING_REPORT, 0, "Resolving BRIEF report")
         val existingBrief = earningsDao.observeReportsForTicker(event.tickerSymbol)
             .first()
             .firstOrNull { it.earningsEventId == event.id && it.tier == ReportTier.BRIEF.name }
@@ -242,6 +394,7 @@ class AiJobWorker @AssistedInject constructor(
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
+        progressReporter.update(AiJobStage.FINALIZING, 95, "Saving podcast")
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -263,6 +416,7 @@ class AiJobWorker @AssistedInject constructor(
         // 1. Summary first — its text becomes both the inline result AND the
         //    podcast-script source material so the audio narrative aligns
         //    with what the user sees in the Tasks card.
+        progressReporter.update(AiJobStage.GENERATING_SUMMARY, 0, "Calling Claude")
         val summary = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
         // 2. Podcast from that summary. Renders + persists a Podcast row.
         val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
@@ -274,6 +428,7 @@ class AiJobWorker @AssistedInject constructor(
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
+        progressReporter.update(AiJobStage.FINALIZING, 95, "Saving artifacts")
         dao.markCompleted(
             id = jobId,
             status = AiJobStatus.COMPLETED.name,
@@ -289,5 +444,7 @@ class AiJobWorker @AssistedInject constructor(
     companion object {
         const val KEY_JOB_ID = "ai_job_id"
         private const val TAG = "AiJobWorker"
+        /** How often to recheck endpoint reachability while waiting. */
+        private const val POLL_INTERVAL_MS: Long = 60_000L
     }
 }

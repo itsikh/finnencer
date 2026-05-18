@@ -53,8 +53,24 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+/**
+ * v6 → v7: adds per-job progress tracking to `ai_jobs` so the Tasks
+ * page + Task Detail screen can surface "what step is this on, what
+ * percent done, what's it doing right now" in real time (#43).
+ *
+ * `stage_progress` defaults to 0; the other two are nullable.
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE ai_jobs ADD COLUMN currentStage TEXT")
+        db.execSQL("ALTER TABLE ai_jobs ADD COLUMN stageProgress INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE ai_jobs ADD COLUMN stageDetail TEXT")
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
     MIGRATION_5_6,
+    MIGRATION_6_7,
 )

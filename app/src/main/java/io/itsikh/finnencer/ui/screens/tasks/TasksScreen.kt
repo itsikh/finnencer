@@ -98,6 +98,7 @@ fun TasksScreen(
     onOpenPodcast: (Long) -> Unit,
     onOpenReader: () -> Unit,
     onOpenReport: (Long) -> Unit,
+    onOpenTaskDetail: (String) -> Unit = {},
 ) {
     val vm: TasksViewModel = hiltViewModel()
     val jobs by vm.jobs.collectAsState()
@@ -164,7 +165,17 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         nowMs = nowMs,
-                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
+                        onOpen = {
+                            // Running / waiting / failed → live detail
+                            // screen so the user can see what's
+                            // happening and retry if needed. Completed
+                            // jobs go straight to the produced artifact.
+                            if (job.status == AiJobStatus.COMPLETED.name) {
+                                open(job, onOpenPodcast, onOpenReport)
+                            } else {
+                                onOpenTaskDetail(job.id)
+                            }
+                        },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -178,7 +189,17 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         nowMs = nowMs,
-                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
+                        onOpen = {
+                            // Running / waiting / failed → live detail
+                            // screen so the user can see what's
+                            // happening and retry if needed. Completed
+                            // jobs go straight to the produced artifact.
+                            if (job.status == AiJobStatus.COMPLETED.name) {
+                                open(job, onOpenPodcast, onOpenReport)
+                            } else {
+                                onOpenTaskDetail(job.id)
+                            }
+                        },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -192,7 +213,17 @@ fun TasksScreen(
                     JobRow(
                         job = job,
                         nowMs = nowMs,
-                        onOpen = { open(job, onOpenPodcast, onOpenReport) },
+                        onOpen = {
+                            // Running / waiting / failed → live detail
+                            // screen so the user can see what's
+                            // happening and retry if needed. Completed
+                            // jobs go straight to the produced artifact.
+                            if (job.status == AiJobStatus.COMPLETED.name) {
+                                open(job, onOpenPodcast, onOpenReport)
+                            } else {
+                                onOpenTaskDetail(job.id)
+                            }
+                        },
                         onOpenPodcast = onOpenPodcast,
                         onOpenReader = onOpenReader,
                         onDelete = { vm.delete(job.id) },
@@ -264,7 +295,19 @@ private fun JobRow(
     } else null
 
     GlassCard(onClick = {
-        if (hasNavigable) onOpen() else if (hasInlineResult) expanded = !expanded
+        // Running / queued / failed / waiting jobs always go to the
+        // detail screen so the user can see what's happening (#43).
+        // Completed jobs prefer the inline expand-for-text path or
+        // navigation to the produced artifact.
+        val isLive = job.status == AiJobStatus.RUNNING.name ||
+            job.status == AiJobStatus.QUEUED.name ||
+            job.status == AiJobStatus.FAILED.name ||
+            job.status == AiJobStatus.CANCELED.name
+        when {
+            isLive -> onOpen()
+            hasNavigable -> onOpen()
+            hasInlineResult -> expanded = !expanded
+        }
     }) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -291,6 +334,28 @@ private fun JobRow(
                         }
                     }
                     Text(meta, style = MaterialTheme.typography.labelSmall, color = FinnencerColors.TextTertiary)
+                    // Live stage indicator under the meta row — shows
+                    // "Synthesizing audio · chunk 3/6 · 47%" etc. so the
+                    // user can see at-a-glance what the worker is doing
+                    // without opening the detail screen (#43).
+                    if (job.status == AiJobStatus.RUNNING.name && job.currentStage != null) {
+                        val stage = runCatching {
+                            io.itsikh.finnencer.data.entity.AiJobStage.valueOf(job.currentStage)
+                        }.getOrNull()
+                        val stageLabel = stage?.displayName ?: job.currentStage
+                        val parts = buildList {
+                            add(stageLabel)
+                            job.stageDetail?.takeIf { it.isNotBlank() }?.let(::add)
+                            if (job.stageProgress > 0) add("${job.stageProgress}%")
+                        }
+                        Text(
+                            parts.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Violet,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     job.errorMessage?.takeIf { it.isNotBlank() }?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, color = FinnencerColors.Coral, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }

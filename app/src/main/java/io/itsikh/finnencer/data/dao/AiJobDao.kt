@@ -105,6 +105,27 @@ interface AiJobDao {
     @Query("UPDATE ai_jobs SET resultRefId = :refId WHERE id = :id")
     suspend fun setResultRefId(id: String, refId: String?)
 
+    /**
+     * Push a coarse-grained stage update onto the row so the Tasks page
+     * and Task Detail screen can show what the worker is doing right
+     * now (#43).
+     */
+    @Query(
+        """
+        UPDATE ai_jobs
+        SET currentStage = :stage,
+            stageProgress = :progress,
+            stageDetail = :detail
+        WHERE id = :id
+        """
+    )
+    suspend fun setStage(id: String, stage: String?, progress: Int, detail: String?)
+
+    /** Look up the job that produced [refId] — used by the Retry button on
+     *  a FAILED podcast row (#43). */
+    @Query("SELECT * FROM ai_jobs WHERE resultRefId = :refId ORDER BY createdAtMillis DESC LIMIT 1")
+    suspend fun findByResultRefId(refId: String): AiJob?
+
     @Query("DELETE FROM ai_jobs WHERE id = :id")
     suspend fun delete(id: String)
 

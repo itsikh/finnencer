@@ -34,6 +34,18 @@ data class AiJob(
     val createdAtMillis: Long,
     val startedAtMillis: Long?,
     val completedAtMillis: Long?,
+    /** Coarse phase the worker is currently in (AiJobStage.name). Updated
+     *  as the pipeline progresses so the Tasks page + Task Detail screen
+     *  can show what's happening in real time (#43). */
+    val currentStage: String? = null,
+    /** 0..100 — progress within [currentStage] (chars produced / target,
+     *  chunks rendered / total, etc.). 0 if not applicable. */
+    val stageProgress: Int = 0,
+    /** Free-text "what's the worker doing right now" — e.g.
+     *  "chunk 3 of 6 (2 reused from cache)" or "retry attempt 4/10,
+     *  waiting 25s for network". Shown verbatim in the Tasks row + the
+     *  Task Detail screen. */
+    val stageDetail: String? = null,
 )
 
 enum class AiJobType {
@@ -55,4 +67,25 @@ enum class AiJobResultKind {
     /** Both: resultText holds the summary prose, resultRefId points at the Podcast row. */
     SUMMARY_AND_PODCAST,
     EARNINGS_REPORT,
+}
+
+/**
+ * Coarse-grained phases of an AI job, surfaced in the Tasks page and
+ * Task Detail screen so the user can see "what step is this on" in
+ * real time instead of an opaque RUNNING for minutes (#43).
+ *
+ * Persisted on [AiJob.currentStage] as the name string.
+ */
+enum class AiJobStage(val displayName: String) {
+    QUEUED("Queued"),
+    CONNECTIVITY_CHECK("Checking connectivity"),
+    WAITING_FOR_NETWORK("Waiting for usable network"),
+    GENERATING_SUMMARY("Generating summary"),
+    GENERATING_REPORT("Generating earnings report"),
+    GENERATING_SCRIPT("Writing podcast script"),
+    PERSISTING_SCRIPT("Saving podcast script"),
+    SYNTHESIZING_AUDIO("Synthesizing audio"),
+    FINALIZING("Finalizing"),
+    DONE("Done"),
+    FAILED("Failed"),
 }

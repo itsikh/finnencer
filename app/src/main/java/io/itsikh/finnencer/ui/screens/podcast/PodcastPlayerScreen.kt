@@ -197,35 +197,105 @@ fun PodcastPlayerScreen(
                         color = FinnencerColors.Coral,
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    // If the script was already produced before the
-                    // TTS step blew up, give the user a way to read
-                    // the dialogue text now instead of waiting for
-                    // audio to ever succeed (#42 fallback).
-                    if (!p.scriptText.isNullOrBlank()) {
+                    val retryStatus by vm.retryStatus.collectAsState()
+                    androidx.compose.foundation.layout.Row(
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+                    ) {
                         androidx.compose.material3.FilledTonalButton(
-                            onClick = {
-                                io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
-                                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
-                                        title = p.title,
-                                        body = p.scriptText,
-                                        attribution = "Podcast script · ${p.voiceHost} · ${p.voiceAnalyst ?: ""}",
-                                    )
-                                )
-                                onOpenReader()
-                            },
+                            onClick = vm::retry,
+                            enabled = retryStatus != PodcastPlayerViewModel.RetryStatus.Retrying,
                             colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
                                 containerColor = FinnencerColors.Violet,
                                 contentColor = FinnencerColors.TextOnAccent,
                             ),
                         ) {
-                            Text("Read the script instead")
+                            if (retryStatus == PodcastPlayerViewModel.RetryStatus.Retrying) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    color = FinnencerColors.TextOnAccent,
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.size(8.dp))
+                                Text("Retrying…")
+                            } else {
+                                Text("Retry")
+                            }
                         }
+                        // If the script was already produced before the
+                        // TTS step blew up, give the user a way to read
+                        // the dialogue text now instead of waiting for
+                        // audio to ever succeed (#42 fallback).
+                        if (!p.scriptText.isNullOrBlank()) {
+                            androidx.compose.material3.FilledTonalButton(
+                                onClick = {
+                                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
+                                        io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
+                                            title = p.title,
+                                            body = p.scriptText,
+                                            attribution = "Podcast script · ${p.voiceHost} · ${p.voiceAnalyst ?: ""}",
+                                        )
+                                    )
+                                    onOpenReader()
+                                },
+                                colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = FinnencerColors.SurfaceGlass,
+                                    contentColor = FinnencerColors.TextPrimary,
+                                ),
+                            ) {
+                                Text("Read the script")
+                            }
+                        }
+                    }
+                    val rs = retryStatus
+                    when (rs) {
+                        is PodcastPlayerViewModel.RetryStatus.Error -> Text(
+                            rs.message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Coral,
+                        )
+                        PodcastPlayerViewModel.RetryStatus.Success -> Text(
+                            "Re-queued — check the Tasks screen for live progress.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Mint,
+                        )
+                        else -> p.scriptText?.takeIf { it.isNotBlank() }?.let {
+                            Text(
+                                "${it.length} characters of dialogue are saved locally — no internet needed.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                            )
+                        }
+                    }
+                }
+                PodcastGenerationStatus.WAITING_FOR_NETWORK.name -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+                ) {
+                    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = FinnencerColors.Violet,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.size(10.dp))
                         Text(
-                            "${p.scriptText.length} characters of dialogue are saved locally — no internet needed.",
+                            "Waiting for usable internet…",
+                            color = FinnencerColors.TextSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    p.generationError?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
                             style = MaterialTheme.typography.labelSmall,
                             color = FinnencerColors.TextTertiary,
                         )
                     }
+                    Text(
+                        "Generation will start automatically when Anthropic and Gemini are reachable.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
                 }
                 PodcastGenerationStatus.READY.name -> {
                     PlayerControls(
