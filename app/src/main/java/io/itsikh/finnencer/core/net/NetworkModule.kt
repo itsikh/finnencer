@@ -10,6 +10,7 @@ import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.api.GeminiService
 import io.itsikh.finnencer.data.api.RssService
 import io.itsikh.finnencer.data.api.SecEdgarService
+import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.util.AppSigningInfo
@@ -28,6 +29,7 @@ import javax.inject.Singleton
 @Qualifier annotation class GeminiRetrofit
 @Qualifier annotation class EdgarRetrofit
 @Qualifier annotation class RssRetrofit
+@Qualifier annotation class YahooRetrofit
 
 /**
  * Reads the matching key from [ApiKeysRepository] on every outbound request
@@ -250,4 +252,39 @@ object NetworkModule {
     @Provides @Singleton
     fun provideRssService(@RssRetrofit retrofit: Retrofit): RssService =
         retrofit.create(RssService::class.java)
+
+    // ───────── Yahoo Finance (public quote endpoint) ─────────
+
+    @Provides @Singleton @YahooRetrofit
+    fun provideYahooRetrofit(gson: Gson): Retrofit {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                // Yahoo blocks requests with an empty / generic UA.
+                // A common desktop UA gets through reliably.
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header(
+                            "User-Agent",
+                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                "Chrome/123.0.0.0 Safari/537.36",
+                        )
+                        .header("Accept", "application/json")
+                        .build()
+                )
+            }
+            .addInterceptor(logging())
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+        return Retrofit.Builder()
+            .baseUrl("https://query1.finance.yahoo.com/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+    }
+
+    @Provides @Singleton
+    fun provideYahooQuoteService(@YahooRetrofit retrofit: Retrofit): YahooQuoteService =
+        retrofit.create(YahooQuoteService::class.java)
 }

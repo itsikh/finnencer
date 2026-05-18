@@ -67,6 +67,31 @@ fun WatchlistScreen(
     val settingsSheet by vm.settingsSheet.collectAsState()
     val activeJobs by vm.activeJobCount.collectAsState()
     val queueCount by vm.queueCount.collectAsState()
+    val quotes by vm.quotes.collectAsState()
+
+    // Foreground-only quote polling — start on screen resume, stop on
+    // pause, restart any time the watched-ticker list changes (e.g.
+    // user adds NVDA, poller now also covers it on the next tick).
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, tickers) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> vm.startQuotePolling()
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> vm.stopQuotePolling()
+                else -> Unit
+            }
+        }
+        // If we're already RESUMED when this effect installs (typical),
+        // kick off polling immediately so the user sees prices fast
+        // rather than waiting for the next ON_RESUME event.
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            vm.startQuotePolling()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -186,6 +211,7 @@ fun WatchlistScreen(
                 items(tickers, key = { it.symbol }) { ticker ->
                     TickerCard(
                         ticker = ticker,
+                        quote = quotes[ticker.symbol.uppercase()],
                         onTap = { onOpenTickerFeed(ticker.symbol) },
                         onLongPress = { vm.openSettings(ticker) },
                     )
@@ -219,6 +245,7 @@ fun WatchlistScreen(
 @Composable
 private fun TickerCard(
     ticker: Ticker,
+    quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -261,6 +288,8 @@ private fun TickerCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            QuoteColumn(quote)
+            Spacer(Modifier.size(8.dp))
             ThresholdPill(ticker.notificationThreshold)
             Spacer(Modifier.size(8.dp))
             if (ticker.mutedUntilMillis != null) {
@@ -279,6 +308,52 @@ private fun TickerCard(
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+    }
+}
+
+/**
+ * Right-aligned price + percent change column. Renders an em-dash
+ * placeholder when we don't yet have a Yahoo quote for this row. PCT
+ * is colored mint for up, coral for down, and tertiary text for flat.
+ */
+@Composable
+private fun QuoteColumn(quote: io.itsikh.finnencer.data.repo.TickerQuote?) {
+    Column(horizontalAlignment = Alignment.End) {
+        if (quote == null) {
+            Text(
+                text = "—",
+                style = MaterialTheme.typography.titleSmall,
+                color = FinnencerColors.TextTertiary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "—",
+                style = MaterialTheme.typography.labelMedium,
+                color = FinnencerColors.TextTertiary,
+            )
+        } else {
+            val priceText = String.format(java.util.Locale.US, "$%,.2f", quote.price)
+            val pct = quote.changePercent
+            val pctColor = when {
+                pct > 0.0 -> FinnencerColors.Mint
+                pct < 0.0 -> FinnencerColors.Coral
+                else -> FinnencerColors.TextTertiary
+            }
+            val sign = if (pct > 0.0) "+" else if (pct < 0.0) "−" else ""
+            val pctText = String.format(java.util.Locale.US, "%s%.2f%%", sign, kotlin.math.abs(pct))
+            Text(
+                text = priceText,
+                style = MaterialTheme.typography.titleSmall,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = pctText,
+                style = MaterialTheme.typography.labelMedium,
+                color = pctColor,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

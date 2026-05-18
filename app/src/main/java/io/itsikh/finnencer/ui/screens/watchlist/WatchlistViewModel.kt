@@ -40,12 +40,31 @@ class WatchlistViewModel @Inject constructor(
     private val repo: WatchlistRepository,
     aiJobs: AiJobsRepository,
     queue: QueueRepository,
+    private val quotePoller: io.itsikh.finnencer.data.repo.QuotePoller,
 ) : ViewModel() {
 
     val tickers: StateFlow<List<Ticker>> =
         repo.observeAll().stateIn(
             viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList(),
         )
+
+    /** Live price + percent-change snapshot per watched ticker. Empty
+     *  until the first [startQuotePolling] tick lands. */
+    val quotes: StateFlow<Map<String, io.itsikh.finnencer.data.repo.TickerQuote>> = quotePoller.latest
+
+    /** Begin polling Yahoo for the currently-watched tickers. Called by
+     *  the screen on resume and re-called whenever the watched list
+     *  changes. The poller dedupes back-to-back calls with the same
+     *  ticker set, so re-invoking is cheap. */
+    fun startQuotePolling() {
+        quotePoller.start(tickers.value.map { it.symbol })
+    }
+
+    /** Pause polling. Called by the screen on pause. Cached quotes
+     *  remain visible until the next resume produces fresh ones. */
+    fun stopQuotePolling() {
+        quotePoller.stop()
+    }
 
     /** Number of queued + running AI jobs — drives the badge on the Tasks icon. */
     val activeJobCount: StateFlow<Int> = aiJobs.observeActiveCount()
