@@ -3,6 +3,7 @@ package io.itsikh.finnencer.data.repo
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,8 +60,37 @@ class PodcastPreferences @Inject constructor(
         }
     }
 
-    private companion object {
-        val KEY_AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_in_queue")
-        val KEY_END_ACTION = stringPreferencesKey("end_of_podcast_action")
+    /**
+     * Character budget the script generator targets per requested
+     * minute of audio. Drives how long Claude's draft is — Gemini TTS
+     * "Charon"/"Aoede" voices speak ~130–140 wpm, so 800 chars/min
+     * lands roughly on the requested duration with a small safety
+     * margin. Users who want longer-feeling podcasts can raise this;
+     * users who consistently get podcasts that overshoot can lower it.
+     *
+     * Bounded to [CHARS_PER_MIN_MIN]..[CHARS_PER_MIN_MAX] when read
+     * back to keep prompt budgets sane even if someone manually edits
+     * the DataStore.
+     */
+    val charsPerMinute: Flow<Int> =
+        context.podcastPrefsDataStore.data.map { p ->
+            (p[KEY_CHARS_PER_MIN] ?: CHARS_PER_MIN_DEFAULT)
+                .coerceIn(CHARS_PER_MIN_MIN, CHARS_PER_MIN_MAX)
+        }
+
+    suspend fun setCharsPerMinute(value: Int) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_CHARS_PER_MIN] = value.coerceIn(CHARS_PER_MIN_MIN, CHARS_PER_MIN_MAX)
+        }
+    }
+
+    companion object {
+        const val CHARS_PER_MIN_DEFAULT = 800
+        const val CHARS_PER_MIN_MIN = 400
+        const val CHARS_PER_MIN_MAX = 1600
+
+        private val KEY_AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_in_queue")
+        private val KEY_END_ACTION = stringPreferencesKey("end_of_podcast_action")
+        private val KEY_CHARS_PER_MIN = intPreferencesKey("podcast_chars_per_minute")
     }
 }

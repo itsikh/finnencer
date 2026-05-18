@@ -86,6 +86,12 @@ class SettingsViewModel @Inject constructor(
     val endOfPodcastAction: StateFlow<EndOfPodcastAction> = podcastPrefs.endOfPodcastAction
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), EndOfPodcastAction.STOP)
 
+    /** Per-minute character budget used when generating podcast scripts.
+     *  Wired to [PodcastPreferences.charsPerMinute]; the settings screen
+     *  exposes a stepper bounded by the prefs' min/max. */
+    val podcastCharsPerMinute: StateFlow<Int> = podcastPrefs.charsPerMinute
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PodcastPreferences.CHARS_PER_MIN_DEFAULT)
+
     val podcastConcurrency: StateFlow<Int> = jobConcurrencyPrefs.podcastConcurrency
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
 
@@ -142,6 +148,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setEndOfPodcastAction(value: EndOfPodcastAction) {
         viewModelScope.launch { podcastPrefs.setEndOfPodcastAction(value) }
+    }
+
+    fun setPodcastCharsPerMinute(value: Int) {
+        viewModelScope.launch { podcastPrefs.setCharsPerMinute(value) }
     }
 
     fun setPodcastConcurrency(n: Int) {

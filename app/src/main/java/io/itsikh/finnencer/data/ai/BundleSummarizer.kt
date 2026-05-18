@@ -8,11 +8,13 @@ import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.PodcastSourceType
+import io.itsikh.finnencer.data.repo.PodcastPreferences
 import io.itsikh.finnencer.logging.AppLogger
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
 
 /**
  * Produces ONE summary across a user-selected bundle of articles, then
@@ -32,6 +34,7 @@ class BundleSummarizer @Inject constructor(
     private val podcastDao: PodcastDao,
     private val earningsDao: EarningsDao,
     private val promptPrefs: PromptPreferences,
+    private val podcastPrefs: PodcastPreferences,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
 ) {
@@ -43,15 +46,15 @@ class BundleSummarizer @Inject constructor(
     enum class PodcastMinutes(val minutes: Int) {
         FIVE(5), TEN(10), FIFTEEN(15), TWENTY(20), THIRTY(30);
         /**
-         * 1,000 characters per requested minute. Calibrated against
-         * real-world Gemini "Charon"/"Aoede" output, which speaks
-         * ~130–140 wpm — at the prior 600-chars/min budget a 15-min
-         * request landed at ~7 min of audio. Erring on the long side
-         * (15 min target → 15k chars → ≈18 min spoken) is safer than
-         * underbudgeting, since the user can stop early but can't
-         * extend a too-short podcast.
+         * Character budget for the script generator at [charsPerMinute]
+         * chars-per-minute. The user-configurable default is 800
+         * (see [PodcastPreferences.CHARS_PER_MIN_DEFAULT]), calibrated
+         * against real-world Gemini "Charon"/"Aoede" output (~130-140
+         * wpm). Lower values produce shorter, tighter podcasts that
+         * occasionally undershoot the requested duration; higher
+         * values produce roomier scripts that may overshoot.
          */
-        val charBudget: Int get() = minutes * 1000
+        fun charBudget(charsPerMinute: Int): Int = minutes * charsPerMinute
     }
 
     /** Output of [summarizeText]: the prose plus the id of whichever model
@@ -203,6 +206,11 @@ class BundleSummarizer @Inject constructor(
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
     ): Long {
+        // Read the user-configurable chars-per-minute ratio once up
+        // front so the same number flows into the DB column, the
+        // prompt, the max-tokens cap, and the minimum-length floor.
+        val charsPerMinute = podcastPrefs.charsPerMinute.first()
+        val charBudget = minutes.charBudget(charsPerMinute)
         // Retry path: if the caller passed a previously-created podcast
         // row id (because a prior attempt failed), reset that row to
         // PENDING and overwrite in place rather than insert a duplicate
@@ -219,7 +227,7 @@ class BundleSummarizer @Inject constructor(
                     title = title,
                     sourceType = PodcastSourceType.CUSTOM_TEXT.name,
                     sourceId = sourceId,
-                    characterCount = minutes.charBudget,
+                    characterCount = charBudget,
                     filePath = null,
                     durationMs = null,
                     status = PodcastGenerationStatus.PENDING.name,
@@ -238,7 +246,7 @@ class BundleSummarizer @Inject constructor(
                 voiceAnalyst = GeminiTts.VoicePair.Default.analyst,
                 filePath = null,
                 durationMs = null,
-                characterCount = minutes.charBudget,
+                characterCount = charBudget,
                 status = PodcastGenerationStatus.PENDING.name,
                 generationError = null,
                 createdAtMillis = System.currentTimeMillis(),
@@ -258,13 +266,13 @@ class BundleSummarizer @Inject constructor(
             val baseScriptSystem = buildString {
                 append(DIALOGUE_SYSTEM)
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
-                append("(~").append(minutes.charBudget).append(" characters of dialogue). ")
+                append("(~").append(charBudget).append(" characters of dialogue). ")
                 append("A ").append(minutes.minutes).append("-minute podcast typically contains ")
                 append(minutes.minutes * 2).append("–").append(minutes.minutes * 3)
                 append(" distinct Host/Analyst exchanges. Pace the conversation so the ")
                 append("entire script lands within ±10% of that target.\n\n")
                 append("LENGTH IS A HARD REQUIREMENT. You MUST produce at least ")
-                append((minutes.charBudget * TARGET_THRESHOLD).toInt()).append(" characters of dialogue. ")
+                append((charBudget * TARGET_THRESHOLD).toInt()).append(" characters of dialogue. ")
                 append("Failing the minimum is unacceptable — count your characters as you go. ")
                 append("Do NOT wrap up early. If you feel the conversation is nearing an end ")
                 append("before reaching the target, instead introduce a new angle: ")
@@ -281,7 +289,7 @@ class BundleSummarizer @Inject constructor(
             // headroom so the model isn't truncated by maxTokens at the
             // target length (#34/#35). Capped well under Anthropic's
             // 16k-token output limit on Sonnet 4.6 / Opus 4.7.
-            val maxTokens = (minutes.charBudget / 2.5).toInt().coerceIn(2000, 12000)
+            val maxTokens = (charBudget / 2.5).toInt().coerceIn(2000, 12000)
             // Phase 1: produce the script (skip if a prior failed attempt
             // already persisted one). Persisted to the row IMMEDIATELY so
             // a subsequent TTS-stage failure can reuse it without
@@ -304,7 +312,7 @@ class BundleSummarizer @Inject constructor(
                     scriptSystem = scriptSystem,
                     source = sourceMaterial,
                     maxTokens = maxTokens,
-                    targetChars = minutes.charBudget,
+                    targetChars = charBudget,
                 )
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.PERSISTING_SCRIPT,

@@ -95,6 +95,7 @@ fun SettingsScreen(
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
+    val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
@@ -204,6 +205,10 @@ fun SettingsScreen(
                 EndOfPodcastRow(
                     current = endOfPodcastAction,
                     onPick = viewModel::setEndOfPodcastAction,
+                )
+                PodcastCharsPerMinRow(
+                    current = podcastCharsPerMin,
+                    onChange = viewModel::setPodcastCharsPerMinute,
                 )
             }
 
@@ -598,6 +603,100 @@ private fun ConcurrencyStepperRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * Stepper for the podcast script's chars-per-minute budget. The
+ * dialogue prompt's hard length requirement is `minutes × this value`,
+ * so users who consistently get podcasts that overshoot or undershoot
+ * their requested duration can dial this knob to compensate. Steps in
+ * 100-char increments between [PodcastPreferences.CHARS_PER_MIN_MIN]
+ * and [PodcastPreferences.CHARS_PER_MIN_MAX]. The estimated runtime
+ * for a 15-min podcast is shown in the subtitle so the effect of a
+ * change is concrete.
+ */
+@Composable
+private fun PodcastCharsPerMinRow(
+    current: Int,
+    onChange: (Int) -> Unit,
+) {
+    val step = 100
+    val min = io.itsikh.finnencer.data.repo.PodcastPreferences.CHARS_PER_MIN_MIN
+    val max = io.itsikh.finnencer.data.repo.PodcastPreferences.CHARS_PER_MIN_MAX
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Podcast script length",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "$current characters per minute of audio. Lower = tighter podcasts that may run short; higher = roomier scripts that may overshoot.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StepperButton(
+                label = "−",
+                enabled = current > min,
+                onClick = { onChange((current - step).coerceAtLeast(min)) },
+            )
+            Spacer(Modifier.size(12.dp))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FinnencerColors.Violet.copy(alpha = 0.20f))
+                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "$current chars / min",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            StepperButton(
+                label = "+",
+                enabled = current < max,
+                onClick = { onChange((current + step).coerceAtMost(max)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun StepperButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val border = if (enabled) FinnencerColors.Violet else FinnencerColors.TextTertiary.copy(alpha = 0.35f)
+    val color = if (enabled) FinnencerColors.TextPrimary else FinnencerColors.TextTertiary
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, border, RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleLarge,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
