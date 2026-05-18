@@ -56,4 +56,53 @@ interface QueueItemDao {
      *  go to the end of the to-do list by default. */
     @Query("SELECT COALESCE(MAX(sort_order), 0) FROM queue_items WHERE completed_at_millis IS NULL")
     suspend fun maxIncompleteSortOrder(): Long
+
+    // ───── One-shot data repair (v0.0.43) ─────────────────────────────
+    //
+    // v0.0.42 fixed the SOURCE of the bug at the Tasks-screen queue
+    // pill, but rows queued before the fix carry the wrong kind
+    // (BATCH_SUMMARY) and a stale ref_id (the AiJob id, not the
+    // produced artifact id). Tapping such a row routed to the Tasks
+    // page instead of the player. These two UPDATEs rewrite those
+    // rows in place so the existing routing branch
+    // (PODCAST.name → onOpenPodcast, EARNINGS_REPORT.name → onOpenReport)
+    // does the right thing.
+    //
+    // Returns the row count affected by each UPDATE so the caller can
+    // log the result. Idempotent: a row whose kind is already
+    // PODCAST / EARNINGS_REPORT will not match the WHERE clause.
+
+    @Query("""
+        UPDATE queue_items
+        SET kind = 'PODCAST',
+            ref_id = (
+                SELECT resultRefId FROM ai_jobs
+                WHERE id = queue_items.ref_id
+            )
+        WHERE kind = 'BATCH_SUMMARY'
+          AND EXISTS (
+              SELECT 1 FROM ai_jobs
+              WHERE id = queue_items.ref_id
+                AND resultKind IN ('PODCAST', 'SUMMARY_AND_PODCAST')
+                AND resultRefId IS NOT NULL
+          )
+    """)
+    suspend fun repairMisqueuedPodcasts(): Int
+
+    @Query("""
+        UPDATE queue_items
+        SET kind = 'EARNINGS_REPORT',
+            ref_id = (
+                SELECT resultRefId FROM ai_jobs
+                WHERE id = queue_items.ref_id
+            )
+        WHERE kind = 'BATCH_SUMMARY'
+          AND EXISTS (
+              SELECT 1 FROM ai_jobs
+              WHERE id = queue_items.ref_id
+                AND resultKind = 'EARNINGS_REPORT'
+                AND resultRefId IS NOT NULL
+          )
+    """)
+    suspend fun repairMisqueuedEarningsReports(): Int
 }

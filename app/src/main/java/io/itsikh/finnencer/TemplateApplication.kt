@@ -9,6 +9,7 @@ import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.core.work.JobConcurrencyGate
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.repo.JobConcurrencyPreferences
+import io.itsikh.finnencer.data.repo.QueueItemRepair
 import io.itsikh.finnencer.data.repo.WatchlistRestorer
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.GlobalExceptionHandler
@@ -47,6 +48,7 @@ class TemplateApplication : Application(), Configuration.Provider {
     @Inject lateinit var watchlistRestorer: WatchlistRestorer
     @Inject lateinit var jobConcurrencyGate: JobConcurrencyGate
     @Inject lateinit var jobConcurrencyPrefs: JobConcurrencyPreferences
+    @Inject lateinit var queueItemRepair: QueueItemRepair
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -69,6 +71,15 @@ class TemplateApplication : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { watchlistRestorer.ensureRestored() }
                 .onFailure { AppLogger.e("App", "Watchlist restore failed", it) }
+        }
+        // One-shot repair of queue items mis-tagged before v0.0.42 — the
+        // Tasks-screen pill used to queue every result as BATCH_SUMMARY
+        // (which routes taps to the Tasks page) regardless of whether
+        // the result was actually a podcast or report. Flag in
+        // DataStore makes this idempotent across app launches.
+        appScope.launch {
+            runCatching { queueItemRepair.repairIfNeeded() }
+                .onFailure { AppLogger.e("App", "Queue-item repair failed", it) }
         }
         // Keep the in-memory concurrency gate in sync with the user's
         // Settings → Background jobs preferences. Defaults to 1/1 so a
