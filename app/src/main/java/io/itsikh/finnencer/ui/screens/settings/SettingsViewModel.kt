@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.itsikh.finnencer.bugreport.GitHubIssuesClient
+import io.itsikh.finnencer.data.repo.EndOfPodcastAction
 import io.itsikh.finnencer.data.repo.PodcastPreferences
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.DebugSettings
@@ -81,8 +82,8 @@ class SettingsViewModel @Inject constructor(
     val showDiagnoseButtons: StateFlow<Boolean> = debugSettings.showDiagnoseButtons
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    val podcastAutoPlayNext: StateFlow<Boolean> = podcastPrefs.autoPlayNextInQueue
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val endOfPodcastAction: StateFlow<EndOfPodcastAction> = podcastPrefs.endOfPodcastAction
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), EndOfPodcastAction.STOP)
 
     // ── GitHub token ──────────────────────────────────────────────────────────
 
@@ -132,8 +133,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { debugSettings.setShowDiagnoseButtons(show) }
     }
 
-    fun setPodcastAutoPlayNext(value: Boolean) {
-        viewModelScope.launch { podcastPrefs.setAutoPlayNextInQueue(value) }
+    fun setEndOfPodcastAction(value: EndOfPodcastAction) {
+        viewModelScope.launch { podcastPrefs.setEndOfPodcastAction(value) }
     }
 
     /** Clears the in-memory [AppLogger] buffer. Does not affect crash log files on disk. */

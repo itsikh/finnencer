@@ -85,14 +85,14 @@ class AiRouter @Inject constructor(
             AiProvider.ANTHROPIC -> anthropic
             AiProvider.GEMINI -> gemini
         }
-        val text = client.complete(
+        val result = client.complete(
             model = option.id,
             system = system,
             userMessage = userMessage,
             maxTokens = maxTokens,
             temperature = temperature,
         )
-        return AiCompletion(text = text, modelUsed = option)
+        return AiCompletion(text = result.text, stopReason = result.stopReason, modelUsed = option)
     }
 
     /**
@@ -105,4 +105,10 @@ class AiRouter @Inject constructor(
     private companion object { const val TAG = "AiRouter" }
 }
 
-data class AiCompletion(val text: String, val modelUsed: AiModelOption)
+data class AiCompletion(
+    val text: String,
+    val modelUsed: AiModelOption,
+    /** Provider-normalized finish reason; `"max_tokens"` indicates the
+     *  output is truncated and the caller may want a continuation pass. */
+    val stopReason: String? = null,
+)

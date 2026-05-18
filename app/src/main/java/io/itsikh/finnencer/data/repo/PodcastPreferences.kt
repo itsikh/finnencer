@@ -3,6 +3,7 @@ package io.itsikh.finnencer.data.repo
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -13,27 +14,53 @@ import javax.inject.Singleton
 private val Context.podcastPrefsDataStore by preferencesDataStore(name = "podcast_preferences")
 
 /**
+ * What to do when the current podcast finishes playing.
+ *
+ *  - [STOP]: stay on the current podcast screen, leave player idle.
+ *  - [CONTINUE]: start the next incomplete podcast in the user's queue
+ *    (preserves queue order).
+ *  - [SHUFFLE]: pick a random remaining incomplete podcast — "Mix" in
+ *    the bug report (#29).
+ */
+enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
+
+/**
  * User preferences for podcast playback behaviour.
  *
- * `autoPlayNextInQueue`: when a podcast finishes, automatically navigate
- * to the next incomplete podcast in the user's queue and start it.
- * Defaults to `false` so behaviour stays predictable until the user
- * explicitly opts in.
+ * Stores [endOfPodcastAction] as a string ("STOP" / "CONTINUE" /
+ * "SHUFFLE") so adding additional modes later doesn't need a migration.
+ * Reads the legacy boolean [KEY_AUTOPLAY_NEXT] for backwards-compat with
+ * users upgrading from 0.0.33 where the only choice was on/off.
  */
 @Singleton
 class PodcastPreferences @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
-    val autoPlayNextInQueue: Flow<Boolean> = context.podcastPrefsDataStore.data.map { p ->
-        p[KEY_AUTOPLAY_NEXT] ?: false
-    }
+    val endOfPodcastAction: Flow<EndOfPodcastAction> =
+        context.podcastPrefsDataStore.data.map { p ->
+            val stored = p[KEY_END_ACTION]
+            if (stored != null) {
+                runCatching { EndOfPodcastAction.valueOf(stored) }.getOrDefault(EndOfPodcastAction.STOP)
+            } else {
+                // Legacy migration: 0.0.33 only had a boolean. Honor it
+                // so users who already opted into autoplay don't lose
+                // that choice on upgrade.
+                if (p[KEY_AUTOPLAY_NEXT] == true) EndOfPodcastAction.CONTINUE
+                else EndOfPodcastAction.STOP
+            }
+        }
 
-    suspend fun setAutoPlayNextInQueue(value: Boolean) {
-        context.podcastPrefsDataStore.edit { it[KEY_AUTOPLAY_NEXT] = value }
+    suspend fun setEndOfPodcastAction(value: EndOfPodcastAction) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_END_ACTION] = value.name
+            // Drop the legacy boolean so we stop reading it next launch.
+            it.remove(KEY_AUTOPLAY_NEXT)
+        }
     }
 
     private companion object {
         val KEY_AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_in_queue")
+        val KEY_END_ACTION = stringPreferencesKey("end_of_podcast_action")
     }
 }

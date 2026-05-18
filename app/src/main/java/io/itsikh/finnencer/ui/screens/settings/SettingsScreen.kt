@@ -3,7 +3,11 @@ package io.itsikh.finnencer.ui.screens.settings
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,10 +49,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +64,7 @@ import io.itsikh.finnencer.AppConfig
 import io.itsikh.finnencer.BuildConfig
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.data.repo.EndOfPodcastAction
 import io.itsikh.finnencer.ui.screens.bugreport.ReportMode
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
@@ -87,7 +94,7 @@ fun SettingsScreen(
     val showBugButton by viewModel.showBugButton.collectAsState()
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
-    val podcastAutoPlayNext by viewModel.podcastAutoPlayNext.collectAsState()
+    val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val exportState by viewModel.exportState.collectAsState()
     val restoreState by viewModel.restoreState.collectAsState()
@@ -192,20 +199,14 @@ fun SettingsScreen(
                         )
                     },
                 )
-                SettingsRow(
-                    title = "Auto-play next podcast in queue",
-                    subtitle = "When a podcast ends, automatically play the next podcast queued in your To do list.",
-                    icon = Icons.Default.Headphones,
-                    iconTint = FinnencerColors.Violet,
-                    trailing = {
-                        Switch(
-                            checked = podcastAutoPlayNext,
-                            onCheckedChange = viewModel::setPodcastAutoPlayNext,
-                            colors = switchColors(),
-                        )
-                    },
+                EndOfPodcastRow(
+                    current = endOfPodcastAction,
+                    onPick = viewModel::setEndOfPodcastAction,
                 )
             }
+
+            // ───────── App permissions ─────────
+            AppPermissionsSection()
 
             // ───────── Backup & Restore ─────────
             SettingsSection(title = "Backup & Restore") {
@@ -413,6 +414,90 @@ private fun switchColors() = SwitchDefaults.colors(
     uncheckedThumbColor = FinnencerColors.TextTertiary,
     uncheckedTrackColor = FinnencerColors.SurfaceGlass,
 )
+
+@Composable
+private fun EndOfPodcastRow(
+    current: EndOfPodcastAction,
+    onPick: (EndOfPodcastAction) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.Headphones,
+                contentDescription = null,
+                tint = FinnencerColors.Violet,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "When a podcast ends",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    when (current) {
+                        EndOfPodcastAction.STOP -> "Stay on this podcast, leave the player paused at the end."
+                        EndOfPodcastAction.CONTINUE -> "Auto-play the next podcast in your To do queue."
+                        EndOfPodcastAction.SHUFFLE -> "Auto-play a random remaining podcast from your To do queue."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            EndOfPodcastAction.entries.forEach { action ->
+                EndOfPodcastChip(
+                    label = action.label(),
+                    selected = current == action,
+                    onClick = { onPick(action) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EndOfPodcastChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val bg = if (selected) FinnencerColors.Violet.copy(alpha = 0.25f) else FinnencerColors.SurfaceGlass
+    val border = if (selected) FinnencerColors.Violet else FinnencerColors.TextTertiary.copy(alpha = 0.35f)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
+private fun EndOfPodcastAction.label(): String = when (this) {
+    EndOfPodcastAction.STOP -> "Stop"
+    EndOfPodcastAction.CONTINUE -> "Continue"
+    EndOfPodcastAction.SHUFFLE -> "Mix"
+}
 
 private fun backupSubtitle(
     export: SettingsViewModel.ExportState,

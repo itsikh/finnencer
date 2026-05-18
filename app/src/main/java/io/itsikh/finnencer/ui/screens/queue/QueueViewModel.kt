@@ -116,10 +116,30 @@ class QueueViewModel @Inject constructor(
         }
     }
 
-    /** Persist the new order after a drag-and-drop reorder. The list
-     *  comes in already-reordered; we only write rows whose [sortOrder]
-     *  actually changed. */
+    /** Persist the new order after a reorder. The list comes in
+     *  already-reordered; we only write rows whose [sortOrder] actually
+     *  changed. */
     fun reorderTodo(reordered: List<QueueItem>) {
         viewModelScope.launch { repo.reorder(reordered) }
+    }
+
+    /** Swap [id] with the previous item in the TODO list (#33 — replaces
+     *  drag-and-drop with explicit ↑ / ↓ taps). */
+    fun moveTodoUp(id: Long) {
+        val list = todoItems.value.toMutableList()
+        val i = list.indexOfFirst { it.id == id }
+        if (i <= 0) return
+        val moved = list.removeAt(i)
+        list.add(i - 1, moved)
+        reorderTodo(list)
+    }
+
+    fun moveTodoDown(id: Long) {
+        val list = todoItems.value.toMutableList()
+        val i = list.indexOfFirst { it.id == id }
+        if (i < 0 || i >= list.lastIndex) return
+        val moved = list.removeAt(i)
+        list.add(i + 1, moved)
+        reorderTodo(list)
     }
 }

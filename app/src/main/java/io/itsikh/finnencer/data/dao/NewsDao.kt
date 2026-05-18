@@ -125,6 +125,11 @@ interface NewsDao {
     // existing UI (filter chips, ordering, min-score gate) honors the
     // override transparently.
 
+    // The cluster-key collapse picks the newest article per cluster_key so
+    // the user sees one row per story even when 3 providers carry it
+    // (#37 — CRBS triple-arrival). We pick the row by id-tiebreak only
+    // when published_at_millis ties exactly, which is rare across
+    // independent providers.
     @Transaction
     @Query(
         """
@@ -136,6 +141,14 @@ interface NewsDao {
         LEFT JOIN article_scores s
             ON s.article_id = a.id AND s.ticker_symbol = x.ticker_symbol
         WHERE x.ticker_symbol = :symbol
+          AND a.published_at_millis = (
+              SELECT MAX(a2.published_at_millis)
+              FROM news_articles a2
+              INNER JOIN article_ticker_xref x2 ON x2.article_id = a2.id
+              WHERE x2.ticker_symbol = :symbol
+                AND a2.cluster_key = a.cluster_key
+          )
+        GROUP BY a.cluster_key
         ORDER BY a.published_at_millis DESC
         LIMIT :limit
         """
@@ -150,7 +163,12 @@ interface NewsDao {
                MAX(COALESCE(s.user_override, s.score)) AS score, s.category, s.reason
         FROM news_articles a
         LEFT JOIN article_scores s ON s.article_id = a.id
-        GROUP BY a.id
+        WHERE a.published_at_millis = (
+            SELECT MAX(a2.published_at_millis)
+            FROM news_articles a2
+            WHERE a2.cluster_key = a.cluster_key
+        )
+        GROUP BY a.cluster_key
         ORDER BY a.published_at_millis DESC
         LIMIT :limit
         """

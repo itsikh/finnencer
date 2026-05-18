@@ -202,21 +202,30 @@ class BundleSummarizer @Inject constructor(
                 append("(~").append(minutes.charBudget).append(" characters of dialogue). ")
                 append("Pace the conversation so the entire script lands within ±15% of that target. ")
                 append("Number of turns should scale with duration (rule of thumb: ")
-                append(minutes.minutes * 2).append(" total turns).")
+                append(minutes.minutes * 2).append(" total turns).\n\n")
+                append("LENGTH IS A HARD REQUIREMENT. You MUST produce at least ")
+                append((minutes.charBudget * 0.85).toInt()).append(" characters of dialogue. ")
+                append("Do NOT wrap up early. If you feel the conversation is nearing an end ")
+                append("before reaching the target, instead introduce a new angle: ")
+                append("a competing analyst view, a historical analog, second-order effects, ")
+                append("or what to watch in the next quarter. End ONLY when you've covered the full duration.")
             }
             val scriptSystem = promptPrefs.applyExtras(
                 base = baseScriptSystem,
                 extra = promptPrefs.get(AiUsage.PODCAST_SCRIPT),
                 perCallCustom = customPrompt,
             )
-            val maxTokens = (minutes.charBudget / 3).coerceIn(1500, 9000)
-            val script = router.complete(
-                usage = AiUsage.PODCAST_SCRIPT,
-                system = scriptSystem,
-                userMessage = sourceMaterial,
+            // ~3.5 chars/token average for English dialogue. /2.5 leaves
+            // headroom so the model isn't truncated by maxTokens at the
+            // target length (#34/#35). Capped well under Anthropic's
+            // 16k-token output limit on Sonnet 4.6 / Opus 4.7.
+            val maxTokens = (minutes.charBudget / 2.5).toInt().coerceIn(2000, 12000)
+            val script = generateScript(
+                scriptSystem = scriptSystem,
+                source = sourceMaterial,
                 maxTokens = maxTokens,
-                temperature = 0.6,
-            ).text
+                targetChars = minutes.charBudget,
+            )
 
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }
             val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
@@ -247,8 +256,86 @@ class BundleSummarizer @Inject constructor(
         return id
     }
 
+    /**
+     * Drive the dialogue model toward [targetChars] of script. If the
+     * model stops with `max_tokens`, request a seamless continuation
+     * (up to [MAX_CONTINUATIONS] follow-ups). If the model finishes
+     * naturally but well short of target, do one extension pass to
+     * push it closer. Finally trim a trailing mid-sentence line so we
+     * never hand TTS a cut-off thought (#34/#35).
+     */
+    private suspend fun generateScript(
+        scriptSystem: String,
+        source: String,
+        maxTokens: Int,
+        targetChars: Int,
+    ): String {
+        val initial = router.complete(
+            usage = AiUsage.PODCAST_SCRIPT,
+            system = scriptSystem,
+            userMessage = source,
+            maxTokens = maxTokens,
+            temperature = 0.6,
+        )
+        val combined = StringBuilder(initial.text.trim())
+        var stop = initial.stopReason
+        var rounds = 0
+        val minAcceptable = (targetChars * 0.85).toInt()
+
+        while (rounds < MAX_CONTINUATIONS && combined.length < minAcceptable) {
+            val reason = when (stop) {
+                "max_tokens" -> "Your previous response was cut off at the token limit. Continue seamlessly from the last partial line."
+                else -> "The script is still ${minAcceptable - combined.length} characters short of the required minimum. Continue the dialogue with new angles until the full target length is reached."
+            }
+            val continuationSystem = buildString {
+                append(scriptSystem)
+                append("\n\nCONTINUATION INSTRUCTIONS: ").append(reason)
+                append(" Pick up mid-conversation without re-introducing the company or quarter — assume the listener heard everything so far.")
+            }
+            val continuationUser = buildString {
+                append("Source material:\n").append(source)
+                append("\n\nScript so far (do not repeat any line):\n").append(combined)
+            }
+            val next = runCatching {
+                router.complete(
+                    usage = AiUsage.PODCAST_SCRIPT,
+                    system = continuationSystem,
+                    userMessage = continuationUser,
+                    maxTokens = maxTokens,
+                    temperature = 0.6,
+                )
+            }.getOrNull() ?: break
+            val cont = next.text.trim()
+            if (cont.isBlank()) break
+            // Glue with a single newline so the speaker-label regex in
+            // GeminiTts.chunkAtSpeakerBoundaries still segments correctly.
+            combined.append('\n').append(cont)
+            stop = next.stopReason
+            rounds++
+            AppLogger.i(TAG, "podcast script continuation $rounds (len=${combined.length}/$targetChars)")
+        }
+
+        return trimTrailingPartialLine(combined.toString())
+    }
+
+    /**
+     * If the script's final non-empty line doesn't end with a sentence
+     * terminator, drop it. Prevents the user from hearing the host or
+     * analyst cut off mid-sentence at the end of a podcast (#35).
+     */
+    private fun trimTrailingPartialLine(script: String): String {
+        val trimmed = script.trimEnd()
+        val lastNl = trimmed.lastIndexOf('\n')
+        if (lastNl < 0) return trimmed
+        val lastLine = trimmed.substring(lastNl + 1).trimEnd()
+        val endsCleanly = lastLine.isNotEmpty() && lastLine.last() in SENTENCE_TERMINATORS
+        return if (endsCleanly) trimmed else trimmed.substring(0, lastNl).trimEnd()
+    }
+
     private companion object {
         const val TAG = "BundleSummarizer"
+        const val MAX_CONTINUATIONS = 2
+        private val SENTENCE_TERMINATORS = setOf('.', '!', '?', '"', '\'', ')', ']')
 
         const val BASE_SUMMARY_SYSTEM = """
 You are summarizing a bundle of financial news articles for an active investor.

@@ -17,5 +17,16 @@ interface AiTextClient {
         userMessage: String,
         maxTokens: Int,
         temperature: Double? = null,
-    ): String
+    ): TextResult
+
+    /**
+     * @param text generated text
+     * @param stopReason provider-specific finish reason. Normalized values:
+     *   - `"end_turn"`: model finished naturally
+     *   - `"max_tokens"`: hit the [maxTokens] cap — output is likely
+     *     truncated mid-thought, callers may need a continuation pass
+     *   - `"stop_sequence"` / other: provider-specific, treat as natural end
+     *   - `null`: provider didn't surface a reason
+     */
+    data class TextResult(val text: String, val stopReason: String?)
 }

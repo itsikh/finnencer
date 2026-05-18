@@ -3,7 +3,6 @@ package io.itsikh.finnencer.ui.screens.queue
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,10 +28,12 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
@@ -59,7 +60,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,31 +86,8 @@ fun QueueScreen(
     val selected by vm.selectedIds.collectAsState()
     val isSelecting by vm.isSelecting.collectAsState()
 
-    val items = if (tab == QueueTab.TODO) todo else done
-
-    // Local mirror used to drive in-flight drag reordering before
-    // persisting. We rebuild it from `todo` whenever the DB changes
-    // and we're not mid-drag.
-    var liveOrder by remember { mutableStateOf(todo) }
     val listState = rememberLazyListState()
-    val drag = rememberDragReorderState(
-        listState = listState,
-        onMove = { from, to ->
-            liveOrder = liveOrder.toMutableList().also { list ->
-                if (from in list.indices && to in list.indices) {
-                    val moved = list.removeAt(from)
-                    list.add(to, moved)
-                }
-            }
-        },
-        onCommit = { vm.reorderTodo(liveOrder) },
-    )
-    // Keep liveOrder in sync with DB when not dragging.
-    if (drag.draggingKey == null && liveOrder.map { it.id } != todo.map { it.id }) {
-        liveOrder = todo
-    }
-
-    val renderItems = if (tab == QueueTab.TODO) liveOrder else done
+    val renderItems = if (tab == QueueTab.TODO) todo else done
 
     var deleteSelectedConfirm by remember { mutableStateOf(false) }
     var clearDoneConfirm by remember { mutableStateOf(false) }
@@ -255,26 +232,22 @@ fun QueueScreen(
                     if (tab == QueueTab.TODO) {
                         item {
                             Text(
-                                "Long-press the handle to drag and reorder. Long-press a row to multi-select.",
+                                "Tap ↑ / ↓ to reorder. Long-press a row to multi-select.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = FinnencerColors.TextTertiary,
                             )
                         }
                     }
-                    items(renderItems, key = { it.id }) { item ->
-                        val isDragging = drag.draggingKey == item.id
+                    itemsIndexed(renderItems, key = { _, it -> it.id }) { index, item ->
+                        val isPodcast = item.kind == QueueItemKind.PODCAST.name
                         QueueRow(
                             item = item,
                             selected = item.id in selected,
                             selectionMode = isSelecting,
-                            showDragHandle = tab == QueueTab.TODO && !isSelecting,
-                            dragModifier = if (tab == QueueTab.TODO) {
-                                Modifier.dragHandleModifier(
-                                    drag, item.id, renderItems.indexOf(item),
-                                )
-                            } else Modifier,
-                            translationY = if (isDragging) drag.draggingDy else 0f,
-                            elevated = isDragging,
+                            isFirst = index == 0,
+                            isLast = index == renderItems.lastIndex,
+                            showReorder = tab == QueueTab.TODO && !isSelecting,
+                            primaryActionIsPlay = isPodcast,
                             onTap = {
                                 if (isSelecting) {
                                     vm.toggleSelection(item.id)
@@ -295,6 +268,21 @@ fun QueueScreen(
                                 if (tab == QueueTab.TODO) vm.markDone(item.id)
                                 else vm.markUndone(item.id)
                             },
+                            onPrimaryAction = {
+                                // Podcast rows: tap-to-play. Falls back to
+                                // mark-done if refId is malformed (defensive,
+                                // shouldn't happen with toString(podcast.id)).
+                                if (isPodcast) {
+                                    item.refId.toLongOrNull()?.let(onOpenPodcast)
+                                        ?: vm.markDone(item.id)
+                                } else if (tab == QueueTab.TODO) {
+                                    vm.markDone(item.id)
+                                } else {
+                                    vm.markUndone(item.id)
+                                }
+                            },
+                            onMoveUp = { vm.moveTodoUp(item.id) },
+                            onMoveDown = { vm.moveTodoDown(item.id) },
                         )
                     }
                     item { Spacer(Modifier.height(40.dp)) }
@@ -344,31 +332,20 @@ private fun QueueRow(
     item: QueueItem,
     selected: Boolean,
     selectionMode: Boolean,
-    showDragHandle: Boolean,
-    dragModifier: Modifier,
-    translationY: Float,
-    elevated: Boolean,
+    isFirst: Boolean,
+    isLast: Boolean,
+    showReorder: Boolean,
+    primaryActionIsPlay: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onComplete: () -> Unit,
+    onPrimaryAction: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
 ) {
     val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.22f) else Color.Transparent
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                this.translationY = translationY
-                if (elevated) {
-                    shadowElevation = 12f
-                    alpha = 0.95f
-                }
-            },
-    ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
         GlassCard {
-            // Outer Row is the layout container. The drag handle on the
-            // trailing edge has its own touch zone — combinedClickable on
-            // the content half stole the long-press gesture and made
-            // drag-to-reorder impossible (#30).
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -428,34 +405,68 @@ private fun QueueRow(
                         }
                     }
                     if (!selectionMode) {
-                        // Quick-action: mark done / undone via row-level icon.
-                        IconButton(onClick = onComplete) {
-                            Icon(
-                                if (item.completedAtMillis == null) Icons.Default.Check else Icons.Default.Undo,
-                                contentDescription = if (item.completedAtMillis == null) "Mark done" else "Move back to To do",
-                                tint = if (item.completedAtMillis == null) FinnencerColors.Mint
-                                       else FinnencerColors.Violet,
-                                modifier = Modifier.size(20.dp),
-                            )
+                        // Primary right-edge action.
+                        //   - Podcast rows: ▶ Play — taps go straight into
+                        //     the player (#32). Mark-done happens
+                        //     automatically when playback ends.
+                        //   - Everything else: ✓ / ↶ Mark done / undone.
+                        IconButton(onClick = onPrimaryAction) {
+                            val (icon, desc, tint) = when {
+                                primaryActionIsPlay -> Triple(
+                                    Icons.Default.PlayArrow,
+                                    "Play podcast",
+                                    FinnencerColors.Violet,
+                                )
+                                item.completedAtMillis == null -> Triple(
+                                    Icons.Default.Check,
+                                    "Mark done",
+                                    FinnencerColors.Mint,
+                                )
+                                else -> Triple(
+                                    Icons.Default.Undo,
+                                    "Move back to To do",
+                                    FinnencerColors.Violet,
+                                )
+                            }
+                            Icon(icon, desc, tint = tint, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
-                if (showDragHandle) {
-                    // Outside the combinedClickable Row so the
-                    // detectDragGesturesAfterLongPress on `dragModifier`
-                    // actually wins the long-press gesture instead of
-                    // being preempted by the parent's onLongClick.
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .then(dragModifier),
-                        contentAlignment = Alignment.Center,
+                if (showReorder) {
+                    // Replaces the long-press-drag handle (#33) with two
+                    // explicit ↑ / ↓ taps. Disabled at list ends so the
+                    // user gets visual feedback rather than a silent no-op.
+                    Column(
+                        modifier = Modifier.width(36.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Icon(
-                            Icons.Default.DragHandle,
-                            contentDescription = "Drag to reorder",
-                            tint = FinnencerColors.TextTertiary,
-                        )
+                        IconButton(
+                            onClick = onMoveUp,
+                            enabled = !isFirst,
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Move up",
+                                tint = if (isFirst) FinnencerColors.TextTertiary.copy(alpha = 0.35f)
+                                       else FinnencerColors.TextSecondary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        IconButton(
+                            onClick = onMoveDown,
+                            enabled = !isLast,
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Move down",
+                                tint = if (isLast) FinnencerColors.TextTertiary.copy(alpha = 0.35f)
+                                       else FinnencerColors.TextSecondary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
                     }
                 }
             }

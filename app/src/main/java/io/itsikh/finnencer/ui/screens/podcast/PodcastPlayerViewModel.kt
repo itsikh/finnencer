@@ -17,6 +17,7 @@ import io.itsikh.finnencer.core.playback.PodcastPlaybackService
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.QueueItemKind
+import io.itsikh.finnencer.data.repo.EndOfPodcastAction
 import io.itsikh.finnencer.data.repo.PodcastPreferences
 import io.itsikh.finnencer.data.repo.QueueRepository
 import kotlinx.coroutines.Job
@@ -109,9 +110,8 @@ class PodcastPlayerViewModel @Inject constructor(
 
     /**
      * On playback completion: mark this podcast's queue item (if any) as
-     * done so the user's reading queue stays in sync, and — if the
-     * "Auto-play next in queue" pref is on — fire a navigation event for
-     * the next incomplete podcast.
+     * done so the user's reading queue stays in sync, then act on the
+     * user's end-of-podcast preference — STOP / CONTINUE / SHUFFLE.
      */
     private fun handlePlaybackEnded() {
         if (endHandled) return
@@ -122,11 +122,14 @@ class PodcastPlayerViewModel @Inject constructor(
             if (current != null && current.completedAtMillis == null) {
                 queueRepo.markDone(current.id)
             }
-            if (prefs.autoPlayNextInQueue.first()) {
-                val next = queueRepo.observeIncomplete().first()
-                    .firstOrNull { it.kind == QueueItemKind.PODCAST.name }
-                next?.refId?.toLongOrNull()?.let { _navigateToNext.tryEmit(it) }
+            val incompletePodcasts = queueRepo.observeIncomplete().first()
+                .filter { it.kind == QueueItemKind.PODCAST.name && it.refId != refId }
+            val nextRefId: String? = when (prefs.endOfPodcastAction.first()) {
+                EndOfPodcastAction.STOP -> null
+                EndOfPodcastAction.CONTINUE -> incompletePodcasts.firstOrNull()?.refId
+                EndOfPodcastAction.SHUFFLE -> incompletePodcasts.randomOrNull()?.refId
             }
+            nextRefId?.toLongOrNull()?.let { _navigateToNext.tryEmit(it) }
         }
     }
 

@@ -30,7 +30,7 @@ class GeminiTextClient @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
-    ): String {
+    ): AiTextClient.TextResult {
         val merged = buildString {
             if (!system.isNullOrBlank()) {
                 append("System instructions:\n")
@@ -53,19 +53,25 @@ class GeminiTextClient @Inject constructor(
         val resp = runCatching { service.generateContent(model, request) }
             .onFailure { recordUsage(model, 0, 0, startedAt, ok = false, error = it.message) }
             .getOrThrow()
-        val text = resp.candidates.firstOrNull()
-            ?.content?.parts?.mapNotNull { it.text }?.joinToString("")
+        val candidate = resp.candidates.firstOrNull()
+        val text = candidate?.content?.parts?.mapNotNull { it.text }?.joinToString("")
             ?.trim().orEmpty()
         if (text.isBlank()) {
             AppLogger.w(TAG, "Gemini ($model) returned empty text")
             error("Gemini returned empty content")
         }
-        // Gemini's response doesn't include token counts in the simple text
-        // path; record approximations from char counts.
         val inputTokens = merged.length / 4
         val outputTokens = text.length / 4
         recordUsage(model, inputTokens, outputTokens, startedAt, ok = true, error = null)
-        return text
+        // Normalize Gemini's finish reason to the same vocabulary
+        // Anthropic uses, so callers don't need to branch by provider.
+        val normalizedStop = when (candidate?.finishReason?.uppercase()) {
+            "MAX_TOKENS" -> "max_tokens"
+            "STOP" -> "end_turn"
+            null -> null
+            else -> candidate.finishReason.lowercase()
+        }
+        return AiTextClient.TextResult(text = text, stopReason = normalizedStop)
     }
 
     private suspend fun recordUsage(

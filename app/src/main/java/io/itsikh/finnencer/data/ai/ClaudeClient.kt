@@ -44,7 +44,7 @@ class ClaudeClient @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
-    ): String {
+    ): AiTextClient.TextResult {
         val entry = AiModel.byId(model)
         // Strip temperature for models that no longer accept it (Opus 4.x).
         // Unknown ids default to "supports it" so we don't silently change
@@ -80,9 +80,10 @@ class ClaudeClient @Inject constructor(
             recordUsage(model, null, started, ok = false, error = t.message)
             throw t
         }
-        return response.content.firstOrNull { it.type == "text" }?.text
+        val text = response.content.firstOrNull { it.type == "text" }?.text
             ?: response.content.firstOrNull()?.text
             ?: error("Empty response from Anthropic for model $model")
+        return AiTextClient.TextResult(text = text, stopReason = response.stopReason)
     }
 
     /**
