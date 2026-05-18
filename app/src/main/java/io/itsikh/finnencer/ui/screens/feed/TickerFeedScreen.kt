@@ -68,6 +68,7 @@ import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.screens.earnings.TierPickerSheetCore
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.theme.MonoStyles
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -127,36 +128,27 @@ fun TickerFeedScreen(
                     Column {
                         Text(
                             state.ticker?.symbol ?: "—",
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = MonoStyles.Brand,
                             color = FinnencerColors.TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            state.ticker?.name ?: "",
-                            style = MaterialTheme.typography.labelSmall,
+                            (state.ticker?.name ?: "").uppercase(),
+                            style = MonoStyles.BrandSub,
                             color = FinnencerColors.TextTertiary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = FinnencerColors.TextPrimary,
-                        )
-                    }
-                },
+                navigationIcon = { FeedChip(label = "← BACK", onClick = onBack) },
                 actions = {
-                    IconButton(onClick = vm::refresh) {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "Refresh",
-                            tint = FinnencerColors.TextSecondary,
-                        )
-                    }
+                    FeedChip(
+                        label = "SYNC",
+                        accent = FinnencerColors.Violet,
+                        border = FinnencerColors.Violet,
+                        onClick = vm::refresh,
+                    )
+                    Spacer(Modifier.size(8.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
@@ -183,22 +175,22 @@ fun TickerFeedScreen(
             )
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = 0.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 // Earnings section is always rendered (even when empty)
                 // so users can find the feature. Empty state explains why
                 // there's nothing yet and offers a one-tap sync.
                 item {
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     ) {
                         Text(
                             "PAST EARNINGS",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                            fontWeight = FontWeight.SemiBold,
+                            style = MonoStyles.SectionHead,
+                            color = FinnencerColors.TextSecondary,
                             modifier = Modifier.weight(1f),
                         )
                         val refreshingEarnings by vm.earningsSyncing.collectAsState()
@@ -209,16 +201,12 @@ fun TickerFeedScreen(
                                 strokeWidth = 2.dp,
                             )
                         } else {
-                            androidx.compose.material3.TextButton(
+                            FeedChip(
+                                label = "SYNC",
+                                accent = FinnencerColors.Violet,
+                                border = FinnencerColors.Violet,
                                 onClick = vm::refreshEarningsNow,
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                            ) {
-                                Text(
-                                    "Sync",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = FinnencerColors.Violet,
-                                )
-                            }
+                            )
                             // "Diagnose XBRL" pulls SEC EDGAR's parsed
                             // financial facts for this ticker and shows
                             // the last 4 quarters in a dialog. Hidden by
@@ -285,12 +273,12 @@ fun TickerFeedScreen(
                     }
                 }
                 item {
-                    Spacer(Modifier.height(4.dp))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
                     Text(
-                        "NEWS",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.TextTertiary,
-                        fontWeight = FontWeight.SemiBold,
+                        "NEWS  ·  ${rows.size} ITEMS",
+                        style = MonoStyles.SectionHead,
+                        color = FinnencerColors.TextSecondary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     )
                 }
                 if (rows.isEmpty()) {
@@ -960,19 +948,14 @@ private fun StatusPill(status: String) {
 @Composable
 private fun EmptyFeedInline() {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Text("NO NEWS YET", style = MonoStyles.Brand, color = FinnencerColors.TextPrimary)
+        Spacer(Modifier.height(8.dp))
         Text(
-            "No news yet",
-            style = MaterialTheme.typography.titleMedium,
-            color = FinnencerColors.TextPrimary,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Sync runs every 15 minutes. Pull from the toolbar to refresh now.",
-            style = MaterialTheme.typography.bodySmall,
+            "SYNC RUNS EVERY 15 MIN  ·  TAP SYNC TO REFRESH NOW",
+            style = MonoStyles.BrandSub,
             color = FinnencerColors.TextSecondary,
         )
     }
@@ -1080,34 +1063,23 @@ private fun TypeDropdown(category: ArticleCategory?, onPick: (ArticleCategory?) 
 
 @Composable
 private fun DropdownButton(label: String, active: Boolean, onClick: () -> Unit) {
+    val border = if (active) FinnencerColors.Violet else FinnencerColors.HairlineStrong
+    val color = if (active) FinnencerColors.Violet else FinnencerColors.TextSecondary
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                if (active) FinnencerColors.Violet.copy(alpha = 0.25f)
-                else FinnencerColors.SurfaceGlass
-            )
-            .border(
-                1.dp,
-                if (active) FinnencerColors.Violet.copy(alpha = 0.55f)
-                else FinnencerColors.SurfaceBorder,
-                RoundedCornerShape(20.dp),
-            )
+            .heightIn(min = 40.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, border, RoundedCornerShape(6.dp))
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (active) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
-            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        )
+        Text(label.uppercase(), style = MonoStyles.NavLabel, color = color)
         Icon(
             Icons.Default.ArrowDropDown,
             contentDescription = null,
-            tint = if (active) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
-            modifier = Modifier.size(22.dp),
+            tint = color,
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -1135,104 +1107,94 @@ private fun ArticleRowCard(
     onLongPress: () -> Unit = {},
     onMore: () -> Unit = {},
 ) {
-    val accent = if (selected) FinnencerColors.Mint else Color.Transparent
-    Box(
+    val rowColor = if (selected) FinnencerColors.Mint.copy(alpha = 0.10f) else Color.Transparent
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .border(
-                width = if (selected) 2.dp else 0.dp,
-                color = accent,
-                shape = RoundedCornerShape(20.dp),
-            )
+            .background(rowColor)
             .combinedClickable(onClick = onTap, onLongClick = onLongPress),
     ) {
-        GlassCard {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (inSelectMode) {
-                        // Selection checkmark slot replaces the score badge when
-                        // the row is selected; otherwise an empty circle hints at
-                        // tappability.
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (selected) FinnencerColors.Mint.copy(alpha = 0.25f)
-                                    else FinnencerColors.SurfaceGlass
-                                )
-                                .border(
-                                    1.dp,
-                                    if (selected) FinnencerColors.Mint else FinnencerColors.SurfaceBorder,
-                                    CircleShape,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (selected) {
-                                Text(
-                                    "✓",
-                                    color = FinnencerColors.Mint,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (inSelectMode) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(if (selected) FinnencerColors.Mint else Color.Transparent)
+                            .border(
+                                1.dp,
+                                if (selected) FinnencerColors.Mint else FinnencerColors.TextTertiary,
+                                CircleShape,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (selected) {
+                            Text("✓", color = FinnencerColors.TextOnAccent, style = MonoStyles.NavLabel)
                         }
-                        Spacer(Modifier.width(10.dp))
                     }
-                    ScoreBadge(score = row.score)
                     Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = row.source_name,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.TextTertiary,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = formatRelative(row.published_at_millis),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.TextTertiary,
-                    )
-                    if (!inSelectMode) {
-                        Spacer(Modifier.size(6.dp))
-                        IconButton(onClick = onMore, modifier = Modifier.size(28.dp)) {
-                            Icon(
-                                Icons.Default.MoreVert,
-                                contentDescription = "Article actions",
-                                tint = FinnencerColors.TextTertiary,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
                 }
-                Spacer(Modifier.height(8.dp))
+                ScoreBadge(score = row.score)
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    text = row.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 3,
+                    text = row.source_name.uppercase(),
+                    style = MonoStyles.BrandSub,
+                    color = FinnencerColors.TextTertiary,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                if (!row.reason.isNullOrBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = row.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = FinnencerColors.TextSecondary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (!row.category.isNullOrBlank() && row.category != ArticleCategory.OTHER.name) {
-                    Spacer(Modifier.height(6.dp))
-                    CategoryChip(category = row.category)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = formatRelative(row.published_at_millis).uppercase(),
+                    style = MonoStyles.BrandSub,
+                    color = FinnencerColors.TextTertiary,
+                )
+                if (!inSelectMode) {
+                    Spacer(Modifier.size(6.dp))
+                    IconButton(onClick = onMore, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "Article actions",
+                            tint = FinnencerColors.TextTertiary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = row.title.uppercase(),
+                style = MonoStyles.NavLabel,
+                color = FinnencerColors.TextPrimary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!row.reason.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = row.reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FinnencerColors.TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!row.category.isNullOrBlank() && row.category != ArticleCategory.OTHER.name) {
+                Spacer(Modifier.height(6.dp))
+                CategoryChip(category = row.category)
+            }
         }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
     }
 }
 
+/**
+ * Score badge — bordered chip with the article's importance score
+ * (1-10) or "?" when not yet scored. Color tier mirrors the watchlist
+ * ALR pattern so signals stay legible across screens.
+ */
 @Composable
 private fun ScoreBadge(score: Int?) {
     val s = score ?: 0
@@ -1246,18 +1208,11 @@ private fun ScoreBadge(score: Int?) {
     val text = if (s == 0) "?" else s.toString()
     Box(
         modifier = Modifier
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.18f))
-            .border(1.dp, color.copy(alpha = 0.35f), CircleShape),
-        contentAlignment = Alignment.Center,
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, color.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
-        Text(
-            text = text,
-            color = color,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-        )
+        Text(text, style = MonoStyles.Chip, color = color)
     }
 }
 
@@ -1265,16 +1220,40 @@ private fun ScoreBadge(score: Int?) {
 private fun CategoryChip(category: String) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(FinnencerColors.SurfaceGlass)
-            .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(8.dp))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
         Text(
-            text = category.lowercase().replace('_', ' '),
-            style = MaterialTheme.typography.labelSmall,
+            text = category.uppercase().replace('_', ' '),
+            style = MonoStyles.Chip,
             color = FinnencerColors.TextSecondary,
         )
+    }
+}
+
+/**
+ * Bordered tap-target chip — same pattern as the Tasks/Queue/Podcasts
+ * top-bar chips. Used here for BACK / SYNC / SUMMARIZE etc.
+ */
+@Composable
+private fun FeedChip(
+    label: String,
+    accent: Color = FinnencerColors.TextSecondary,
+    border: Color = FinnencerColors.HairlineStrong,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 3.dp)
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MonoStyles.NavLabel, color = accent)
     }
 }
 
