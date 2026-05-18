@@ -10,7 +10,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.core.playback.PodcastPlaybackService
@@ -76,14 +75,22 @@ class PodcastPlayerViewModel @Inject constructor(
     private var pollJob: Job? = null
 
     init {
+        // Build the MediaController on the main looper and dispatch the
+        // future's completion callback back to the main looper too — Media3
+        // requires every controller call (setMediaItem / prepare / play)
+        // to happen on the application main thread. Without forcing the
+        // dispatcher, the listener can fire on the service-binder thread
+        // and the play() call silently no-ops (#29).
+        val mainExecutor = androidx.core.content.ContextCompat.getMainExecutor(context)
         viewModelScope.launch {
             val token = SessionToken(context, ComponentName(context, PodcastPlaybackService::class.java))
             val future = MediaController.Builder(context, token).buildAsync()
             future.addListener({
                 controller = future.get()
+                io.itsikh.finnencer.logging.AppLogger.i(TAG, "MediaController connected (id=$podcastId)")
                 attachListener()
                 attemptLoad()
-            }, MoreExecutors.directExecutor())
+            }, mainExecutor)
         }
         // When the podcast becomes READY, ensure it's loaded.
         viewModelScope.launch {
@@ -153,11 +160,26 @@ class PodcastPlayerViewModel @Inject constructor(
     }
 
     private fun attemptLoad() {
-        val c = controller ?: return
-        val p = podcast.value ?: return
-        val path = p.filePath ?: return
+        val c = controller
+        val p = podcast.value
+        if (c == null) {
+            io.itsikh.finnencer.logging.AppLogger.i(TAG, "attemptLoad skip: controller=null (id=$podcastId)")
+            return
+        }
+        if (p == null) {
+            io.itsikh.finnencer.logging.AppLogger.i(TAG, "attemptLoad skip: podcast=null (id=$podcastId)")
+            return
+        }
+        val path = p.filePath
+        if (path == null) {
+            io.itsikh.finnencer.logging.AppLogger.i(TAG, "attemptLoad skip: filePath=null status=${p.status} (id=$podcastId)")
+            return
+        }
         if (loaded) return
-        if (!File(path).exists()) return
+        if (!File(path).exists()) {
+            io.itsikh.finnencer.logging.AppLogger.w(TAG, "attemptLoad skip: file missing $path")
+            return
+        }
         val uri = Uri.fromFile(File(path))
         c.setMediaItem(MediaItem.fromUri(uri))
         c.prepare()
@@ -166,7 +188,10 @@ class PodcastPlayerViewModel @Inject constructor(
         // and the user had to tap play — friction the bug report flagged.
         c.play()
         loaded = true
+        io.itsikh.finnencer.logging.AppLogger.i(TAG, "player loaded + play() called (id=$podcastId path=$path)")
     }
+
+    private companion object { const val TAG = "PodcastPlayerVM" }
 
     fun playPause() {
         val c = controller ?: return

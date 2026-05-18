@@ -60,14 +60,15 @@ class AiJobWorker @AssistedInject constructor(
         }.fold(
             onSuccess = { Result.success() },
             onFailure = { t ->
-                AppLogger.e(TAG, "ai job ${job.id} failed", t)
+                val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
+                AppLogger.e(TAG, "ai job ${job.id} failed: $friendly", t)
                 dao.markFailed(
                     job.id,
                     AiJobStatus.FAILED.name,
-                    t.message ?: t.javaClass.simpleName,
+                    friendly,
                     System.currentTimeMillis(),
                 )
-                notifier.notifyFailed(job.id, job.title, t.message ?: "AI job failed")
+                notifier.notifyFailed(job.id, job.title, friendly)
                 Result.failure()
             }
         )

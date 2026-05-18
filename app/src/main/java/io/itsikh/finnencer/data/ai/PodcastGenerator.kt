@@ -86,13 +86,14 @@ class PodcastGenerator @Inject constructor(
             )
             Log.i(TAG, "podcast $id ready (${result.bytes / 1024}KB, ${result.durationMs / 1000}s)")
         }.onFailure { t ->
+            val friendly = FriendlyError.describe(t, stage = "podcast")
             podcastDao.update(
                 podcastDao.get(id)!!.copy(
                     status = PodcastGenerationStatus.FAILED.name,
-                    generationError = t.message ?: "unknown",
+                    generationError = friendly,
                 )
             )
-            Log.e(TAG, "podcast $id failed", t)
+            Log.e(TAG, "podcast $id failed: $friendly", t)
         }
 
         return id

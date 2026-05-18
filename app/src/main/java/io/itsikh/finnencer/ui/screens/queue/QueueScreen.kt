@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.QueueItem
 import io.itsikh.finnencer.data.entity.QueueItemKind
+import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
@@ -249,6 +250,7 @@ fun QueueScreen(
                             showReorder = tab == QueueTab.TODO && !isSelecting,
                             primaryActionIsPlay = isPodcast,
                             onTap = {
+                                AppLogger.i("Queue", "row tap: kind=${item.kind} refId=${item.refId} selecting=$isSelecting")
                                 if (isSelecting) {
                                     vm.toggleSelection(item.id)
                                 } else {
@@ -258,8 +260,11 @@ fun QueueScreen(
                                         QueueItemKind.BATCH_SUMMARY.name -> onOpenTasks()
                                         QueueItemKind.EARNINGS_REPORT.name ->
                                             item.refId.toLongOrNull()?.let(onOpenReport)
-                                        QueueItemKind.PODCAST.name ->
-                                            item.refId.toLongOrNull()?.let(onOpenPodcast)
+                                        QueueItemKind.PODCAST.name -> {
+                                            val pid = item.refId.toLongOrNull()
+                                            if (pid != null) onOpenPodcast(pid)
+                                            else AppLogger.w("Queue", "podcast row had non-numeric refId='${item.refId}'")
+                                        }
                                     }
                                 }
                             },
@@ -344,7 +349,16 @@ private fun QueueRow(
     onMoveDown: () -> Unit,
 ) {
     val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.22f) else Color.Transparent
-    Box(modifier = Modifier.fillMaxWidth()) {
+    // combinedClickable lives on the OUTER Box so the entire row width
+    // (including any padding around the trailing controls) is tappable.
+    // Nested IconButtons (PlayArrow, ↑/↓, Mark done) still claim their
+    // own taps via their internal clickable, which beats the outer one
+    // in Compose's inside-out pointer dispatch.
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onTap, onLongClick = onLongPress),
+    ) {
         GlassCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -353,7 +367,6 @@ private fun QueueRow(
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .combinedClickable(onClick = onTap, onLongClick = onLongPress)
                         .background(rowColor)
                         .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
