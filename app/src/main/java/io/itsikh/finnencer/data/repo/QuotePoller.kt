@@ -132,7 +132,7 @@ class QuotePoller @Inject constructor(
                 runCatching {
                     service.chartAt(
                         "https://query2.finance.yahoo.com/v8/finance/chart/" +
-                            "$symbol?interval=15m&range=5d&includePrePost=true",
+                            "$symbol?interval=15m&range=1d&includePrePost=true",
                     ).chart.result?.firstOrNull()
                 }.getOrElse { fallbackErr ->
                     AppLogger.w(TAG, "query2 chart also failed for $symbol: ${fallbackErr.message}")
@@ -144,16 +144,20 @@ class QuotePoller @Inject constructor(
 
     /**
      * Build a [TickerQuote] from a chart result. Percent change is
-     * derived from `regularMarketPrice` vs `chartPreviousClose`
-     * (falling back to `previousClose`). The candle close series is
-     * null-filtered and trimmed to [SPARK_POINTS] so each row's
-     * sparkline draws from a bounded, contiguous list. Returns null if
-     * Yahoo didn't include a usable current price.
+     * derived from `regularMarketPrice` vs the previous trading day's
+     * close. We prefer `meta.previousClose` (canonical "prior day's
+     * close") over `meta.chartPreviousClose` (which shifts with the
+     * requested chart range) for defense-in-depth: even if a future
+     * change to the chart query bumps the range, the % stays correct
+     * as long as Yahoo populates `previousClose`. The candle close
+     * series is null-filtered and trimmed to [SPARK_POINTS] so each
+     * row's sparkline draws from a bounded, contiguous list. Returns
+     * null if Yahoo didn't include a usable current price.
      */
     private fun toQuote(result: YahooChartResult): TickerQuote? {
         val meta: YahooChartMeta = result.meta
         val price = meta.regularMarketPrice ?: return null
-        val prev = meta.chartPreviousClose ?: meta.previousClose
+        val prev = meta.previousClose ?: meta.chartPreviousClose
         val change = if (prev != null) price - prev else 0.0
         val pct = if (prev != null && prev != 0.0) (price - prev) / prev * 100.0 else 0.0
 

@@ -26,17 +26,25 @@ import retrofit2.http.Url
  */
 interface YahooQuoteService {
 
-    /** Fetch one symbol's chart meta + close-price series. We default
-     *  to a 5-day window at 15-minute granularity so the watchlist row
-     *  can render a ~130-point sparkline. `meta.regularMarketPrice`
-     *  still reflects the latest trade regardless of range, and
-     *  `includePrePost=true` keeps that current during extended hours.
-     *  Response is still small (~3-5 KB per symbol). */
+    /** Fetch one symbol's chart meta + intraday close-price series.
+     *
+     *  We default to a *1-day* window at 15-minute granularity. This
+     *  matters for the percent-change number: `meta.chartPreviousClose`
+     *  is the close *immediately before* the requested range, so at
+     *  `range=1d` it's yesterday's close — exactly what we want to
+     *  compute today's % change against. A longer range (5d, 1mo) would
+     *  silently shift that baseline back, producing wrong %s on the
+     *  watchlist.
+     *
+     *  `range=1d&interval=15m` gives ~26 candle points across a US
+     *  trading day — plenty for an intraday sparkline.
+     *  `includePrePost=true` keeps `regularMarketPrice` current during
+     *  extended hours. Response is ~3 KB per symbol. */
     @GET("v8/finance/chart/{symbol}")
     suspend fun chart(
         @Path("symbol") symbol: String,
         @Query("interval") interval: String = "15m",
-        @Query("range") range: String = "5d",
+        @Query("range") range: String = "1d",
         @Query("includePrePost") includePrePost: Boolean = true,
     ): YahooChartResponse
 
