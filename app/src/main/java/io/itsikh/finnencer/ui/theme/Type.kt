@@ -100,10 +100,12 @@ object MonoStyles {
         letterSpacing = 0.10.em,
     )
 
-    /** Tiny tracked caption — "5 TRACKED · 21:35:04 EDT". */
+    /** Tiny tracked caption — "5 TRACKED · 21:35:04 EDT", company names,
+     *  voice lines, meta lines. Medium weight so it reads cleanly at
+     *  small sizes on dark backgrounds without screaming for attention. */
     val BrandSub = TextStyle(
         fontFamily = MonoFamily,
-        fontWeight = FontWeight.Normal,
+        fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         lineHeight = 1.2.em,
         letterSpacing = 0.18.em,

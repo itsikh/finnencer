@@ -15,10 +15,12 @@ object FinnencerColors {
 
     /** Top tier text — off-white, never #FFF (too harsh on OLED). */
     val TextPrimary = Color(0xFFE6E8EE)
-    /** Body / row sub — cool gray. */
-    val TextSecondary = Color(0xFF8B8FA3)
+    /** Body / row sub — lifted from #8B8FA3 to #B8BCCD for readability
+     *  on the dense terminal layout. The old shade was technically
+     *  AA-compliant but consistently read as "too dim to scan". */
+    val TextSecondary = Color(0xFFB8BCCD)
     /** Captions, dim meta, dividers in text — dimmer cool gray. */
-    val TextTertiary = Color(0xFF5A5E72)
+    val TextTertiary = Color(0xFF7A7F94)
     /** Text on a violet/accent fill — pure black for max contrast. */
     val TextOnAccent = Color(0xFF07080B)
 
