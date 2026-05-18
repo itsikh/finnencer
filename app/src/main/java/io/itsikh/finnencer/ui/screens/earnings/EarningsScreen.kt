@@ -3,6 +3,7 @@ package io.itsikh.finnencer.ui.screens.earnings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,8 +57,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.EarningsStatus
-import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.theme.MonoStyles
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -93,29 +95,17 @@ fun EarningsScreen(
             // while in multi-select mode.
             if (isSelecting) {
                 TopAppBar(
-                    title = {
-                        Text(
-                            "${selected.size} selected",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = FinnencerColors.TextPrimary,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = vm::clearReportSelection) {
-                            Icon(Icons.Default.Close, "Cancel selection", tint = FinnencerColors.TextPrimary)
-                        }
-                    },
+                    title = { EarningsTitle(label = "${selected.size} SELECTED", sub = "TAP A ROW TO TOGGLE") },
+                    navigationIcon = { EarningsChip(label = "✕", onClick = vm::clearReportSelection) },
                     actions = {
-                        IconButton(
-                            onClick = { deleteSelectedConfirmOpen = true },
-                            enabled = selected.isNotEmpty(),
-                        ) {
-                            Icon(Icons.Default.Delete, "Delete selected", tint = FinnencerColors.Coral)
-                        }
+                        EarningsChip(
+                            label = "DELETE",
+                            accent = if (selected.isNotEmpty()) FinnencerColors.Coral else FinnencerColors.TextTertiary,
+                            border = if (selected.isNotEmpty()) FinnencerColors.Coral else FinnencerColors.HairlineStrong,
+                            onClick = { if (selected.isNotEmpty()) deleteSelectedConfirmOpen = true },
+                        )
                         Box {
-                            IconButton(onClick = { overflowOpen = true }) {
-                                Icon(Icons.Default.MoreVert, "More", tint = FinnencerColors.TextPrimary)
-                            }
+                            EarningsChip(label = "···", onClick = { overflowOpen = true })
                             DropdownMenu(
                                 expanded = overflowOpen,
                                 onDismissRequest = { overflowOpen = false },
@@ -136,27 +126,19 @@ fun EarningsScreen(
                                 )
                             }
                         }
+                        Spacer(Modifier.size(8.dp))
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
             } else {
                 TopAppBar(
                     title = {
-                        Text(
-                            "Earnings",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = FinnencerColors.TextPrimary,
+                        EarningsTitle(
+                            label = "EARNINGS",
+                            sub = "LAST 2 WKS  ·  NEXT 90 DAYS  ·  ${upcoming.size} UPCOMING",
                         )
                     },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = FinnencerColors.TextPrimary,
-                            )
-                        }
-                    },
+                    navigationIcon = { EarningsChip(label = "← BACK", onClick = onBack) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
             }
@@ -164,59 +146,52 @@ fun EarningsScreen(
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 0.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            item {
-                Text(
-                    "Upcoming · last 2 weeks + next 90 days",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = FinnencerColors.TextSecondary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
             if (upcoming.isEmpty()) {
                 item {
-                    Text(
-                        "No earnings on the calendar yet. Background sync populates this every 15 min.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = FinnencerColors.TextTertiary,
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 60.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            "NO EARNINGS",
+                            style = MonoStyles.Brand,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "BACKGROUND SYNC RUNS EVERY 15 MIN",
+                            style = MonoStyles.BrandSub,
+                            color = FinnencerColors.TextSecondary,
+                        )
+                    }
                 }
             } else {
+                item { SectionHead(label = "UPCOMING", count = upcoming.size, suffix = "EVENTS") }
                 items(upcoming, key = { "ev-${it.id}" }) { event ->
-                    EventCard(event = event, onTap = { vm.openTierPicker(event) })
+                    EventRow(event = event, onTap = { vm.openTierPicker(event) })
                 }
             }
             if (reports.isNotEmpty()) {
                 item {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Recent reports",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = FinnencerColors.TextSecondary,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            onClick = { deleteAllConfirmOpen = true },
-                        ) {
-                            Text(
-                                "Delete all",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = FinnencerColors.Coral,
+                    SectionHead(
+                        label = "RECENT REPORTS",
+                        count = reports.size,
+                        suffix = if (reports.size == 1) "REPORT" else "REPORTS",
+                        trailing = {
+                            EarningsChip(
+                                label = "DELETE ALL",
+                                accent = FinnencerColors.Coral,
+                                border = FinnencerColors.Coral,
+                                onClick = { deleteAllConfirmOpen = true },
                             )
-                        }
-                    }
-                    Text(
-                        "Long-press a report to select multiple, then delete.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.TextTertiary,
+                        },
                     )
                 }
                 items(reports, key = { "rep-${it.id}" }) { r ->
-                    ReportListCard(
+                    ReportRow(
                         report = r,
                         selected = r.id in selected,
                         selectionMode = isSelecting,
@@ -228,7 +203,6 @@ fun EarningsScreen(
                     )
                 }
             }
-            item { Spacer(Modifier.height(40.dp)) }
         }
     }
 
@@ -276,32 +250,94 @@ fun EarningsScreen(
 }
 
 @Composable
-private fun EventCard(event: EarningsEvent, onTap: () -> Unit) {
-    GlassCard(onClick = onTap) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "${event.tickerSymbol}  ·  Q${event.fiscalQuarter} ${event.fiscalYear}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    FMT.format(Instant.ofEpochMilli(event.scheduledAtMillis)),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FinnencerColors.TextSecondary,
-                )
-            }
-            StatusPill(event.status)
-        }
+private fun EarningsTitle(label: String, sub: String) {
+    Column {
+        Text(label, style = MonoStyles.Brand, color = FinnencerColors.TextPrimary)
+        Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
     }
 }
 
 @Composable
-private fun StatusPill(status: String) {
+private fun EarningsChip(
+    label: String,
+    accent: Color = FinnencerColors.TextSecondary,
+    border: Color = FinnencerColors.HairlineStrong,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 3.dp)
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MonoStyles.NavLabel, color = accent)
+    }
+}
+
+@Composable
+private fun SectionHead(
+    label: String,
+    count: Int,
+    suffix: String,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MonoStyles.SectionHead, color = FinnencerColors.TextSecondary)
+            Box(modifier = Modifier.weight(1f))
+            if (trailing != null) {
+                trailing()
+                Spacer(Modifier.width(8.dp))
+            }
+            Text("$count $suffix", style = MonoStyles.SectionHead, color = FinnencerColors.TextTertiary)
+        }
+    }
+}
+
+/**
+ * Upcoming-earnings row. Tap opens the tier picker so the user can
+ * generate a Brief / Standard / Deep report for the event. Status
+ * tag (REPORTED / MISSED / SCHEDULED) lives on the right.
+ */
+@Composable
+private fun EventRow(event: EarningsEvent, onTap: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onTap)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${event.tickerSymbol}  ·  Q${event.fiscalQuarter} ${event.fiscalYear}".uppercase(),
+                    style = MonoStyles.NavLabel,
+                    color = FinnencerColors.TextPrimary,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    FMT.format(Instant.ofEpochMilli(event.scheduledAtMillis)).uppercase(),
+                    style = MonoStyles.BrandSub,
+                    color = FinnencerColors.TextSecondary,
+                )
+            }
+            StatusTag(event.status)
+        }
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
+}
+
+/** Mono uppercase chip — SCHEDULED / REPORTED / MISSED. */
+@Composable
+private fun StatusTag(status: String) {
     val color = when (status) {
         EarningsStatus.REPORTED.name -> FinnencerColors.Mint
         EarningsStatus.MISSED.name -> FinnencerColors.Coral
@@ -309,47 +345,40 @@ private fun StatusPill(status: String) {
     }
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(color.copy(alpha = 0.20f))
-            .border(1.dp, color.copy(alpha = 0.40f), RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, color.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
-        Text(
-            status.lowercase().replaceFirstChar { it.uppercase() },
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Text(status.uppercase(), style = MonoStyles.Chip, color = color)
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReportListCard(
+private fun ReportRow(
     report: EarningsReport,
     selected: Boolean,
     selectionMode: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
-    val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.22f) else Color.Transparent
-    GlassCard {
+    val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.12f) else Color.Transparent
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(rowColor)
+            .combinedClickable(onClick = onTap, onLongClick = onLongPress),
+    ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(onClick = onTap, onLongClick = onLongPress)
-                .background(rowColor)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selectionMode) {
                 Box(
                     modifier = Modifier
-                        .size(20.dp)
+                        .size(16.dp)
                         .clip(CircleShape)
-                        .background(
-                            if (selected) FinnencerColors.Violet else Color.Transparent,
-                        )
+                        .background(if (selected) FinnencerColors.Violet else Color.Transparent)
                         .border(
                             1.dp,
                             if (selected) FinnencerColors.Violet else FinnencerColors.TextTertiary,
@@ -362,35 +391,50 @@ private fun ReportListCard(
                             Icons.Default.Check,
                             contentDescription = null,
                             tint = FinnencerColors.TextOnAccent,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(11.dp),
                         )
                     }
                 }
                 Spacer(Modifier.width(12.dp))
             }
+            // Tier chip mirrors the watchlist's ALR pattern — color
+            // gradient (mint=brief, amber=standard, coral=deep) maps
+            // depth to perceived intensity.
+            TierChip(tier = report.tier)
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    report.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    report.title.uppercase(),
+                    style = MonoStyles.NavLabel,
                     color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.Medium,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        report.tier.lowercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.Violet,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        FMT.format(Instant.ofEpochMilli(report.generatedAtMillis)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = FinnencerColors.TextTertiary,
-                    )
-                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    FMT.format(Instant.ofEpochMilli(report.generatedAtMillis)).uppercase(),
+                    style = MonoStyles.BrandSub,
+                    color = FinnencerColors.TextTertiary,
+                )
             }
         }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
+    }
+}
+
+@Composable
+private fun TierChip(tier: String) {
+    val color = when (tier.uppercase()) {
+        "BRIEF" -> FinnencerColors.Mint
+        "STANDARD" -> FinnencerColors.Amber
+        "DEEP" -> FinnencerColors.Coral
+        else -> FinnencerColors.Violet
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, color.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Text(tier.uppercase(), style = MonoStyles.Chip, color = color)
     }
 }
 
