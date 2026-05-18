@@ -118,11 +118,34 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("Settings", style = MaterialTheme.typography.headlineMedium, color = FinnencerColors.TextPrimary)
+                    androidx.compose.foundation.layout.Column {
+                        Text(
+                            "SETTINGS",
+                            style = io.itsikh.finnencer.ui.theme.MonoStyles.Brand,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                        Text(
+                            "v${io.itsikh.finnencer.BuildConfig.VERSION_NAME}  ·  ${io.itsikh.finnencer.BuildConfig.VERSION_CODE}",
+                            style = io.itsikh.finnencer.ui.theme.MonoStyles.BrandSub,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier
+                            .padding(start = 8.dp, end = 2.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(6.dp))
+                            .clickable(onClick = onBack)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "← BACK",
+                            style = io.itsikh.finnencer.ui.theme.MonoStyles.NavLabel,
+                            color = FinnencerColors.TextSecondary,
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -133,9 +156,8 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
 
             // ───────── Credentials ─────────
