@@ -34,16 +34,28 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 const val UNGROUPED_TICKER = "Other"
 
 /**
- * Best-effort ticker extraction from a generated podcast title. The
- * three podcast-generation paths in [io.itsikh.finnencer.data.ai.BundleSummarizer]
- * all format titles as `"{TICKER}  ·  {N} min  ·  {detail}"`, so taking
- * the first `·`-separated segment works in practice. Falls back to
- * [UNGROUPED_TICKER] when the leading segment doesn't look like a
- * ticker (1–6 uppercase letters, optionally with a `.`).
+ * Best-effort ticker extraction from a generated title. Handles the
+ * common patterns the app's own code emits:
+ *  - Podcasts:  `"{TICKER} · {N} min · {detail}"`
+ *  - Earnings:  `"{TICKER} earnings · {event} · {N}-min podcast"`
+ *  - Reports:   `"{TICKER} · Q3 2026 · Brief"`
+ *
+ * Strategy: take the first `·`-separated segment, then try the whole
+ * segment first (no-spaces ticker case), then the first whitespace-
+ * separated word (for "{TICKER} earnings" / "{TICKER} podcast" style).
+ * Falls back to [UNGROUPED_TICKER] when nothing in the leading
+ * segment matches a 1–6 uppercase letter ticker pattern.
  */
 fun tickerFromPodcastTitle(title: String): String {
     val first = title.substringBefore(SEPARATOR).trim()
-    return if (TICKER_REGEX.matches(first)) first else UNGROUPED_TICKER
+    if (first.isEmpty()) return UNGROUPED_TICKER
+    if (TICKER_REGEX.matches(first)) return first
+    // Try the first whitespace-separated token — covers titles like
+    // "SNDK earnings · Q2 2026 · 15-min podcast" where the segment is
+    // "SNDK earnings".
+    val firstWord = first.split(WS_REGEX).firstOrNull()?.trim().orEmpty()
+    if (TICKER_REGEX.matches(firstWord)) return firstWord
+    return UNGROUPED_TICKER
 }
 
 /**
@@ -122,3 +134,5 @@ private const val SEPARATOR = "·"
 
 /** 1-6 uppercase letters with optional dot (e.g. "BRK.B"). */
 private val TICKER_REGEX = Regex("^[A-Z]{1,6}(\\.[A-Z])?$")
+
+private val WS_REGEX = Regex("\\s+")

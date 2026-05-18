@@ -491,6 +491,7 @@ private fun JobRow(
                                 refId = pillRefId,
                                 title = job.title,
                                 subtitle = job.resultModel?.let { "via ${friendlyModelLabel(it)}" },
+                                tickerSymbol = job.tickerSymbol,
                             )
                         }
                         job.resultModel?.takeIf { it.isNotBlank() }?.let { id ->

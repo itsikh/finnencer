@@ -315,13 +315,17 @@ fun QueueScreen(
                     }
 
                     if (grouped) {
-                        // Group by tickerSymbol with null/blank → "Other".
-                        // Within each ticker, items keep their existing
-                        // sort order (sortOrder for TODO, completed-at
-                        // for DONE — already the order in renderItems).
+                        // Group by tickerSymbol when set; otherwise fall
+                        // back to parsing the leading segment of the
+                        // title (matches the same TICKER pattern as
+                        // PodcastLibrary). This covers older rows queued
+                        // before the Tasks-screen pill started passing
+                        // tickerSymbol (#44) AND any row whose tagger
+                        // didn't have a ticker to hand.
                         val buckets = renderItems.groupBy { item ->
-                            item.tickerSymbol?.takeIf { it.isNotBlank() }
-                                ?: io.itsikh.finnencer.ui.components.UNGROUPED_TICKER
+                            val tagged = item.tickerSymbol?.takeIf { it.isNotBlank() }
+                            tagged
+                                ?: io.itsikh.finnencer.ui.components.tickerFromPodcastTitle(item.title)
                         }
                         val tickers = io.itsikh.finnencer.ui.components.sortedTickerGroups(buckets.keys)
                         for (ticker in tickers) {
