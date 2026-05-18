@@ -95,10 +95,16 @@ class AiJobWorker @AssistedInject constructor(
         val input = gson.fromJson(json, PodcastInput::class.java)
         val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
             ?: BundleSummarizer.PodcastMinutes.FIVE
+        val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
         val podcastId = bundle.summarizeToPodcast(
             articleIds = input.articleIds,
             minutes = minutes,
             customPrompt = input.customPrompt,
+            existingPodcastId = existingPodcastId,
+            // Persist the row id the moment Bundle creates/reuses it so a
+            // retry after a mid-generation process kill finds the same
+            // row instead of inserting a duplicate (#39).
+            onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
         dao.markCompleted(
             id = jobId,
@@ -201,10 +207,13 @@ class AiJobWorker @AssistedInject constructor(
             .firstOrNull { it.earningsEventId == event.id && it.tier == ReportTier.BRIEF.name }
         val reportId = existingBrief?.id ?: reportGenerator.generate(event.id, ReportTier.BRIEF)
         val report = earningsDao.getReport(reportId) ?: error("freshly generated report $reportId missing")
+        val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
         val podcastId = bundle.podcastFromEarningsReport(
             reportId = reportId,
             minutes = minutes,
             customPrompt = input.customPrompt,
+            existingPodcastId = existingPodcastId,
+            onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
         dao.markCompleted(
             id = jobId,
@@ -229,11 +238,14 @@ class AiJobWorker @AssistedInject constructor(
         //    with what the user sees in the Tasks card.
         val summary = bundle.summarizeText(input.articleIds, pages, input.customPrompt)
         // 2. Podcast from that summary. Renders + persists a Podcast row.
+        val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
         val podcastId = bundle.podcastFromSummary(
             articleIds = input.articleIds,
             summaryText = summary.text,
             minutes = minutes,
             customPrompt = input.customPrompt,
+            existingPodcastId = existingPodcastId,
+            onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
         )
         dao.markCompleted(
             id = jobId,

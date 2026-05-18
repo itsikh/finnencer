@@ -90,6 +90,25 @@ class PodcastLibraryViewModel @Inject constructor(
     }
 
     /**
+     * Bulk-delete every FAILED podcast row (and its file if any) — the
+     * escape hatch for #39 "spam bug" when prior retries left a pile of
+     * failed rows in the library.
+     */
+    fun clearAllFailed() {
+        viewModelScope.launch {
+            val failed = podcasts.value.filter {
+                it.status == PodcastGenerationStatus.FAILED.name
+            }
+            failed.forEach { p ->
+                p.filePath?.let { path ->
+                    runCatching { File(path).takeIf { it.exists() }?.delete() }
+                }
+                podcastDao.delete(p.id)
+            }
+        }
+    }
+
+    /**
      * Transcode the WAV to a compressed .m4a (~1 MB / min) then fire the
      * share sheet. Sharing the raw WAV would mean ~25 MB per 10-min
      * podcast — most messengers reject files that size.
@@ -143,6 +162,8 @@ fun PodcastLibraryScreen(
     val error by vm.error.collectAsState()
 
     var pendingDelete by remember { mutableStateOf<Podcast?>(null) }
+    var clearFailedConfirm by remember { mutableStateOf(false) }
+    val failedCount = items.count { it.status == PodcastGenerationStatus.FAILED.name }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -162,6 +183,17 @@ fun PodcastLibraryScreen(
                             contentDescription = "Back",
                             tint = FinnencerColors.TextPrimary,
                         )
+                    }
+                },
+                actions = {
+                    if (failedCount > 0) {
+                        TextButton(onClick = { clearFailedConfirm = true }) {
+                            Text(
+                                "Clear failed · $failedCount",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.Coral,
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -193,6 +225,28 @@ fun PodcastLibraryScreen(
             }
             item { Spacer(Modifier.height(40.dp)) }
         }
+    }
+
+    if (clearFailedConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearFailedConfirm = false },
+            title = { Text("Clear $failedCount failed podcast${if (failedCount == 1) "" else "s"}?") },
+            text = {
+                Text(
+                    "Removes every podcast in the failed state. Their audio files (if any) are deleted from this device. This can't be undone.",
+                    color = FinnencerColors.TextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.clearAllFailed()
+                    clearFailedConfirm = false
+                }) { Text("Clear", color = FinnencerColors.Coral) }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearFailedConfirm = false }) { Text("Cancel") }
+            },
+        )
     }
 
     pendingDelete?.let { target ->

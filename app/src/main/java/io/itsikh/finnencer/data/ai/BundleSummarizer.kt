@@ -98,6 +98,8 @@ class BundleSummarizer @Inject constructor(
         articleIds: List<String>,
         minutes: PodcastMinutes,
         customPrompt: String?,
+        existingPodcastId: Long? = null,
+        onPodcastIdAssigned: suspend (Long) -> Unit = {},
     ): Long {
         require(articleIds.isNotEmpty()) { "selection must be non-empty" }
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
@@ -121,6 +123,8 @@ class BundleSummarizer @Inject constructor(
             sourceMaterial = source,
             minutes = minutes,
             customPrompt = customPrompt,
+            existingPodcastId = existingPodcastId,
+            onPodcastIdAssigned = onPodcastIdAssigned,
         )
     }
 
@@ -133,6 +137,8 @@ class BundleSummarizer @Inject constructor(
         reportId: Long,
         minutes: PodcastMinutes,
         customPrompt: String?,
+        existingPodcastId: Long? = null,
+        onPodcastIdAssigned: suspend (Long) -> Unit = {},
     ): Long {
         val report = earningsDao.getReport(reportId)
             ?: error("EarningsReport $reportId not found")
@@ -142,6 +148,8 @@ class BundleSummarizer @Inject constructor(
             sourceMaterial = report.contentMarkdown,
             minutes = minutes,
             customPrompt = customPrompt,
+            existingPodcastId = existingPodcastId,
+            onPodcastIdAssigned = onPodcastIdAssigned,
         )
     }
 
@@ -157,6 +165,8 @@ class BundleSummarizer @Inject constructor(
         summaryText: String,
         minutes: PodcastMinutes,
         customPrompt: String?,
+        existingPodcastId: Long? = null,
+        onPodcastIdAssigned: suspend (Long) -> Unit = {},
     ): Long {
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
         val ticker = articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"
@@ -168,6 +178,8 @@ class BundleSummarizer @Inject constructor(
             sourceMaterial = summaryText,
             minutes = minutes,
             customPrompt = customPrompt,
+            existingPodcastId = existingPodcastId,
+            onPodcastIdAssigned = onPodcastIdAssigned,
         )
     }
 
@@ -177,21 +189,52 @@ class BundleSummarizer @Inject constructor(
         sourceMaterial: String,
         minutes: PodcastMinutes,
         customPrompt: String?,
+        existingPodcastId: Long? = null,
+        onPodcastIdAssigned: suspend (Long) -> Unit = {},
     ): Long {
-        val pending = Podcast(
-            sourceType = PodcastSourceType.CUSTOM_TEXT.name,
-            sourceId = sourceId,
-            title = title,
-            voiceHost = GeminiTts.VoicePair.Default.host,
-            voiceAnalyst = GeminiTts.VoicePair.Default.analyst,
-            filePath = null,
-            durationMs = null,
-            characterCount = minutes.charBudget,
-            status = PodcastGenerationStatus.PENDING.name,
-            generationError = null,
-            createdAtMillis = System.currentTimeMillis(),
-        )
-        val id = podcastDao.insert(pending)
+        // Retry path: if the caller passed a previously-created podcast
+        // row id (because a prior attempt failed), reset that row to
+        // PENDING and overwrite in place rather than insert a duplicate
+        // (#39 — "spam bug"). Falls back to a fresh insert if the row no
+        // longer exists.
+        val existing = existingPodcastId?.let { podcastDao.get(it) }
+        val id: Long = if (existing != null) {
+            podcastDao.update(
+                existing.copy(
+                    title = title,
+                    sourceType = PodcastSourceType.CUSTOM_TEXT.name,
+                    sourceId = sourceId,
+                    characterCount = minutes.charBudget,
+                    filePath = null,
+                    durationMs = null,
+                    status = PodcastGenerationStatus.PENDING.name,
+                    generationError = null,
+                )
+            )
+            AppLogger.i(TAG, "reusing podcast row ${existing.id} for retry")
+            existing.id
+        } else {
+            val pending = Podcast(
+                sourceType = PodcastSourceType.CUSTOM_TEXT.name,
+                sourceId = sourceId,
+                title = title,
+                voiceHost = GeminiTts.VoicePair.Default.host,
+                voiceAnalyst = GeminiTts.VoicePair.Default.analyst,
+                filePath = null,
+                durationMs = null,
+                characterCount = minutes.charBudget,
+                status = PodcastGenerationStatus.PENDING.name,
+                generationError = null,
+                createdAtMillis = System.currentTimeMillis(),
+            )
+            podcastDao.insert(pending)
+        }
+        // Notify caller (worker) of the row id IMMEDIATELY so it can
+        // persist on AiJob.resultRefId. A process kill anywhere below
+        // would otherwise orphan this row and the next retry would
+        // create a fresh duplicate (#39).
+        runCatching { onPodcastIdAssigned(id) }
+            .onFailure { AppLogger.w(TAG, "onPodcastIdAssigned callback failed: ${it.message}") }
 
         runCatching {
             podcastDao.update(podcastDao.get(id)!!.copy(status = PodcastGenerationStatus.GENERATING.name))
@@ -200,15 +243,18 @@ class BundleSummarizer @Inject constructor(
                 append(DIALOGUE_SYSTEM)
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
                 append("(~").append(minutes.charBudget).append(" characters of dialogue). ")
-                append("Pace the conversation so the entire script lands within ±15% of that target. ")
-                append("Number of turns should scale with duration (rule of thumb: ")
-                append(minutes.minutes * 2).append(" total turns).\n\n")
+                append("A ").append(minutes.minutes).append("-minute podcast typically contains ")
+                append(minutes.minutes * 2).append("–").append(minutes.minutes * 3)
+                append(" distinct Host/Analyst exchanges. Pace the conversation so the ")
+                append("entire script lands within ±10% of that target.\n\n")
                 append("LENGTH IS A HARD REQUIREMENT. You MUST produce at least ")
-                append((minutes.charBudget * 0.85).toInt()).append(" characters of dialogue. ")
+                append((minutes.charBudget * TARGET_THRESHOLD).toInt()).append(" characters of dialogue. ")
+                append("Failing the minimum is unacceptable — count your characters as you go. ")
                 append("Do NOT wrap up early. If you feel the conversation is nearing an end ")
                 append("before reaching the target, instead introduce a new angle: ")
                 append("a competing analyst view, a historical analog, second-order effects, ")
-                append("or what to watch in the next quarter. End ONLY when you've covered the full duration.")
+                append("competitive positioning, or what to watch in the next quarter. ")
+                append("End ONLY when you've covered the full duration.")
             }
             val scriptSystem = promptPrefs.applyExtras(
                 base = baseScriptSystem,
@@ -258,12 +304,15 @@ class BundleSummarizer @Inject constructor(
     }
 
     /**
-     * Drive the dialogue model toward [targetChars] of script. If the
-     * model stops with `max_tokens`, request a seamless continuation
-     * (up to [MAX_CONTINUATIONS] follow-ups). If the model finishes
-     * naturally but well short of target, do one extension pass to
-     * push it closer. Finally trim a trailing mid-sentence line so we
-     * never hand TTS a cut-off thought (#34/#35).
+     * Drive the dialogue model toward [targetChars] of script. Up to
+     * [MAX_CONTINUATIONS] continuation passes are run whenever the
+     * accumulated length is under [TARGET_THRESHOLD] × target.
+     *
+     * Each continuation call gets its own 10-attempt retry with linear
+     * 5n-second backoff (5s → 50s) on transient network errors — a single
+     * dropped request previously caused [generateScript] to bail and return
+     * the short initial script (#40). Total worst-case wait per
+     * continuation: 5+10+…+50 = 275s.
      */
     private suspend fun generateScript(
         scriptSystem: String,
@@ -281,7 +330,8 @@ class BundleSummarizer @Inject constructor(
         val combined = StringBuilder(initial.text.trim())
         var stop = initial.stopReason
         var rounds = 0
-        val minAcceptable = (targetChars * 0.85).toInt()
+        val minAcceptable = (targetChars * TARGET_THRESHOLD).toInt()
+        AppLogger.i(TAG, "podcast script initial pass: len=${combined.length}/$targetChars stop=$stop")
 
         while (rounds < MAX_CONTINUATIONS && combined.length < minAcceptable) {
             val reason = when (stop) {
@@ -297,26 +347,67 @@ class BundleSummarizer @Inject constructor(
                 append("Source material:\n").append(source)
                 append("\n\nScript so far (do not repeat any line):\n").append(combined)
             }
-            val next = runCatching {
-                router.complete(
-                    usage = AiUsage.PODCAST_SCRIPT,
-                    system = continuationSystem,
-                    userMessage = continuationUser,
-                    maxTokens = maxTokens,
-                    temperature = 0.6,
-                )
-            }.getOrNull() ?: break
+            val next = continuationWithRetry(continuationSystem, continuationUser, maxTokens, rounds + 1)
+            if (next == null) {
+                AppLogger.w(TAG, "podcast script continuation ${rounds + 1} gave up after $CONTINUATION_RETRIES retries; using partial script (len=${combined.length}/$targetChars)")
+                break
+            }
             val cont = next.text.trim()
-            if (cont.isBlank()) break
+            if (cont.isBlank()) {
+                AppLogger.w(TAG, "podcast script continuation ${rounds + 1} returned blank text; stopping")
+                break
+            }
             // Glue with a single newline so the speaker-label regex in
             // GeminiTts.chunkAtSpeakerBoundaries still segments correctly.
             combined.append('\n').append(cont)
             stop = next.stopReason
             rounds++
-            AppLogger.i(TAG, "podcast script continuation $rounds (len=${combined.length}/$targetChars)")
+            AppLogger.i(TAG, "podcast script continuation $rounds ok (len=${combined.length}/$targetChars stop=$stop)")
         }
 
+        if (combined.length < minAcceptable) {
+            AppLogger.w(TAG, "podcast script under target: len=${combined.length}/$targetChars after $rounds continuation(s)")
+        }
         return trimTrailingPartialLine(combined.toString())
+    }
+
+    /**
+     * Retry the continuation request up to [CONTINUATION_RETRIES] times
+     * with linear 5n-second backoff (5s, 10s, 15s, … 50s). Per user
+     * direction on #40 — the previous single-attempt strategy meant any
+     * transient network failure dropped the podcast back to the short
+     * initial script. Returns the result or null if every attempt failed.
+     */
+    private suspend fun continuationWithRetry(
+        system: String,
+        user: String,
+        maxTokens: Int,
+        passIndex: Int,
+    ): AiCompletion? {
+        var lastErr: Throwable? = null
+        for (attempt in 1..CONTINUATION_RETRIES) {
+            try {
+                return router.complete(
+                    usage = AiUsage.PODCAST_SCRIPT,
+                    system = system,
+                    userMessage = user,
+                    maxTokens = maxTokens,
+                    temperature = 0.6,
+                )
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                // Cooperative cancellation — let the outer job handle it
+                // rather than silently swallowing.
+                throw ce
+            } catch (t: Throwable) {
+                lastErr = t
+                if (attempt >= CONTINUATION_RETRIES) break
+                val backoffMs = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
+                AppLogger.w(TAG, "podcast script pass $passIndex attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
+                kotlinx.coroutines.delay(backoffMs)
+            }
+        }
+        AppLogger.w(TAG, "podcast script pass $passIndex exhausted all $CONTINUATION_RETRIES retries: ${lastErr?.message}")
+        return null
     }
 
     /**
@@ -335,7 +426,10 @@ class BundleSummarizer @Inject constructor(
 
     private companion object {
         const val TAG = "BundleSummarizer"
-        const val MAX_CONTINUATIONS = 2
+        const val MAX_CONTINUATIONS = 3
+        const val TARGET_THRESHOLD = 0.90
+        const val CONTINUATION_RETRIES = 10
+        const val CONTINUATION_BACKOFF_STEP_MS = 5_000L
         private val SENTENCE_TERMINATORS = setOf('.', '!', '?', '"', '\'', ')', ']')
 
         const val BASE_SUMMARY_SYSTEM = """

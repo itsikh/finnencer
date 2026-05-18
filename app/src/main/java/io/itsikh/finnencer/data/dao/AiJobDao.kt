@@ -72,8 +72,14 @@ interface AiJobDao {
     /**
      * Reset a finished (failed / completed / canceled) job back to
      * QUEUED so a fresh worker run can pick it up. Clears the timing
-     * + result fields so the Tasks UI doesn't show stale "failed at"
-     * info while it's retrying.
+     * + result-display fields so the Tasks UI doesn't show stale
+     * "failed at" info while it's retrying.
+     *
+     * `resultRefId` is intentionally PRESERVED so the worker can find
+     * any in-flight artifact (e.g. a FAILED podcast row from a prior
+     * attempt) and reuse it instead of inserting a duplicate (#39).
+     * The Tasks UI gates the "open" affordance on `resultKind` (which
+     * we still clear), so a kept refId without a kind stays inert.
      */
     @Query(
         """
@@ -83,13 +89,21 @@ interface AiJobDao {
             startedAtMillis = NULL,
             completedAtMillis = NULL,
             resultKind = NULL,
-            resultRefId = NULL,
             resultText = NULL,
             resultModel = NULL
         WHERE id = :id
         """
     )
     suspend fun markQueued(id: String)
+
+    /**
+     * Persist the in-flight artifact id (e.g. a Podcast row id) as soon
+     * as the worker creates or reuses one. Lets a retry after a network
+     * failure find and overwrite the same podcast row instead of
+     * leaving an orphan + creating a fresh one (#39).
+     */
+    @Query("UPDATE ai_jobs SET resultRefId = :refId WHERE id = :id")
+    suspend fun setResultRefId(id: String, refId: String?)
 
     @Query("DELETE FROM ai_jobs WHERE id = :id")
     suspend fun delete(id: String)
