@@ -41,11 +41,23 @@ class AiJobWorker @AssistedInject constructor(
     private val reportGenerator: ReportGenerator,
     private val earningsDao: EarningsDao,
     private val concurrencyGate: JobConcurrencyGate,
+    private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         val jobId = inputData.getString(KEY_JOB_ID) ?: return Result.failure()
         val job = dao.get(jobId) ?: return Result.failure()
+
+        // Pre-flight: if the device is plainly offline, fail-fast with
+        // the friendly "no internet" message instead of burning ~3 min
+        // of retries before giving the user the same message (#42).
+        if (!networkAvailability.isConnected()) {
+            val msg = "No internet connection. Check your network and try again."
+            AppLogger.w(TAG, "ai job ${job.id} pre-flight: no network — failing fast")
+            dao.markFailed(job.id, AiJobStatus.FAILED.name, msg, System.currentTimeMillis())
+            notifier.notifyFailed(job.id, job.title, msg)
+            return Result.failure()
+        }
 
         // Pick a gate so the user can serialize batches (Settings →
         // Background jobs). Defaults to 1 of each kind → enqueuing 10

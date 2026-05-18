@@ -59,6 +59,7 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 fun PodcastPlayerScreen(
     onBack: () -> Unit,
     onOpenPodcast: (Long) -> Unit = {},
+    onOpenReader: () -> Unit = {},
 ) {
     val vm: PodcastPlayerViewModel = hiltViewModel()
     val podcast by vm.podcast.collectAsState()
@@ -187,11 +188,45 @@ fun PodcastPlayerScreen(
                         )
                     }
                 }
-                PodcastGenerationStatus.FAILED.name -> Text(
-                    p.generationError ?: "Generation failed",
-                    color = FinnencerColors.Coral,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                PodcastGenerationStatus.FAILED.name -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text(
+                        p.generationError ?: "Generation failed",
+                        color = FinnencerColors.Coral,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    // If the script was already produced before the
+                    // TTS step blew up, give the user a way to read
+                    // the dialogue text now instead of waiting for
+                    // audio to ever succeed (#42 fallback).
+                    if (!p.scriptText.isNullOrBlank()) {
+                        androidx.compose.material3.FilledTonalButton(
+                            onClick = {
+                                io.itsikh.finnencer.ui.screens.reader.ReaderHolder.store(
+                                    io.itsikh.finnencer.ui.screens.reader.ReaderHolder.Payload(
+                                        title = p.title,
+                                        body = p.scriptText,
+                                        attribution = "Podcast script · ${p.voiceHost} · ${p.voiceAnalyst ?: ""}",
+                                    )
+                                )
+                                onOpenReader()
+                            },
+                            colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                                containerColor = FinnencerColors.Violet,
+                                contentColor = FinnencerColors.TextOnAccent,
+                            ),
+                        ) {
+                            Text("Read the script instead")
+                        }
+                        Text(
+                            "${p.scriptText.length} characters of dialogue are saved locally — no internet needed.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    }
+                }
                 PodcastGenerationStatus.READY.name -> {
                     PlayerControls(
                         positionMs = ui.positionMs,

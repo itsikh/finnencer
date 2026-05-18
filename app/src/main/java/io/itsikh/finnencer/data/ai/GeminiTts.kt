@@ -14,7 +14,6 @@ import io.itsikh.finnencer.data.api.GeminiSpeechConfig
 import io.itsikh.finnencer.data.api.GeminiVoiceConfig
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.entity.ApiUsage
-import kotlinx.coroutines.delay
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -34,6 +33,7 @@ import kotlin.math.min
 class GeminiTts @Inject constructor(
     private val service: GeminiService,
     private val apiUsageDao: ApiUsageDao,
+    private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
 ) {
 
     /** Reasonable default voice pair: Charon (host) + Aoede (analyst). */
@@ -48,41 +48,76 @@ class GeminiTts @Inject constructor(
      * a single WAV file at [outputFile]. Returns the output file size +
      * approximate duration in milliseconds.
      */
+    /**
+     * Render [script] to [outputFile] (24 kHz mono 16-bit WAV).
+     *
+     * When [cacheDir] is non-null, each chunk's decoded PCM is persisted
+     * to `cacheDir/chunk_$i.pcm` immediately after Gemini returns it.
+     * On a retry that calls this method with the same script + same
+     * [cacheDir], chunks already on disk are reused and only the missing
+     * ones are re-billed (#42 — "rewire to be bulletproof"). Caller is
+     * expected to wipe [cacheDir] when starting fresh.
+     */
     suspend fun synthesizeDialogue(
         script: String,
         voices: VoicePair = VoicePair.Default,
         outputFile: File,
         model: String = "gemini-2.5-flash-preview-tts",
+        cacheDir: File? = null,
     ): TtsResult {
         val chunks = chunkAtSpeakerBoundaries(script, CHARS_PER_CHUNK)
         if (chunks.isEmpty()) error("Empty script")
 
+        outputFile.parentFile?.mkdirs()
+        cacheDir?.mkdirs()
         // Stream decoded PCM straight to a temp file rather than
         // accumulating in an in-memory ByteArrayOutputStream. A 10-min
         // podcast is ~60 MB of PCM across ~6 chunks; holding all of it
         // on the heap (twice, since .toByteArray() copies) triggers
         // OutOfMemoryError on real devices (#31 — Base64.decode OOM).
-        outputFile.parentFile?.mkdirs()
         val pcmTmp = File(outputFile.parentFile, "${outputFile.name}.pcm.tmp")
         runCatching { pcmTmp.delete() }
         var charsSubmitted = 0
         var pcmTotalBytes = 0L
+        var cachedChunks = 0
         val startedAt = System.currentTimeMillis()
 
         FileOutputStream(pcmTmp).use { pcmOut ->
             for ((idx, chunk) in chunks.withIndex()) {
-                val req = buildRequest(chunk, voices)
-                val resp = generateWithRetry(model, req, idx)
-                val part = resp.candidates.firstOrNull()?.content?.parts?.firstOrNull()
-                val inline = part?.inlineData ?: error("Gemini returned no inlineData in chunk $idx")
-                val bytes = Base64.decode(inline.data, Base64.DEFAULT)
+                val chunkFile = cacheDir?.let { File(it, "chunk_$idx.pcm") }
+                val bytes: ByteArray = if (chunkFile != null && chunkFile.exists() && chunkFile.length() > 0) {
+                    cachedChunks++
+                    Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} reused from cache (${chunkFile.length()}B)")
+                    chunkFile.readBytes()
+                } else {
+                    val req = buildRequest(chunk, voices)
+                    val resp = generateWithRetry(model, req, idx)
+                    val part = resp.candidates.firstOrNull()?.content?.parts?.firstOrNull()
+                    val inline = part?.inlineData ?: error("Gemini returned no inlineData in chunk $idx")
+                    val decoded = Base64.decode(inline.data, Base64.DEFAULT)
+                    // Write to cache atomically (tmp then rename) so a
+                    // crash mid-write can never leave a half-written
+                    // chunk that resume would treat as complete.
+                    if (chunkFile != null) {
+                        val tmp = File(chunkFile.parentFile, "${chunkFile.name}.tmp")
+                        runCatching { tmp.delete() }
+                        FileOutputStream(tmp).use { it.write(decoded) }
+                        if (!tmp.renameTo(chunkFile)) {
+                            // Rename can fail on some FS-edge cases —
+                            // fall back to copy-then-delete which is
+                            // slightly less atomic but always works.
+                            tmp.inputStream().use { input ->
+                                FileOutputStream(chunkFile).use { input.copyTo(it) }
+                            }
+                            runCatching { tmp.delete() }
+                        }
+                    }
+                    charsSubmitted += chunk.length
+                    Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} ok (${decoded.size}B)")
+                    decoded
+                }
                 pcmOut.write(bytes)
                 pcmTotalBytes += bytes.size
-                charsSubmitted += chunk.length
-                Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} ok (${bytes.size}B)")
-                // Don't hold the per-chunk Base64 string / decoded bytes
-                // any longer than needed — the JSON response from Retrofit
-                // already kept them in heap once.
                 @Suppress("UNUSED_VALUE", "AssignedValueIsNeverRead")
                 var unused: ByteArray? = bytes
                 unused = null
@@ -91,9 +126,16 @@ class GeminiTts @Inject constructor(
 
         writeWavFromPcmFile(pcmTmp, pcmTotalBytes, SAMPLE_RATE, outputFile)
         runCatching { pcmTmp.delete() }
+        // Once we have the final WAV the per-chunk cache is dead weight.
+        cacheDir?.let { dir ->
+            runCatching { dir.listFiles()?.forEach { it.delete() } ; dir.delete() }
+        }
 
         val durationMs = (pcmTotalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000L
+        // Only count the chunks we actually sent to Gemini against usage —
+        // cached chunks were already billed on the prior attempt.
         recordUsage(model, charsSubmitted, pcmTotalBytes.toInt(), startedAt, ok = true, err = null)
+        Log.i(TAG, "tts done: ${chunks.size} chunks total, $cachedChunks from cache, ${chunks.size - cachedChunks} freshly synthesized")
         return TtsResult(
             file = outputFile,
             durationMs = durationMs,
@@ -125,8 +167,10 @@ class GeminiTts @Inject constructor(
                 lastErr = t
                 if (attempt >= RETRY_ATTEMPTS) break
                 val backoffMs = attempt * RETRY_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
-                Log.w(TAG, "tts chunk $chunkIdx attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
-                delay(backoffMs)
+                Log.w(TAG, "tts chunk $chunkIdx attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s for network")
+                // Wake the retry the moment connectivity returns rather
+                // than sleeping the full backoff window blind (#42).
+                networkAvailability.awaitNetwork(backoffMs)
             }
         }
         throw lastErr ?: IllegalStateException("tts chunk $chunkIdx failed after $RETRY_ATTEMPTS attempts")

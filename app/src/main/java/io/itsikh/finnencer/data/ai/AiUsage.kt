@@ -104,5 +104,11 @@ val AiUsage.defaultModel: AiModel
         AiUsage.REPORT_BRIEF -> AiModel.CLAUDE_SONNET_4_6
         AiUsage.REPORT_STANDARD -> AiModel.CLAUDE_SONNET_4_6
         AiUsage.REPORT_DEEP -> AiModel.CLAUDE_OPUS_4_7
-        AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_OPUS_4_7
+        // Podcast script doesn't need Opus 4.7's 1M context — Sonnet 4.6
+        // responds 2-3x faster and costs ~5x less per token, which cuts
+        // total worker runtime well clear of WorkManager's 10-min cap
+        // even with continuation passes (#42 — "rewire & optimize").
+        // Users who already picked Opus 4.7 in Settings → AI keep their
+        // choice; this only affects fresh installs / unconfigured slots.
+        AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_4_6
     }

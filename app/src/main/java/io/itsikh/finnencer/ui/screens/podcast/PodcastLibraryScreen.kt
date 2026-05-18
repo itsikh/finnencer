@@ -82,9 +82,7 @@ class PodcastLibraryViewModel @Inject constructor(
 
     fun delete(podcast: Podcast) {
         viewModelScope.launch {
-            podcast.filePath?.let { path ->
-                runCatching { File(path).takeIf { it.exists() }?.delete() }
-            }
+            deleteFilesFor(podcast)
             podcastDao.delete(podcast.id)
         }
     }
@@ -100,10 +98,27 @@ class PodcastLibraryViewModel @Inject constructor(
                 it.status == PodcastGenerationStatus.FAILED.name
             }
             failed.forEach { p ->
-                p.filePath?.let { path ->
-                    runCatching { File(path).takeIf { it.exists() }?.delete() }
-                }
+                deleteFilesFor(p)
                 podcastDao.delete(p.id)
+            }
+        }
+    }
+
+    /**
+     * Delete every on-disk artifact tied to [podcast]: the final WAV (if
+     * any), plus the per-podcast TTS resume cache dir (#42 — would
+     * otherwise grow forever as failed-then-deleted podcasts leave
+     * orphaned chunk PCMs behind).
+     */
+    private fun deleteFilesFor(podcast: Podcast) {
+        podcast.filePath?.let { path ->
+            runCatching { File(path).takeIf { it.exists() }?.delete() }
+        }
+        val cacheDir = File(context.filesDir, "podcasts/cache/podcast_${podcast.id}")
+        runCatching {
+            if (cacheDir.exists()) {
+                cacheDir.listFiles()?.forEach { it.delete() }
+                cacheDir.delete()
             }
         }
     }

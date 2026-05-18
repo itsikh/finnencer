@@ -41,7 +41,20 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+/**
+ * v5 → v6: adds `script_text` to `podcasts` so the dialogue script is
+ * persisted as soon as the LLM returns it. Lets a TTS-stage failure
+ * retry without re-billing the script step, and gives the user a
+ * "read the script" fallback when audio rendering keeps failing (#42).
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE podcasts ADD COLUMN script_text TEXT")
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
+    MIGRATION_5_6,
 )

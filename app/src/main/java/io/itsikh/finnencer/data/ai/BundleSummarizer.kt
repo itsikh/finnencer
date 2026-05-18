@@ -32,6 +32,7 @@ class BundleSummarizer @Inject constructor(
     private val podcastDao: PodcastDao,
     private val earningsDao: EarningsDao,
     private val promptPrefs: PromptPreferences,
+    private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
 ) {
 
     enum class Pages(val target: Int, val maxTokens: Int) {
@@ -198,6 +199,10 @@ class BundleSummarizer @Inject constructor(
         // (#39 — "spam bug"). Falls back to a fresh insert if the row no
         // longer exists.
         val existing = existingPodcastId?.let { podcastDao.get(it) }
+        // Preserve scriptText across retries — the dialogue was expensive
+        // to produce and is deterministic from the same source, so the
+        // TTS-stage retry can reuse it without re-billing the LLM.
+        val preservedScript: String? = existing?.scriptText?.takeIf { it.isNotBlank() }
         val id: Long = if (existing != null) {
             podcastDao.update(
                 existing.copy(
@@ -209,9 +214,10 @@ class BundleSummarizer @Inject constructor(
                     durationMs = null,
                     status = PodcastGenerationStatus.PENDING.name,
                     generationError = null,
+                    scriptText = preservedScript,
                 )
             )
-            AppLogger.i(TAG, "reusing podcast row ${existing.id} for retry")
+            AppLogger.i(TAG, "reusing podcast row ${existing.id} for retry (script preserved: ${preservedScript != null})")
             existing.id
         } else {
             val pending = Podcast(
@@ -266,19 +272,47 @@ class BundleSummarizer @Inject constructor(
             // target length (#34/#35). Capped well under Anthropic's
             // 16k-token output limit on Sonnet 4.6 / Opus 4.7.
             val maxTokens = (minutes.charBudget / 2.5).toInt().coerceIn(2000, 12000)
-            val script = generateScript(
-                scriptSystem = scriptSystem,
-                source = sourceMaterial,
-                maxTokens = maxTokens,
-                targetChars = minutes.charBudget,
-            )
+            // Phase 1: produce the script (skip if a prior failed attempt
+            // already persisted one). Persisted to the row IMMEDIATELY so
+            // a subsequent TTS-stage failure can reuse it without
+            // re-billing the LLM (#42).
+            val script: String = if (preservedScript != null) {
+                AppLogger.i(TAG, "podcast $id: reusing persisted script (${preservedScript.length} chars)")
+                preservedScript
+            } else {
+                val freshScript = generateScript(
+                    scriptSystem = scriptSystem,
+                    source = sourceMaterial,
+                    maxTokens = maxTokens,
+                    targetChars = minutes.charBudget,
+                )
+                // Best-effort persistence — if the row was deleted (user
+                // hit "Clear failed") or the DB write is transiently
+                // unavailable, the worst case is the next retry
+                // regenerates the script. We do NOT crash the whole job
+                // over a persistence hiccup since the in-memory script
+                // is still good for the TTS step.
+                runCatching {
+                    podcastDao.get(id)?.let { row ->
+                        podcastDao.update(row.copy(scriptText = freshScript))
+                    }
+                }.onFailure {
+                    AppLogger.w(TAG, "podcast $id: failed to persist script (TTS will continue, retry would regenerate): ${it.message}")
+                }
+                freshScript
+            }
 
+            // Phase 2: synthesize. Chunk PCMs are cached under a stable
+            // per-podcast dir so a partial failure resumes mid-podcast
+            // instead of regenerating earlier chunks (#1).
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }
+            val cacheDir = File(context.filesDir, "podcasts/cache/podcast_$id")
             val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
             val result = tts.synthesizeDialogue(
                 script = script,
                 voices = GeminiTts.VoicePair.Default,
                 outputFile = outputFile,
+                cacheDir = cacheDir,
             )
 
             podcastDao.update(
@@ -401,8 +435,10 @@ class BundleSummarizer @Inject constructor(
                 lastErr = t
                 if (attempt >= CONTINUATION_RETRIES) break
                 val backoffMs = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
-                AppLogger.w(TAG, "podcast script $passLabel attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
-                kotlinx.coroutines.delay(backoffMs)
+                AppLogger.w(TAG, "podcast script $passLabel attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s for network")
+                // Wake the retry the instant connectivity returns rather
+                // than sleeping the full backoff window blind (#42).
+                networkAvailability.awaitNetwork(backoffMs)
             }
         }
         AppLogger.w(TAG, "podcast script $passLabel exhausted all $CONTINUATION_RETRIES retries: ${lastErr?.message}")

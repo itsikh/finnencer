@@ -145,6 +145,7 @@ fun AppNavHost() {
                             popUpTo("podcast/{podcastId}") { inclusive = true }
                         }
                     },
+                    onOpenReader = { navController.navigate("reader") },
                 )
             }
             composable("podcasts") {

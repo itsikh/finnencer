@@ -31,4 +31,11 @@ data class Podcast(
     @ColumnInfo(name = "created_at_millis") val createdAtMillis: Long,
     @ColumnInfo(name = "play_position_ms") val playPositionMs: Long = 0,
     @ColumnInfo(name = "last_played_at_millis") val lastPlayedAtMillis: Long? = null,
+    /**
+     * The fully-assembled Host/Analyst dialogue script. Persisted as soon
+     * as the script step completes so that a TTS-stage failure can be
+     * retried without re-billing the script LLM, AND so the user can
+     * still read the text even if audio rendering never succeeds (#42).
+     */
+    @ColumnInfo(name = "script_text") val scriptText: String? = null,
 )
