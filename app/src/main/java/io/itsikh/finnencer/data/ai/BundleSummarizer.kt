@@ -304,15 +304,18 @@ class BundleSummarizer @Inject constructor(
     }
 
     /**
-     * Drive the dialogue model toward [targetChars] of script. Up to
-     * [MAX_CONTINUATIONS] continuation passes are run whenever the
-     * accumulated length is under [TARGET_THRESHOLD] × target.
+     * Drive the dialogue model toward [targetChars] of script. Both the
+     * initial pass AND each continuation pass run through the same
+     * 10-attempt linear-backoff retry helper, so a single transient
+     * network drop on the *very first* request no longer fails the
+     * whole podcast (#41 follow-up). Up to [MAX_CONTINUATIONS]
+     * continuation passes are run whenever the accumulated length is
+     * under [TARGET_THRESHOLD] × target.
      *
-     * Each continuation call gets its own 10-attempt retry with linear
-     * 5n-second backoff (5s → 50s) on transient network errors — a single
-     * dropped request previously caused [generateScript] to bail and return
-     * the short initial script (#40). Total worst-case wait per
-     * continuation: 5+10+…+50 = 275s.
+     * Total worst-case wait per pass: 5+10+…+50 = 275s. An initial-pass
+     * failure that exhausts all retries throws and the surrounding
+     * runCatching in renderPodcast marks the row FAILED with the
+     * friendly error message.
      */
     private suspend fun generateScript(
         scriptSystem: String,
@@ -320,13 +323,8 @@ class BundleSummarizer @Inject constructor(
         maxTokens: Int,
         targetChars: Int,
     ): String {
-        val initial = router.complete(
-            usage = AiUsage.PODCAST_SCRIPT,
-            system = scriptSystem,
-            userMessage = source,
-            maxTokens = maxTokens,
-            temperature = 0.6,
-        )
+        val initial = scriptCallWithRetry(scriptSystem, source, maxTokens, passLabel = "initial")
+            ?: throw java.io.IOException("Podcast script call failed after $CONTINUATION_RETRIES retries")
         val combined = StringBuilder(initial.text.trim())
         var stop = initial.stopReason
         var rounds = 0
@@ -347,7 +345,7 @@ class BundleSummarizer @Inject constructor(
                 append("Source material:\n").append(source)
                 append("\n\nScript so far (do not repeat any line):\n").append(combined)
             }
-            val next = continuationWithRetry(continuationSystem, continuationUser, maxTokens, rounds + 1)
+            val next = scriptCallWithRetry(continuationSystem, continuationUser, maxTokens, passLabel = "cont ${rounds + 1}")
             if (next == null) {
                 AppLogger.w(TAG, "podcast script continuation ${rounds + 1} gave up after $CONTINUATION_RETRIES retries; using partial script (len=${combined.length}/$targetChars)")
                 break
@@ -372,17 +370,18 @@ class BundleSummarizer @Inject constructor(
     }
 
     /**
-     * Retry the continuation request up to [CONTINUATION_RETRIES] times
-     * with linear 5n-second backoff (5s, 10s, 15s, … 50s). Per user
-     * direction on #40 — the previous single-attempt strategy meant any
-     * transient network failure dropped the podcast back to the short
-     * initial script. Returns the result or null if every attempt failed.
+     * Retry a podcast-script call up to [CONTINUATION_RETRIES] times with
+     * linear 5n-second backoff (5s, 10s, 15s, … 50s). Used for BOTH the
+     * initial pass and the continuation passes so a single dropped
+     * request on flaky network doesn't fail the whole podcast (#41).
+     * [passLabel] tags log lines ("initial" / "cont 1" / "cont 2").
+     * Returns the result or null if every attempt failed.
      */
-    private suspend fun continuationWithRetry(
+    private suspend fun scriptCallWithRetry(
         system: String,
         user: String,
         maxTokens: Int,
-        passIndex: Int,
+        passLabel: String,
     ): AiCompletion? {
         var lastErr: Throwable? = null
         for (attempt in 1..CONTINUATION_RETRIES) {
@@ -402,11 +401,11 @@ class BundleSummarizer @Inject constructor(
                 lastErr = t
                 if (attempt >= CONTINUATION_RETRIES) break
                 val backoffMs = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
-                AppLogger.w(TAG, "podcast script pass $passIndex attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
+                AppLogger.w(TAG, "podcast script $passLabel attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
                 kotlinx.coroutines.delay(backoffMs)
             }
         }
-        AppLogger.w(TAG, "podcast script pass $passIndex exhausted all $CONTINUATION_RETRIES retries: ${lastErr?.message}")
+        AppLogger.w(TAG, "podcast script $passLabel exhausted all $CONTINUATION_RETRIES retries: ${lastErr?.message}")
         return null
     }
 

@@ -18,7 +18,6 @@ import kotlinx.coroutines.delay
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
@@ -104,10 +103,12 @@ class GeminiTts @Inject constructor(
     }
 
     /**
-     * Call Gemini's generate-content endpoint with a small retry loop
-     * over [SocketTimeoutException] — those are flaky in the field
-     * (#31 logs showed `tts chunk 1 failed: timeout` repeatedly) and
-     * the request is idempotent.
+     * Call Gemini's generate-content endpoint with retry on any transient
+     * network error. 10 attempts with linear 5n-second backoff (5s, 10s,
+     * 15s, … 50s) — matches the podcast-script retry policy so a flaky
+     * network is equally tolerated by the TTS stage (#41 follow-up).
+     * Coroutine cancellation is re-thrown so cooperative cancellation
+     * still works.
      */
     private suspend fun generateWithRetry(
         model: String,
@@ -115,16 +116,17 @@ class GeminiTts @Inject constructor(
         chunkIdx: Int,
     ): io.itsikh.finnencer.data.api.GeminiGenerateResponse {
         var lastErr: Throwable? = null
-        for (attempt in 0 until RETRY_ATTEMPTS) {
+        for (attempt in 1..RETRY_ATTEMPTS) {
             try {
                 return service.generateContent(model = model, request = req)
-            } catch (t: SocketTimeoutException) {
-                lastErr = t
-                Log.w(TAG, "tts chunk $chunkIdx attempt ${attempt + 1}/$RETRY_ATTEMPTS timed out, retrying")
-                delay(RETRY_BACKOFF_MS_BASE shl attempt) // 1s, 2s, 4s
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (t: Throwable) {
-                Log.w(TAG, "tts chunk $chunkIdx failed: ${t.message}")
-                throw t
+                lastErr = t
+                if (attempt >= RETRY_ATTEMPTS) break
+                val backoffMs = attempt * RETRY_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
+                Log.w(TAG, "tts chunk $chunkIdx attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting ${backoffMs / 1000}s")
+                delay(backoffMs)
             }
         }
         throw lastErr ?: IllegalStateException("tts chunk $chunkIdx failed after $RETRY_ATTEMPTS attempts")
@@ -292,8 +294,8 @@ class GeminiTts @Inject constructor(
         const val CHARS_PER_CHUNK = 4_500
         const val SAMPLE_RATE = 24_000
         const val BYTES_PER_SAMPLE = 2 // 16-bit mono
-        const val RETRY_ATTEMPTS = 3
-        const val RETRY_BACKOFF_MS_BASE = 1_000L
+        const val RETRY_ATTEMPTS = 10
+        const val RETRY_BACKOFF_STEP_MS = 5_000L
         private fun nope(@Suppress("unused") v: Any) {
             @Suppress("UNUSED_EXPRESSION") min(0, 0)
         }
