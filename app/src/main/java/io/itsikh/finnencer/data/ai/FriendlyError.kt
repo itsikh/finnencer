@@ -12,6 +12,14 @@ import java.net.UnknownHostException
  * The raw exception is still recorded by [AppLogger] for diagnostics; this
  * function exists so the UI doesn't dump an `UnknownHostException` stack
  * at the user (#38 — "please provide clearer errors").
+ *
+ * Matching walks the cause chain top-down and returns the first frame
+ * that maps to a known category. Drilling straight to the root cause
+ * before matching (the previous behavior) missed the `UnknownHostException`
+ * wrapper on Android because the root frame is `GaiException` whose
+ * message reads `android_getaddrinfo failed: EAI_NODATA (...)` — neither
+ * the type nor the substring matched, so the raw native string leaked to
+ * the UI (#41).
  */
 object FriendlyError {
 
@@ -19,22 +27,42 @@ object FriendlyError {
      *  knows which step blew up when failures can come from multiple. */
     fun describe(t: Throwable, stage: String? = null): String {
         val prefix = stage?.let { "${it.capitalize()}: " } ?: ""
-        val cause = unwrap(t)
-        val message = cause.message.orEmpty()
+        // Walk top-down: the most specific mappable frame is usually the
+        // outer wrapper (UnknownHostException, SocketTimeoutException,
+        // our own IOException("Anthropic HTTP …")) — not the inner root.
+        for (frame in causeChain(t)) {
+            val match = matchFrame(frame)
+            if (match != null) return prefix + match
+        }
+        // Final fallback — surface the root message but trim noise.
+        val root = causeChain(t).lastOrNull() ?: t
+        val msg = shorten(root.message.orEmpty())
+        return "$prefix${msg.ifBlank { "Generation failed (${root.javaClass.simpleName})" }}"
+    }
 
-        // Network: no DNS / no internet
-        if (cause is UnknownHostException || message.contains("Unable to resolve host", ignoreCase = true)) {
-            return "${prefix}No internet connection. Check your network and try again."
+    private fun matchFrame(frame: Throwable): String? {
+        val message = frame.message.orEmpty()
+
+        // Network: no DNS / no internet — catch by type, by the JVM
+        // wrapper's "Unable to resolve host" message, AND by the native
+        // GaiException's EAI_NODATA payload (#41).
+        if (frame is UnknownHostException ||
+            message.contains("Unable to resolve host", ignoreCase = true) ||
+            message.contains("EAI_NODATA", ignoreCase = true) ||
+            message.contains("android_getaddrinfo failed", ignoreCase = true) ||
+            message.contains("No address associated with hostname", ignoreCase = true)
+        ) {
+            return "No internet connection. Check your network and try again."
         }
         // Network: timeout
-        if (cause is SocketTimeoutException || message.contains("timeout", ignoreCase = true)) {
-            return "${prefix}The request timed out. Your network may be slow — try again in a moment."
+        if (frame is SocketTimeoutException || message.contains("timeout", ignoreCase = true)) {
+            return "The request timed out. Your network may be slow — try again in a moment."
         }
-        // HTTP status codes (the message looks like "Anthropic HTTP 401: ..."
+        // HTTP status codes (message looks like "Anthropic HTTP 401: ..."
         // or "Gemini HTTP 429: ..." per ClaudeClient / GeminiTextClient).
         val httpStatus = Regex("HTTP (\\d{3})").find(message)?.groupValues?.get(1)?.toIntOrNull()
         if (httpStatus != null) {
-            return prefix + when (httpStatus) {
+            return when (httpStatus) {
                 401, 403 -> "Your API key was rejected. Check it in Settings → API keys."
                 404 -> "The model or endpoint wasn't found. The provider may have changed it — try a different model in Settings → AI."
                 429 -> "Rate limit hit. Wait a minute, then try again — or pick a different model in Settings → AI."
@@ -42,26 +70,30 @@ object FriendlyError {
                 else -> "The AI provider returned HTTP $httpStatus. Try again, or pick a different model."
             }
         }
-        // I/O fallback
-        if (cause is IOException) {
-            return "${prefix}Network problem: ${shorten(message)}"
-        }
-        // Anthropic-style cancellation (job cancelled by WorkManager)
+        // Cancellation (WorkManager / scope teardown)
         if (message.contains("Job was cancelled", ignoreCase = true)) {
-            return "${prefix}The task was cancelled before it could finish. Try again."
+            return "The task was cancelled before it could finish. Try again."
         }
-        // Unknown — give the message but trim noise
-        return "$prefix${shorten(message).ifBlank { "Generation failed (${cause.javaClass.simpleName})" }}"
+        // I/O fallback — only after the more specific checks above, since
+        // UnknownHostException and SocketTimeoutException both extend IOException.
+        if (frame is IOException) {
+            return "Network problem: ${shorten(message)}"
+        }
+        return null
     }
 
-    private fun unwrap(t: Throwable): Throwable {
-        var c: Throwable = t
+    private fun causeChain(t: Throwable): List<Throwable> {
+        val out = ArrayList<Throwable>(4)
+        var c: Throwable? = t
         var hops = 0
-        while (c.cause != null && c.cause !== c && hops < 6) {
-            c = c.cause!!
+        while (c != null && hops < 8) {
+            out += c
+            val next = c.cause
+            if (next === c) break
+            c = next
             hops++
         }
-        return c
+        return out
     }
 
     private fun shorten(s: String): String {
