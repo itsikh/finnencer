@@ -89,10 +89,54 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
     }
 }
 
+/**
+ * v8 → v9: introduces `ticker_metrics` (current fundamentals snapshot
+ * per ticker — 52w range, P/E, EPS, market cap, beta, dividend yield,
+ * etc.) and `ticker_metrics_analysis` (per-day AI interpretation of
+ * those numbers). Fundamentals are fetched on-demand from Finnhub and
+ * refreshed daily; the analysis is keyed by ET calendar date.
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ticker_metrics` (" +
+                "`ticker` TEXT NOT NULL, " +
+                "`fetched_at_millis` INTEGER NOT NULL, " +
+                "`fifty_two_week_high` REAL, " +
+                "`fifty_two_week_low` REAL, " +
+                "`fifty_two_week_high_date` TEXT, " +
+                "`fifty_two_week_low_date` TEXT, " +
+                "`market_cap` REAL, " +
+                "`pe_ttm` REAL, " +
+                "`pe_normalized` REAL, " +
+                "`eps_ttm` REAL, " +
+                "`eps_normalized` REAL, " +
+                "`beta` REAL, " +
+                "`div_yield` REAL, " +
+                "`div_per_share` REAL, " +
+                "`avg_vol_10d` REAL, " +
+                "`avg_vol_3m` REAL, " +
+                "`rev_growth_yoy` REAL, " +
+                "`price_to_sales` REAL, " +
+                "PRIMARY KEY(`ticker`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ticker_metrics_analysis` (" +
+                "`ticker` TEXT NOT NULL, " +
+                "`as_of_date` TEXT NOT NULL, " +
+                "`analysis` TEXT NOT NULL, " +
+                "`model` TEXT NOT NULL, " +
+                "`generated_at_millis` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`ticker`, `as_of_date`))"
+        )
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
     MIGRATION_5_6,
     MIGRATION_6_7,
     MIGRATION_7_8,
+    MIGRATION_8_9,
 )

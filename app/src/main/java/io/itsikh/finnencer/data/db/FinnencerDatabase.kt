@@ -11,6 +11,7 @@ import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.dao.QueueItemDao
 import io.itsikh.finnencer.data.dao.TickerDao
+import io.itsikh.finnencer.data.dao.TickerMetricsDao
 import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.ApiUsage
 import io.itsikh.finnencer.data.entity.ArticleScore
@@ -25,6 +26,8 @@ import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.QueueItem
 import io.itsikh.finnencer.data.entity.SummaryVersion
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.data.entity.TickerMetrics
+import io.itsikh.finnencer.data.entity.TickerMetricsAnalysis
 
 @Database(
     entities = [
@@ -42,8 +45,10 @@ import io.itsikh.finnencer.data.entity.Ticker
         AiJob::class,
         QueueItem::class,
         MoveExplanation::class,
+        TickerMetrics::class,
+        TickerMetricsAnalysis::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {
@@ -56,6 +61,7 @@ abstract class FinnencerDatabase : RoomDatabase() {
     abstract fun aiJobDao(): AiJobDao
     abstract fun queueItemDao(): QueueItemDao
     abstract fun moveExplanationDao(): MoveExplanationDao
+    abstract fun tickerMetricsDao(): TickerMetricsDao
 
     companion object {
         const val NAME = "finnencer.db"

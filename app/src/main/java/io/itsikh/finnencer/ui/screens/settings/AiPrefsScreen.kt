@@ -100,23 +100,9 @@ class AiPrefsViewModel @Inject constructor(
 ) : ViewModel() {
 
     val current: StateFlow<Map<AiUsage, List<AiModelOption>>> = combine(
-        prefs.observeRanked(AiUsage.SCORING),
-        prefs.observeRanked(AiUsage.SUMMARY),
-        prefs.observeRanked(AiUsage.REPORT_BRIEF),
-        prefs.observeRanked(AiUsage.REPORT_STANDARD),
-        combine(
-            prefs.observeRanked(AiUsage.REPORT_DEEP),
-            prefs.observeRanked(AiUsage.PODCAST_SCRIPT),
-        ) { d, p -> d to p },
-    ) { sc, su, b, s, (d, p) ->
-        mapOf(
-            AiUsage.SCORING to sc,
-            AiUsage.SUMMARY to su,
-            AiUsage.REPORT_BRIEF to b,
-            AiUsage.REPORT_STANDARD to s,
-            AiUsage.REPORT_DEEP to d,
-            AiUsage.PODCAST_SCRIPT to p,
-        )
+        AiUsage.entries.map { usage -> prefs.observeRanked(usage) },
+    ) { arrays ->
+        AiUsage.entries.withIndex().associate { (i, usage) -> usage to arrays[i] }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val customModels: StateFlow<List<AiModelOption.Custom>> = discovered.observe()

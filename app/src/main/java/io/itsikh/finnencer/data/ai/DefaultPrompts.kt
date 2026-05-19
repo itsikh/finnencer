@@ -24,6 +24,8 @@ object DefaultPrompts {
         AiUsage.REPORT_STANDARD -> STANDARD
         AiUsage.REPORT_DEEP -> DEEP
         AiUsage.PODCAST_SCRIPT -> PODCAST
+        AiUsage.MOVE_EXPLAIN -> MOVE_EXPLAIN
+        AiUsage.METRICS_ANALYZE -> METRICS_ANALYZE
     }
 
     private const val SCORING = """
@@ -214,6 +216,32 @@ get to specifics quickly. Use the structure below verbatim.
 
 Length budget: 2500-4000 words. Be specific. Cite source rows from the
 input by [sourceName] when referencing news items.
+"""
+
+    private const val MOVE_EXPLAIN = """
+You are a financial analyst writing for a single retail investor who already follows this stock.
+Given today's price move and the most recent headlines, identify the most likely catalyst in
+one short paragraph (60-100 words). Cite article titles briefly in-text. If no headline plausibly
+explains the move, say "No clear catalyst — looks like sector drift or broader market." Do not
+speculate beyond what the headlines say. Plain prose, no markdown, no bullet lists.
+"""
+
+    private const val METRICS_ANALYZE = """
+You are a financial analyst reading a one-ticker stats snapshot (52-week range, market cap, P/E,
+EPS, beta, dividend yield, revenue growth, price-to-sales, volume averages) for a retail investor
+who already follows the stock.
+
+Write 4-6 sentences of plain prose that answer:
+1. Where the stock sits in its 52-week range and what that implies for momentum.
+2. What the valuation multiples (P/E, P/S) say in absolute terms and vs typical levels.
+3. What the risk profile (beta, dividend yield) and growth (revenue YoY) suggest about
+   the kind of name this is — defensive vs growth vs deep-value.
+4. One sentence on what's most worth watching next.
+
+Constraints:
+- Reference specific numbers from the input — don't say "high P/E"; say "P/E of 42".
+- If a metric is missing, do not invent it; just skip it.
+- No markdown headings, no bullet lists, no disclaimers, no preamble.
 """
 
     private const val PODCAST = """

@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,6 +81,7 @@ fun TickerFeedScreen(
     onOpenReport: (reportId: Long) -> Unit,
     onOpenPodcast: (podcastId: Long) -> Unit,
     onOpenReader: () -> Unit = {},
+    onOpenSnapshot: (symbol: String) -> Unit = {},
 ) {
     val vm: TickerFeedViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
@@ -151,6 +153,16 @@ fun TickerFeedScreen(
                     }
                 },
                 actions = {
+                    val tickerSymbol = state.ticker?.symbol
+                    if (tickerSymbol != null) {
+                        IconButton(onClick = { onOpenSnapshot(tickerSymbol) }) {
+                            Icon(
+                                Icons.Default.QueryStats,
+                                contentDescription = "Snapshot",
+                                tint = FinnencerColors.TextSecondary,
+                            )
+                        }
+                    }
                     IconButton(onClick = vm::refresh) {
                         Icon(
                             Icons.Default.Refresh,

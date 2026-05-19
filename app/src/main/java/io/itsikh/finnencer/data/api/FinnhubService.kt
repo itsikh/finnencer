@@ -37,6 +37,12 @@ interface FinnhubService {
 
     @GET("stock/price-target")
     suspend fun priceTarget(@Query("symbol") symbol: String): FinnhubPriceTarget
+
+    @GET("stock/metric")
+    suspend fun basicFinancials(
+        @Query("symbol") symbol: String,
+        @Query("metric") metric: String = "all",
+    ): FinnhubMetricResponse
 }
 
 data class FinnhubSearchResponse(
@@ -122,4 +128,34 @@ data class FinnhubPriceTarget(
     val targetMean: Double?,
     val targetMedian: Double?,
     val lastUpdated: String?,
+)
+
+data class FinnhubMetricResponse(
+    val symbol: String?,
+    val metric: FinnhubMetrics?,
+)
+
+/**
+ * Subset of Finnhub's /stock/metric?metric=all payload — only the fields
+ * actually rendered on the snapshot screen. Finnhub's field naming
+ * intermixes camelCase with leading-digit identifiers (e.g. `52WeekHigh`)
+ * which Kotlin can't represent directly; those get @SerializedName.
+ */
+data class FinnhubMetrics(
+    @SerializedName("52WeekHigh") val fiftyTwoWeekHigh: Double?,
+    @SerializedName("52WeekLow") val fiftyTwoWeekLow: Double?,
+    @SerializedName("52WeekHighDate") val fiftyTwoWeekHighDate: String?,
+    @SerializedName("52WeekLowDate") val fiftyTwoWeekLowDate: String?,
+    val marketCapitalization: Double?,
+    val peNormalizedAnnual: Double?,
+    val peTTM: Double?,
+    val epsNormalizedAnnual: Double?,
+    val epsTTM: Double?,
+    val beta: Double?,
+    val currentDividendYieldTTM: Double?,
+    val dividendPerShareTTM: Double?,
+    @SerializedName("10DayAverageTradingVolume") val avgVol10d: Double?,
+    @SerializedName("3MonthAverageTradingVolume") val avgVol3m: Double?,
+    val revenueGrowthTTMYoy: Double?,
+    val psTTM: Double?,
 )

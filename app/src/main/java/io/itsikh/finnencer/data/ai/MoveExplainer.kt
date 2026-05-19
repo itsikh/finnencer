@@ -25,6 +25,7 @@ class MoveExplainer @Inject constructor(
     private val newsDao: NewsDao,
     private val tickerDao: TickerDao,
     private val quotePoller: QuotePoller,
+    private val promptPrefs: PromptPreferences,
 ) {
 
     sealed class Outcome {
@@ -56,9 +57,13 @@ class MoveExplainer @Inject constructor(
 
         val tickerRow = tickerDao.get(symbol)
         val prompt = buildPrompt(symbol, tickerRow?.name, quote, articles)
-        val completion = router.completeWith(
-            model = AiModel.CLAUDE_HAIKU_4_5,
-            system = SYSTEM_PROMPT,
+        val system = promptPrefs.applyExtras(
+            base = DefaultPrompts.forUsage(AiUsage.MOVE_EXPLAIN),
+            extra = promptPrefs.get(AiUsage.MOVE_EXPLAIN),
+        )
+        val completion = router.complete(
+            usage = AiUsage.MOVE_EXPLAIN,
+            system = system,
             userMessage = prompt,
             maxTokens = 220,
             temperature = 0.3,
@@ -108,11 +113,5 @@ class MoveExplainer @Inject constructor(
     private companion object {
         const val WINDOW_MS = 36L * 60L * 60L * 1000L
         const val MAX_ARTICLES = 8
-        const val SYSTEM_PROMPT = """
-You are a financial analyst writing for a single retail investor who already follows this stock.
-Given today's price move and the most recent headlines, identify the most likely catalyst in
-one short paragraph (60-100 words). Cite article titles briefly in-text. If no headline plausibly
-explains the move, say "No clear catalyst — looks like sector drift or broader market." Do not
-speculate beyond what the headlines say. Plain prose, no markdown, no bullet lists."""
     }
 }

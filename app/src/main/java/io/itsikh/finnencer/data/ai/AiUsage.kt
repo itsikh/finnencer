@@ -30,6 +30,14 @@ enum class AiUsage(val displayName: String, val description: String) {
         displayName = "Podcast dialogue script",
         description = "Converts a report or article-bundle into a Host/Analyst dialogue script before TTS renders it.",
     ),
+    MOVE_EXPLAIN(
+        displayName = "Why-is-it-moving?",
+        description = "Per-ticker one-paragraph correlation of today's price move with recent headlines. Runs on user tap from the ticker feed.",
+    ),
+    METRICS_ANALYZE(
+        displayName = "Snapshot interpretation",
+        description = "Plain-English read of the current valuation, momentum, and risk numbers for one ticker. Runs on user tap from the snapshot screen.",
+    ),
 }
 
 /**
@@ -111,4 +119,6 @@ val AiUsage.defaultModel: AiModel
         // Users who already picked Opus 4.7 in Settings → AI keep their
         // choice; this only affects fresh installs / unconfigured slots.
         AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_4_6
+        AiUsage.MOVE_EXPLAIN -> AiModel.CLAUDE_HAIKU_4_5
+        AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_4_6
     }
