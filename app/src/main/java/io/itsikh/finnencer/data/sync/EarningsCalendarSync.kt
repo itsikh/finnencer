@@ -80,7 +80,19 @@ class EarningsCalendarSync @Inject constructor(
 
                 val (fy, fq) = fiscalGuess(filedAt)
 
-                val existing = earningsDao.findFiscal(ticker.symbol, fy, fq)
+                // Look up by date FIRST (filing dates are stable across
+                // EDGAR runs; fiscal labels are not — once Finnhub's
+                // numeric sync relabels a row from calendar-quarter to
+                // company-fiscal-quarter, a fiscal-tuple lookup here
+                // misses and we end up inserting a duplicate (#46).
+                // Same-day equality is enough; EDGAR's filing date is
+                // already the canonical earnings date.
+                val byDate = earningsDao.findNearestByDate(
+                    ticker.symbol,
+                    filedAt,
+                    DUP_WINDOW_MS,
+                )
+                val existing = byDate ?: earningsDao.findFiscal(ticker.symbol, fy, fq)
                 if (existing == null) {
                     earningsDao.insertEvents(listOf(
                         EarningsEvent(
@@ -102,8 +114,46 @@ class EarningsCalendarSync @Inject constructor(
                     )
                 }
             }
+
+            // Cleanup: merge any existing duplicates per ticker. The
+            // canonical row is the one with the most non-null numeric
+            // fields (so we keep whichever Finnhub filled). This is
+            // idempotent — once dupes are gone, the function is a no-op.
+            dedupeForTicker(ticker.symbol)
         }
         return inserted
+    }
+
+    private suspend fun dedupeForTicker(symbol: String) {
+        val all = earningsDao.getAllEventsForTicker(symbol)
+        if (all.size < 2) return
+        val groups = mutableListOf<MutableList<EarningsEvent>>()
+        for (event in all) {
+            val target = groups.firstOrNull { group ->
+                group.any { kotlin.math.abs(it.scheduledAtMillis - event.scheduledAtMillis) <= DUP_WINDOW_MS }
+            }
+            if (target != null) target.add(event) else groups.add(mutableListOf(event))
+        }
+        val toDelete = mutableListOf<Long>()
+        for (group in groups) {
+            if (group.size < 2) continue
+            val canonical = group.maxByOrNull { countFilledNumericFields(it) } ?: group.first()
+            toDelete += group.filter { it.id != canonical.id }.map { it.id }
+        }
+        if (toDelete.isNotEmpty()) {
+            earningsDao.deleteEvents(toDelete)
+            AppLogger.i(TAG, "deduped ${toDelete.size} earnings rows for $symbol")
+        }
+    }
+
+    private fun countFilledNumericFields(e: EarningsEvent): Int {
+        var c = 0
+        if (e.consensusEps != null) c++
+        if (e.consensusRevenue != null) c++
+        if (e.actualEps != null) c++
+        if (e.actualRevenue != null) c++
+        if (e.actualReportedAtMillis != null) c++
+        return c
     }
 
     /**
@@ -120,5 +170,12 @@ class EarningsCalendarSync @Inject constructor(
         return date.year to q
     }
 
-    private companion object { const val TAG = "EdgarEarningsSync" }
+    private companion object {
+        const val TAG = "EdgarEarningsSync"
+        // Two earnings filings for the same company within this window are
+        // the same event. EDGAR amends and supersedes 8-Ks occasionally,
+        // but always within a few days; 5 days is generous without
+        // colliding with the next quarterly print (~90 days apart).
+        const val DUP_WINDOW_MS = 5L * 24L * 60L * 60L * 1000L
+    }
 }

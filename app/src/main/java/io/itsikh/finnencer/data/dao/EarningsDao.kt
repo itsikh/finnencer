@@ -73,6 +73,18 @@ interface EarningsDao {
     @Query("SELECT * FROM earnings_events WHERE id = :id")
     suspend fun getEvent(id: Long): EarningsEvent?
 
+    @Query(
+        """
+        SELECT * FROM earnings_events
+        WHERE ticker_symbol = :symbol
+        ORDER BY scheduled_at_millis ASC
+        """
+    )
+    suspend fun getAllEventsForTicker(symbol: String): List<EarningsEvent>
+
+    @Query("DELETE FROM earnings_events WHERE id IN (:ids)")
+    suspend fun deleteEvents(ids: List<Long>)
+
     /** Past earnings events for a ticker, most-recent first. */
     @Query(
         """
