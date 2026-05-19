@@ -5,6 +5,7 @@ import androidx.room.RoomDatabase
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.dao.EarningsDao
+import io.itsikh.finnencer.data.dao.MoveExplanationDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
@@ -17,6 +18,7 @@ import io.itsikh.finnencer.data.entity.ArticleSummary
 import io.itsikh.finnencer.data.entity.ArticleTickerXref
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
+import io.itsikh.finnencer.data.entity.MoveExplanation
 import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.entity.NotificationLog
 import io.itsikh.finnencer.data.entity.Podcast
@@ -39,8 +41,9 @@ import io.itsikh.finnencer.data.entity.Ticker
         ApiUsage::class,
         AiJob::class,
         QueueItem::class,
+        MoveExplanation::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {
@@ -52,6 +55,7 @@ abstract class FinnencerDatabase : RoomDatabase() {
     abstract fun apiUsageDao(): ApiUsageDao
     abstract fun aiJobDao(): AiJobDao
     abstract fun queueItemDao(): QueueItemDao
+    abstract fun moveExplanationDao(): MoveExplanationDao
 
     companion object {
         const val NAME = "finnencer.db"

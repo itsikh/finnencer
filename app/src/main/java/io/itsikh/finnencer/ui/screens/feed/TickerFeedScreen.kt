@@ -93,6 +93,7 @@ fun TickerFeedScreen(
     val articleAction by vm.action.collectAsState()
     val syncRunning by vm.syncRunning.collectAsState()
     val showDiagnoseButtons by vm.showDiagnoseButtons.collectAsState()
+    val moveState by vm.move.collectAsState()
     var earningsPodcastTarget by remember { mutableStateOf<EarningsEvent?>(null) }
 
     LaunchedEffect(batchSheet.producedPodcastId) {
@@ -186,6 +187,13 @@ fun TickerFeedScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                item {
+                    MoveExplanationCard(
+                        state = moveState,
+                        onExplain = { vm.explainMove(force = false) },
+                        onRegenerate = { vm.explainMove(force = true) },
+                    )
+                }
                 // Earnings section is always rendered (even when empty)
                 // so users can find the feature. Empty state explains why
                 // there's nothing yet and offers a one-tap sync.

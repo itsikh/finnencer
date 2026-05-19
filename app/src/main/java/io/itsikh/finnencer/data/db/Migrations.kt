@@ -68,9 +68,31 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+/**
+ * v7 → v8: introduces the `move_explanation` table for the per-ticker
+ * "Why is it moving?" AI explanations, cached one row per (ticker,
+ * trading-day) so re-opens the same day are free.
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `move_explanation` (" +
+                "`ticker` TEXT NOT NULL, " +
+                "`as_of_date` TEXT NOT NULL, " +
+                "`pct_change` REAL NOT NULL, " +
+                "`explanation` TEXT NOT NULL, " +
+                "`model` TEXT NOT NULL, " +
+                "`article_ids_csv` TEXT NOT NULL, " +
+                "`generated_at_millis` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`ticker`, `as_of_date`))"
+        )
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
     MIGRATION_5_6,
     MIGRATION_6_7,
+    MIGRATION_7_8,
 )

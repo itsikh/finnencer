@@ -99,6 +99,19 @@ class QuotePoller @Inject constructor(
     }
 
     /**
+     * One-shot fetch for a single symbol, independent of the polling
+     * loop. Used by per-screen flows (e.g. the "Why is it moving?" card
+     * in TickerFeedScreen) that need a fresh quote without subscribing
+     * to the watchlist-scoped poller. Updates [latest] on success so a
+     * later subscriber sees the most recent value.
+     */
+    suspend fun snapshot(symbol: String): TickerQuote? {
+        val quote = fetchOneSymbol(symbol.uppercase()) ?: return null
+        _latest.value = _latest.value + (quote.symbol to quote)
+        return quote
+    }
+
+    /**
      * One tick: kick off a parallel chart fetch per symbol, merge the
      * results into [_latest]. Each symbol's request is independent;
      * one failure doesn't poison the others.

@@ -7,6 +7,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ImportanceScorer
+import io.itsikh.finnencer.data.ai.MoveExplainer
+import io.itsikh.finnencer.data.entity.MoveExplanation
 import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.EarningsDao
@@ -69,6 +71,15 @@ data class ArticleActionState(
     val error: String? = null,
 )
 
+/** "Why is it moving?" card state on the ticker feed. */
+sealed class MoveUiState {
+    object Idle : MoveUiState()
+    object Loading : MoveUiState()
+    data class Loaded(val row: MoveExplanation) : MoveUiState()
+    data class NoNews(val pctChange: Double) : MoveUiState()
+    data class Error(val message: String) : MoveUiState()
+}
+
 @HiltViewModel
 class TickerFeedViewModel @Inject constructor(
     savedState: SavedStateHandle,
@@ -80,6 +91,7 @@ class TickerFeedViewModel @Inject constructor(
     private val feedPrefs: FeedPreferences,
     private val bundleSummarizer: BundleSummarizer,
     private val scorer: ImportanceScorer,
+    private val moveExplainer: MoveExplainer,
     private val aiJobs: AiJobsRepository,
     private val earningsSync: io.itsikh.finnencer.data.sync.EarningsCalendarSync,
     private val earningsNumericSync: io.itsikh.finnencer.data.sync.EarningsNumericSync,
@@ -173,6 +185,33 @@ class TickerFeedViewModel @Inject constructor(
                 .first()
                 .isEmpty()
             if (currentlyEmpty) refreshEarningsNow()
+        }
+        // Surface any cached "Why is it moving?" explanation for today
+        // without burning a Haiku call — the user explicitly taps to
+        // generate a fresh one.
+        viewModelScope.launch {
+            moveExplainer.cached(symbol)?.let { _move.value = MoveUiState.Loaded(it) }
+        }
+    }
+
+    private val _move = MutableStateFlow<MoveUiState>(MoveUiState.Idle)
+    val move: StateFlow<MoveUiState> = _move.asStateFlow()
+
+    fun explainMove(force: Boolean = false) {
+        if (_move.value is MoveUiState.Loading) return
+        _move.value = MoveUiState.Loading
+        viewModelScope.launch {
+            runCatching { moveExplainer.explain(symbol, force = force) }
+                .onSuccess { outcome ->
+                    _move.value = when (outcome) {
+                        is MoveExplainer.Outcome.Ready -> MoveUiState.Loaded(outcome.row)
+                        is MoveExplainer.Outcome.NoNews -> MoveUiState.NoNews(outcome.pctChange)
+                    }
+                }
+                .onFailure { t ->
+                    AppLogger.e(TAG, "move explainer failed for $symbol", t)
+                    _move.value = MoveUiState.Error(t.message ?: t.javaClass.simpleName)
+                }
         }
     }
 

@@ -10,6 +10,7 @@ import dagger.hilt.components.SingletonComponent
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.dao.EarningsDao
+import io.itsikh.finnencer.data.dao.MoveExplanationDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
@@ -41,4 +42,5 @@ object DatabaseModule {
     @Provides fun provideApiUsageDao(db: FinnencerDatabase): ApiUsageDao = db.apiUsageDao()
     @Provides fun provideAiJobDao(db: FinnencerDatabase): AiJobDao = db.aiJobDao()
     @Provides fun provideQueueItemDao(db: FinnencerDatabase): QueueItemDao = db.queueItemDao()
+    @Provides fun provideMoveExplanationDao(db: FinnencerDatabase): MoveExplanationDao = db.moveExplanationDao()
 }
