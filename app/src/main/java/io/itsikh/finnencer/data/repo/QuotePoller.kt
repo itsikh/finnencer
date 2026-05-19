@@ -1,7 +1,6 @@
 package io.itsikh.finnencer.data.repo
 
 import io.itsikh.finnencer.data.api.YahooChartMeta
-import io.itsikh.finnencer.data.api.YahooChartResult
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
@@ -22,7 +21,9 @@ import javax.inject.Singleton
 /**
  * Live last-trade snapshot for one ticker, with the deltas we need to
  * render the watchlist row. Change/percent are derived from the v8
- * chart endpoint's `regularMarketPrice` vs `chartPreviousClose`.
+ * chart endpoint's `regularMarketPrice` vs `previousClose` (falling
+ * back to `chartPreviousClose` if Yahoo didn't populate the canonical
+ * field).
  *
  * The v8 chart endpoint doesn't expose explicit pre/post-market prices,
  * but it *does* update `regularMarketPrice` during extended hours when
@@ -34,10 +35,6 @@ data class TickerQuote(
     val price: Double,
     val change: Double,
     val changePercent: Double,
-    /** Recent close-price series for the row sparkline. Already
-     *  null-filtered and trimmed to the last [SPARK_POINTS]. May be
-     *  empty for symbols where Yahoo returned no candle data. */
-    val closes: List<Double> = emptyList(),
     val asOfMillis: Long = System.currentTimeMillis(),
 )
 
@@ -126,58 +123,47 @@ class QuotePoller @Inject constructor(
      * usable price.
      */
     private suspend fun fetchOneSymbol(symbol: String): TickerQuote? {
-        val result = runCatching { service.chart(symbol).chart.result?.firstOrNull() }
+        val meta = runCatching { service.chart(symbol).chart.result?.firstOrNull()?.meta }
             .getOrElse { primaryErr ->
                 AppLogger.w(TAG, "query1 chart failed for $symbol (${primaryErr.message}); trying query2")
                 runCatching {
                     service.chartAt(
                         "https://query2.finance.yahoo.com/v8/finance/chart/" +
-                            "$symbol?interval=15m&range=1d&includePrePost=true",
-                    ).chart.result?.firstOrNull()
+                            "$symbol?interval=1d&range=1d&includePrePost=true",
+                    ).chart.result?.firstOrNull()?.meta
                 }.getOrElse { fallbackErr ->
                     AppLogger.w(TAG, "query2 chart also failed for $symbol: ${fallbackErr.message}")
                     null
                 }
             }
-        return result?.let { toQuote(it) }
+        return meta?.let { toQuote(it) }
     }
 
     /**
-     * Build a [TickerQuote] from a chart result. Percent change is
+     * Build a [TickerQuote] from Yahoo's chart meta. Percent change is
      * derived from `regularMarketPrice` vs the previous trading day's
      * close. We prefer `meta.previousClose` (canonical "prior day's
      * close") over `meta.chartPreviousClose` (which shifts with the
      * requested chart range) for defense-in-depth: even if a future
      * change to the chart query bumps the range, the % stays correct
-     * as long as Yahoo populates `previousClose`. The candle close
-     * series is null-filtered and trimmed to [SPARK_POINTS] so each
-     * row's sparkline draws from a bounded, contiguous list. Returns
-     * null if Yahoo didn't include a usable current price.
+     * as long as Yahoo populates `previousClose`. Returns null if Yahoo
+     * didn't include a usable current price.
      */
-    private fun toQuote(result: YahooChartResult): TickerQuote? {
-        val meta: YahooChartMeta = result.meta
+    private fun toQuote(meta: YahooChartMeta): TickerQuote? {
         val price = meta.regularMarketPrice ?: return null
         val prev = meta.previousClose ?: meta.chartPreviousClose
         val change = if (prev != null) price - prev else 0.0
         val pct = if (prev != null && prev != 0.0) (price - prev) / prev * 100.0 else 0.0
-
-        val closes = result.indicators?.quote?.firstOrNull()?.close
-            ?.filterNotNull()
-            .orEmpty()
-        val trimmed = if (closes.size > SPARK_POINTS) closes.takeLast(SPARK_POINTS) else closes
-
         return TickerQuote(
             symbol = meta.symbol.uppercase(),
             price = price,
             change = change,
             changePercent = pct,
-            closes = trimmed,
         )
     }
 
     private companion object {
         const val TAG = "QuotePoller"
         const val POLL_INTERVAL_MS = 60_000L
-        const val SPARK_POINTS = 64
     }
 }

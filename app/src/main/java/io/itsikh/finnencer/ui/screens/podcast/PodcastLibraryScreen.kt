@@ -1,11 +1,7 @@
 package io.itsikh.finnencer.ui.screens.podcast
 
 import android.content.Context
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,10 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -44,7 +38,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -60,9 +53,9 @@ import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.share.ShareHelpers
 import io.itsikh.finnencer.share.WavToM4a
+import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
-import io.itsikh.finnencer.ui.theme.MonoStyles
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -199,34 +192,44 @@ fun PodcastLibraryScreen(
     val grouped by vm.groupedByTicker.collectAsState()
     val expandedGroups = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
 
-    val totalMinutes = items.mapNotNull { it.durationMs }.sum() / 1000 / 60
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = {
-                    PodcastTitle(
-                        episodes = items.size,
-                        totalMinutes = totalMinutes.toInt(),
+                    Text(
+                        "Podcasts",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = FinnencerColors.TextPrimary,
                     )
                 },
-                navigationIcon = { PodcastChip(label = "← BACK", onClick = onBack) },
-                actions = {
-                    PodcastChip(
-                        label = if (grouped) "FLAT" else "GROUP",
-                        accent = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
-                        border = if (grouped) FinnencerColors.Violet else FinnencerColors.HairlineStrong,
-                        onClick = { vm.setGroupedByTicker(!grouped) },
-                    )
-                    if (failedCount > 0) {
-                        PodcastChip(
-                            label = "CLEAR $failedCount",
-                            accent = FinnencerColors.Coral,
-                            border = FinnencerColors.Coral,
-                            onClick = { clearFailedConfirm = true },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = FinnencerColors.TextPrimary,
                         )
                     }
-                    Spacer(Modifier.size(8.dp))
+                },
+                actions = {
+                    IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                        Icon(
+                            if (grouped) androidx.compose.material.icons.Icons.Default.Summarize
+                            else androidx.compose.material.icons.Icons.Default.Bookmark,
+                            contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                            tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                        )
+                    }
+                    if (failedCount > 0) {
+                        TextButton(onClick = { clearFailedConfirm = true }) {
+                            Text(
+                                "Clear failed · $failedCount",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.Coral,
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
@@ -234,27 +237,16 @@ fun PodcastLibraryScreen(
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(top = 0.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (items.isEmpty()) {
                 item {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 80.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            "NO PODCASTS YET",
-                            style = MonoStyles.Brand,
-                            color = FinnencerColors.TextPrimary,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            "GENERATE ONE FROM AN EARNINGS REPORT OR ARTICLE.",
-                            style = MonoStyles.BrandSub,
-                            color = FinnencerColors.TextSecondary,
-                        )
-                    }
+                    Text(
+                        "No podcasts yet. Generate one from an earnings report.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FinnencerColors.TextTertiary,
+                    )
                 }
             }
             if (grouped && items.isNotEmpty()) {
@@ -357,48 +349,6 @@ fun PodcastLibraryScreen(
     }
 }
 
-/**
- * Brand-mark title cluster for the top bar. Mirrors the pattern used
- * by Tasks / Queue so all the redesigned screens align identically.
- */
-@Composable
-private fun PodcastTitle(episodes: Int, totalMinutes: Int) {
-    val sub = when {
-        episodes == 0 -> "NO EPISODES"
-        totalMinutes == 0 -> "$episodes EPISODES"
-        else -> "$episodes EPISODES  ·  $totalMinutes MIN TOTAL"
-    }
-    Column {
-        Text("PODCASTS", style = MonoStyles.Brand, color = FinnencerColors.TextPrimary)
-        Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
-    }
-}
-
-/**
- * Bordered tap-target chip — same pattern as the other Terminal Pro
- * screens. Pass [accent]/[border] for colored variants.
- */
-@Composable
-private fun PodcastChip(
-    label: String,
-    accent: Color = FinnencerColors.TextSecondary,
-    border: Color = FinnencerColors.HairlineStrong,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, border, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MonoStyles.NavLabel, color = accent)
-    }
-}
-
 @Composable
 private fun PodcastRow(
     podcast: Podcast,
@@ -408,54 +358,38 @@ private fun PodcastRow(
     onDelete: () -> Unit,
 ) {
     val isReady = podcast.status == PodcastGenerationStatus.READY.name
-    val statusColor = when (podcast.status) {
-        PodcastGenerationStatus.READY.name -> FinnencerColors.Mint
-        PodcastGenerationStatus.FAILED.name -> FinnencerColors.Coral
-        else -> FinnencerColors.Violet
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onOpen(podcast.id) },
-    ) {
+    GlassCard(onClick = { onOpen(podcast.id) }) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // status dot — mint=ready, violet=generating, coral=failed
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(statusColor),
-            )
-            Spacer(Modifier.size(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    podcast.title.uppercase(),
-                    style = MonoStyles.NavLabel,
+                    podcast.title,
+                    style = MaterialTheme.typography.titleMedium,
                     color = FinnencerColors.TextPrimary,
-                    maxLines = 2,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.size(2.dp))
-                val sub = buildString {
-                    append(podcast.voiceHost.uppercase())
-                    podcast.voiceAnalyst?.let { append("  ·  ").append(it.uppercase()) }
+                Row {
+                    Text(
+                        "${podcast.voiceHost} · ${podcast.voiceAnalyst ?: "—"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
                     podcast.durationMs?.let { ms ->
-                        append("  ·  ")
-                        append(ms / 1000 / 60)
-                        append(":")
-                        append("%02d".format((ms / 1000) % 60))
+                        Spacer(Modifier.padding(horizontal = 4.dp))
+                        Text(
+                            "  ·  ${ms / 1000 / 60}:${"%02d".format((ms / 1000) % 60)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
                     }
                 }
-                Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
                 if (!isReady) {
-                    Spacer(Modifier.size(2.dp))
                     Text(
-                        podcast.status.uppercase(),
-                        style = MonoStyles.BrandSub,
-                        color = if (podcast.status == PodcastGenerationStatus.FAILED.name) FinnencerColors.Coral
-                                else FinnencerColors.Violet,
+                        podcast.status.lowercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (podcast.status == PodcastGenerationStatus.FAILED.name) FinnencerColors.Coral else FinnencerColors.Violet,
                     )
                 }
             }
@@ -493,6 +427,5 @@ private fun PodcastRow(
                 )
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
     }
 }

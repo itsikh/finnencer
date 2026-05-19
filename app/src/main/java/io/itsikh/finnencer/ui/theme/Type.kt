@@ -2,10 +2,10 @@ package io.itsikh.finnencer.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.googlefonts.Font
 import androidx.compose.ui.text.googlefonts.GoogleFont
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -20,115 +20,18 @@ private val FontProvider = GoogleFont.Provider(
 private val Inter = GoogleFont("Inter")
 
 val InterFamily = FontFamily(
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Normal),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Medium),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.SemiBold),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Bold),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.ExtraBold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Normal),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Medium),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.SemiBold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Bold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.ExtraBold),
 )
 
 val InterDisplayFamily = FontFamily(
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.SemiBold),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Bold),
-    androidx.compose.ui.text.googlefonts.Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.ExtraBold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.SemiBold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.Bold),
+    Font(googleFont = Inter, fontProvider = FontProvider, weight = FontWeight.ExtraBold),
 )
-
-/**
- * JetBrains Mono — bundled in res/font, no runtime fetch. Used for any
- * number, ticker symbol, tag, or terminal-style label. Tabular figures
- * are enabled via the `tnum` OpenType feature so digits never jitter
- * column width as prices tick.
- */
-val MonoFamily = FontFamily(
-    Font(R.font.jetbrains_mono, weight = FontWeight.Normal),
-    Font(R.font.jetbrains_mono_medium, weight = FontWeight.Medium),
-    Font(R.font.jetbrains_mono_bold, weight = FontWeight.Bold),
-)
-
-/**
- * Project-level mono text style families — not Material types, but used
- * across the watchlist row, top bar, chips, and any digit cluster. They
- * are referenced explicitly (e.g. `MonoStyles.Price`) rather than
- * through `MaterialTheme.typography`.
- */
-object MonoStyles {
-    /** Big price digit — 22sp tabular, medium weight. Watchlist price column. */
-    val Price = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 22.sp,
-        lineHeight = 1.05.em,
-        fontFeatureSettings = "tnum",
-    )
-
-    /** Bold sign-prefixed percent change — Mint or Coral. */
-    val Pct = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 14.sp,
-        lineHeight = 1.1.em,
-        letterSpacing = 0.01.em,
-        fontFeatureSettings = "tnum",
-    )
-
-    /** Ticker symbol — bold, slightly tracked. */
-    val Ticker = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 18.sp,
-        lineHeight = 1.1.em,
-        letterSpacing = 0.04.em,
-    )
-
-    /** Caps tracked nav label / brand mark / section header. */
-    val NavLabel = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 13.sp,
-        lineHeight = 1.2.em,
-        letterSpacing = 0.10.em,
-    )
-
-    /** Brand mark — biggest tracked caps on top bar. Sized to fit
-     *  next to 5 nav chips on a phone-narrow top bar without
-     *  wrapping. */
-    val Brand = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 16.sp,
-        lineHeight = 1.1.em,
-        letterSpacing = 0.10.em,
-    )
-
-    /** Tiny tracked caption — "5 TRACKED · 21:35:04 EDT", company names,
-     *  voice lines, meta lines. Medium weight so it reads cleanly at
-     *  small sizes on dark backgrounds without screaming for attention. */
-    val BrandSub = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 1.2.em,
-        letterSpacing = 0.18.em,
-    )
-
-    /** Section header above grouped rows — uppercase tracked. */
-    val SectionHead = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 11.sp,
-        lineHeight = 1.2.em,
-        letterSpacing = 0.20.em,
-    )
-
-    /** Bordered chip text (sector, ALR n, ON/OFF). */
-    val Chip = TextStyle(
-        fontFamily = MonoFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 11.sp,
-        lineHeight = 1.2.em,
-        letterSpacing = 0.10.em,
-    )
-}
 
 val FinnencerTypography = Typography(
     displayLarge = TextStyle(

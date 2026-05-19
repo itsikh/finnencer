@@ -1,68 +1,34 @@
 package io.itsikh.finnencer.ui.theme
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
-/**
- * Project-wide color tokens. Every screen reads via `FinnencerColors.X`
- * — those accessors forward through a [mutableStateOf]-backed
- * [FinnencerPalette] so any composable that reads them is
- * automatically observed by Compose and recomposes when the user
- * picks a new theme. No call-site migration needed.
- *
- * The active palette is set by [FinnencerTheme] each composition from
- * the user's [ThemeId] preference; callers should NOT poke
- * [setPalette] directly.
- */
 object FinnencerColors {
+    val BgTop = Color(0xFF050818)
+    val BgBottom = Color(0xFF0C1535)
 
-    private var paletteState by mutableStateOf(Palettes.TerminalPro)
+    val Surface = Color(0xFF0F1A36)
+    val SurfaceGlass = Color(0x10FFFFFF)
+    val SurfaceGlassStrong = Color(0x1AFFFFFF)
+    val SurfaceBorder = Color(0x1AFFFFFF)
+    val SurfaceBorderStrong = Color(0x2EFFFFFF)
 
-    /** Internal — called by [FinnencerTheme] when the user's pref changes. */
-    fun setPalette(p: FinnencerPalette) {
-        paletteState = p
-    }
+    val Violet = Color(0xFFA78BFA)
+    val VioletDim = Color(0xFF6D5BD0)
+    val Mint = Color(0xFF34D399)
+    val Coral = Color(0xFFFB7185)
+    val Amber = Color(0xFFFBBF24)
 
-    /** Currently-active palette (read-only). */
-    val current: FinnencerPalette get() = paletteState
+    val TextPrimary = Color(0xFFF5F7FA)
+    val TextSecondary = Color(0xCCBFC6DB)
+    val TextTertiary = Color(0x996B7592)
+    val TextOnAccent = Color(0xFF0A0F1F)
 
-    // ─── Tokens — each is just a forwarding accessor ───
-    val Canvas: Color get() = paletteState.canvas
-    val Surface: Color get() = paletteState.surface
-    val Hairline: Color get() = paletteState.hairline
-    val HairlineStrong: Color get() = paletteState.hairlineStrong
+    val Up = Mint
+    val Down = Coral
+    val Neutral = Color(0xFF8B96B5)
 
-    val TextPrimary: Color get() = paletteState.textPrimary
-    val TextSecondary: Color get() = paletteState.textSecondary
-    val TextTertiary: Color get() = paletteState.textTertiary
-    val TextOnAccent: Color get() = paletteState.textOnAccent
-
-    val Violet: Color get() = paletteState.violet
-    val VioletDim: Color get() = paletteState.violetDim
-    val Mint: Color get() = paletteState.mint
-    val Coral: Color get() = paletteState.coral
-    val Amber: Color get() = paletteState.amber
-
-    // Semantic aliases.
-    val Up: Color get() = paletteState.mint
-    val Down: Color get() = paletteState.coral
-    val Neutral: Color get() = paletteState.textSecondary
-
-    // Article-importance scoring color bands.
-    val Score9to10: Color get() = paletteState.coral
-    val Score7to8: Color get() = paletteState.amber
-    val Score4to6: Color get() = paletteState.violet
-    val Score1to3: Color get() = paletteState.textSecondary
-
-    // ─── Legacy Glass Modern aliases (kept for screens not yet migrated) ───
-    val BgTop: Color get() = paletteState.canvas
-    val BgBottom: Color get() = paletteState.canvas
-    val SurfaceGlass: Color
-        get() = paletteState.textPrimary.copy(alpha = 0.06f)
-    val SurfaceGlassStrong: Color
-        get() = paletteState.textPrimary.copy(alpha = 0.10f)
-    val SurfaceBorder: Color get() = paletteState.hairline
-    val SurfaceBorderStrong: Color get() = paletteState.hairlineStrong
+    val Score9to10 = Coral
+    val Score7to8 = Amber
+    val Score4to6 = Violet
+    val Score1to3 = Neutral
 }

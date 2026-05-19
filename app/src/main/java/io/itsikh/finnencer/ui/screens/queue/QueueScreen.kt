@@ -3,7 +3,6 @@ package io.itsikh.finnencer.ui.screens.queue
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -64,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,8 +70,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.QueueItem
 import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.logging.AppLogger
+import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
-import io.itsikh.finnencer.ui.theme.MonoStyles
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -108,21 +107,46 @@ fun QueueScreen(
         topBar = {
             if (isSelecting) {
                 TopAppBar(
-                    title = { QueueTitle(label = "${selected.size} SELECTED", sub = "TAP A ROW TO TOGGLE") },
-                    navigationIcon = { QueueChip(label = "✕", onClick = vm::clearSelection) },
+                    title = {
+                        Text(
+                            "${selected.size} selected",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = vm::clearSelection) {
+                            Icon(Icons.Default.Close, "Cancel selection", tint = FinnencerColors.TextPrimary)
+                        }
+                    },
                     actions = {
                         if (tab == QueueTab.TODO) {
-                            QueueChip(label = "DONE", accent = FinnencerColors.Mint, onClick = { vm.markSelectedDone() })
+                            IconButton(onClick = { vm.markSelectedDone() }) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    "Mark selected done",
+                                    tint = FinnencerColors.Mint,
+                                )
+                            }
                         } else {
-                            QueueChip(label = "UNDO", accent = FinnencerColors.Violet, onClick = { vm.markSelectedUndone() })
+                            IconButton(onClick = { vm.markSelectedUndone() }) {
+                                Icon(
+                                    Icons.Default.Undo,
+                                    "Move back to To do",
+                                    tint = FinnencerColors.Violet,
+                                )
+                            }
                         }
-                        QueueChip(
-                            label = "DELETE",
-                            accent = if (selected.isNotEmpty()) FinnencerColors.Coral else FinnencerColors.TextTertiary,
-                            onClick = { if (selected.isNotEmpty()) deleteSelectedConfirm = true },
-                        )
+                        IconButton(
+                            onClick = { deleteSelectedConfirm = true },
+                            enabled = selected.isNotEmpty(),
+                        ) {
+                            Icon(Icons.Default.Delete, "Delete selected", tint = FinnencerColors.Coral)
+                        }
                         Box {
-                            QueueChip(label = "···", onClick = { overflowOpen = true })
+                            IconButton(onClick = { overflowOpen = true }) {
+                                Icon(Icons.Default.MoreVert, "More", tint = FinnencerColors.TextPrimary)
+                            }
                             DropdownMenu(
                                 expanded = overflowOpen,
                                 onDismissRequest = { overflowOpen = false },
@@ -137,34 +161,46 @@ fun QueueScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.size(8.dp))
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
             } else {
                 TopAppBar(
                     title = {
-                        QueueTitle(
-                            label = "QUEUE",
-                            sub = "${todo.size} TO DO  ·  ${done.size} DONE",
+                        Text(
+                            "Queue",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = FinnencerColors.TextPrimary,
                         )
                     },
-                    navigationIcon = { QueueChip(label = "← BACK", onClick = onBack) },
-                    actions = {
-                        QueueChip(
-                            label = if (grouped) "FLAT" else "GROUP",
-                            accent = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
-                            border = if (grouped) FinnencerColors.Violet else FinnencerColors.HairlineStrong,
-                            onClick = { vm.setGroupedByTicker(!grouped) },
-                        )
-                        if (tab == QueueTab.DONE && done.isNotEmpty()) {
-                            QueueChip(
-                                label = "CLEAR",
-                                accent = FinnencerColors.Coral,
-                                onClick = { clearDoneConfirm = true },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                "Back",
+                                tint = FinnencerColors.TextPrimary,
                             )
                         }
-                        Spacer(Modifier.size(8.dp))
+                    },
+                    actions = {
+                        // Toggle: flat list ↔ grouped-by-ticker
+                        IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                            Icon(
+                                if (grouped) androidx.compose.material.icons.Icons.Default.Summarize
+                                else androidx.compose.material.icons.Icons.Default.Bookmark,
+                                contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                                tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                            )
+                        }
+                        if (tab == QueueTab.DONE && done.isNotEmpty()) {
+                            TextButton(onClick = { clearDoneConfirm = true }) {
+                                Text(
+                                    "Clear all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FinnencerColors.Coral,
+                                )
+                            }
+                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 )
@@ -172,12 +208,36 @@ fun QueueScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            TerminalTabs(
-                current = tab,
-                todoCount = todo.size,
-                doneCount = done.size,
-                onPick = { vm.setTab(it) },
-            )
+            TabRow(
+                selectedTabIndex = if (tab == QueueTab.TODO) 0 else 1,
+                containerColor = Color.Transparent,
+                contentColor = FinnencerColors.TextPrimary,
+            ) {
+                Tab(
+                    selected = tab == QueueTab.TODO,
+                    onClick = { vm.setTab(QueueTab.TODO) },
+                    text = {
+                        Text(
+                            "To do · ${todo.size}",
+                            color = if (tab == QueueTab.TODO) FinnencerColors.TextPrimary
+                                    else FinnencerColors.TextSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                )
+                Tab(
+                    selected = tab == QueueTab.DONE,
+                    onClick = { vm.setTab(QueueTab.DONE) },
+                    text = {
+                        Text(
+                            "Done · ${done.size}",
+                            color = if (tab == QueueTab.DONE) FinnencerColors.TextPrimary
+                                    else FinnencerColors.TextSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                )
+            }
             if (renderItems.isEmpty()) {
                 EmptyQueue(tab = tab, onOpenTasks = onOpenTasks)
             } else {
@@ -241,16 +301,15 @@ fun QueueScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 0.dp, bottom = 32.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (tab == QueueTab.TODO && !grouped) {
                         item {
                             Text(
-                                "TAP ↑ / ↓ TO REORDER · LONG-PRESS TO MULTI-SELECT",
-                                style = MonoStyles.BrandSub,
+                                "Tap ↑ / ↓ to reorder. Long-press a row to multi-select.",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = FinnencerColors.TextTertiary,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                             )
                         }
                     }
@@ -357,29 +416,27 @@ private fun QueueRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
-    // Highlight a faint violet wash when this row is part of a
-    // multi-select. Hairline below the row provides the only chrome —
-    // no card background.
-    val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.12f) else Color.Transparent
+    val rowColor = if (selected) FinnencerColors.Violet.copy(alpha = 0.22f) else Color.Transparent
     // combinedClickable lives on the OUTER Box so the entire row width
     // (including any padding around the trailing controls) is tappable.
     // Nested IconButtons (PlayArrow, ↑/↓, Mark done) still claim their
     // own taps via their internal clickable, which beats the outer one
     // in Compose's inside-out pointer dispatch.
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(rowColor)
             .combinedClickable(onClick = onTap, onLongClick = onLongPress),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        GlassCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                        .background(rowColor)
+                        .padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (selectionMode) {
@@ -410,18 +467,18 @@ private fun QueueRow(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            item.title.uppercase(),
-                            style = MonoStyles.NavLabel,
+                            item.title,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = FinnencerColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                         val sub = item.subtitle
                         if (!sub.isNullOrBlank()) {
-                            Spacer(Modifier.size(2.dp))
                             Text(
-                                sub.uppercase(),
-                                style = MonoStyles.BrandSub,
+                                sub,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = FinnencerColors.TextTertiary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -493,150 +550,42 @@ private fun QueueRow(
                         }
                     }
                 }
+            }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
     }
 }
 
-/**
- * Compact bordered chip — terminal-style — that identifies a queue
- * item by its kind. When a ticker is known we show the symbol so the
- * user can scan the queue by stock at a glance; otherwise we fall
- * back to a 3-letter kind tag (ART / SUM / RPT / POD).
- */
 @Composable
 private fun KindBadge(kind: String, ticker: String?) {
-    val (label, color) = kindTag(kind, ticker)
+    val (icon, color) = iconForKind(kind)
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .border(1.dp, color.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .size(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.18f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = MonoStyles.Chip, color = color)
+        if (ticker != null) {
+            Text(
+                ticker.take(4),
+                style = MaterialTheme.typography.labelSmall,
+                color = color,
+                fontWeight = FontWeight.SemiBold,
+            )
+        } else {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
-private fun kindTag(kind: String, ticker: String?): Pair<String, Color> {
-    val color = when (kind) {
-        QueueItemKind.ARTICLE.name -> FinnencerColors.Violet
-        QueueItemKind.ARTICLE_SUMMARY.name -> FinnencerColors.Mint
-        QueueItemKind.BATCH_SUMMARY.name -> FinnencerColors.Amber
-        QueueItemKind.EARNINGS_REPORT.name -> FinnencerColors.Violet
-        QueueItemKind.PODCAST.name -> FinnencerColors.Coral
-        else -> FinnencerColors.TextSecondary
-    }
-    val kindLabel = when (kind) {
-        QueueItemKind.ARTICLE.name -> "ART"
-        QueueItemKind.ARTICLE_SUMMARY.name -> "SUM"
-        QueueItemKind.BATCH_SUMMARY.name -> "SUM"
-        QueueItemKind.EARNINGS_REPORT.name -> "RPT"
-        QueueItemKind.PODCAST.name -> "POD"
-        else -> "ITM"
-    }
-    val label = ticker?.takeIf { it.isNotBlank() }?.let { "$it·$kindLabel" } ?: kindLabel
-    return label to color
-}
-
-/**
- * Brand-mark title cluster — caps mono label + sub. Used in both
- * normal and selection-mode top bars so they share alignment with the
- * rest of the Terminal Pro screens.
- */
-@Composable
-private fun QueueTitle(label: String, sub: String) {
-    Column {
-        Text(label, style = MonoStyles.Brand, color = FinnencerColors.TextPrimary)
-        Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
-    }
-}
-
-/**
- * Compact tappable chip with a hairline border. The default look is
- * dim grey; pass [accent]/[border] for colored variants like the
- * DONE / DELETE / CLEAR affordances. Minimum 44dp tall so the tap
- * target meets the accessibility floor.
- */
-@Composable
-private fun QueueChip(
-    label: String,
-    accent: Color = FinnencerColors.TextSecondary,
-    border: Color = FinnencerColors.HairlineStrong,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .heightIn(min = 44.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, border, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MonoStyles.NavLabel, color = accent)
-    }
-}
-
-/**
- * Two-tab segment for TO DO / DONE — replaces Material's TabRow with
- * a denser, terminal-style alternative. The active tab gets a 2dp
- * violet underline; the inactive tab stays dim.
- */
-@Composable
-private fun TerminalTabs(
-    current: QueueTab,
-    todoCount: Int,
-    doneCount: Int,
-    onPick: (QueueTab) -> Unit,
-) {
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 0.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TerminalTab(
-            label = "TO DO  $todoCount",
-            active = current == QueueTab.TODO,
-            modifier = Modifier.weight(1f),
-            onClick = { onPick(QueueTab.TODO) },
-        )
-        TerminalTab(
-            label = "DONE  $doneCount",
-            active = current == QueueTab.DONE,
-            modifier = Modifier.weight(1f),
-            onClick = { onPick(QueueTab.DONE) },
-        )
-    }
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
-}
-
-@Composable
-private fun TerminalTab(
-    label: String,
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Column(
-        modifier = modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            label,
-            style = MonoStyles.NavLabel,
-            color = if (active) FinnencerColors.TextPrimary else FinnencerColors.TextSecondary,
-        )
-        Spacer(Modifier.size(8.dp))
-        Box(
-            modifier = Modifier
-                .width(40.dp)
-                .height(2.dp)
-                .background(if (active) FinnencerColors.Violet else Color.Transparent),
-        )
-    }
+private fun iconForKind(kind: String): Pair<ImageVector, Color> = when (kind) {
+    QueueItemKind.ARTICLE.name -> Icons.Default.Article to FinnencerColors.Violet
+    QueueItemKind.ARTICLE_SUMMARY.name -> Icons.Default.Summarize to FinnencerColors.Mint
+    QueueItemKind.BATCH_SUMMARY.name -> Icons.Default.Summarize to FinnencerColors.Amber
+    QueueItemKind.EARNINGS_REPORT.name -> Icons.Default.EventNote to FinnencerColors.Violet
+    QueueItemKind.PODCAST.name -> Icons.Default.Headphones to FinnencerColors.Coral
+    else -> Icons.Default.Bookmark to FinnencerColors.TextSecondary
 }
 
 @Composable
@@ -644,22 +593,39 @@ private fun EmptyQueue(tab: QueueTab, onOpenTasks: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 32.dp),
+            .padding(horizontal = 32.dp, vertical = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(FinnencerColors.Violet.copy(alpha = 0.10f))
+                .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.30f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Bookmark,
+                contentDescription = null,
+                tint = FinnencerColors.Violet,
+                modifier = Modifier.size(40.dp),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
         Text(
-            if (tab == QueueTab.TODO) "QUEUE EMPTY" else "NOTHING DONE YET",
-            style = MonoStyles.Brand,
+            if (tab == QueueTab.TODO) "Your queue is empty"
+            else "Nothing finished yet",
+            style = MaterialTheme.typography.titleLarge,
             color = FinnencerColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             if (tab == QueueTab.TODO)
-                "SAVE ARTICLES · SUMMARIES · REPORTS · PODCASTS FROM ANYWHERE."
+                "Save articles, AI summaries, earnings reports and podcasts from anywhere in the app — they show up here so you can come back to them later."
             else
-                "TAP ✓ ON A TO-DO ITEM TO MARK IT DONE.",
-            style = MonoStyles.BrandSub,
+                "Tap ✓ on a queued item to mark it done. Completed items live here so you can look back at what you've gotten through.",
+            style = MaterialTheme.typography.bodyMedium,
             color = FinnencerColors.TextSecondary,
         )
     }

@@ -64,9 +64,8 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val mainViewModel: MainViewModel = hiltViewModel()
-            val themeId by mainViewModel.themeId.collectAsState()
-            FinnencerTheme(themeId = themeId) {
+            FinnencerTheme {
+                val mainViewModel: MainViewModel = hiltViewModel()
                 val updatePrompt by mainViewModel.updatePrompt.collectAsState()
 
                 AppNavHost()

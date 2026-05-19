@@ -64,9 +64,9 @@ import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
 import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.data.repo.AiJobsRepository
+import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueTogglePill
 import io.itsikh.finnencer.ui.theme.FinnencerColors
-import io.itsikh.finnencer.ui.theme.MonoStyles
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -137,20 +137,33 @@ fun TasksScreen(
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { TerminalTitle(running = running.size, failed = failed.size) },
+                title = {
+                    Text(
+                        "Tasks",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
                 navigationIcon = {
-                    BackChip(onBack)
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                    }
                 },
                 actions = {
-                    ToggleChip(
-                        label = if (grouped) "FLAT" else "GROUP",
-                        active = grouped,
-                        onClick = { vm.setGroupedByTicker(!grouped) },
-                    )
-                    if (finished.isNotEmpty() || failed.isNotEmpty()) {
-                        TextChip(label = "CLEAR", onClick = vm::clearFinished)
+                    IconButton(onClick = { vm.setGroupedByTicker(!grouped) }) {
+                        Icon(
+                            if (grouped) Icons.Default.Summarize
+                            else Icons.Default.Bookmark,
+                            contentDescription = if (grouped) "Switch to flat list" else "Group by ticker",
+                            tint = if (grouped) FinnencerColors.Violet else FinnencerColors.TextSecondary,
+                        )
                     }
-                    Spacer(Modifier.size(8.dp))
+                    if (finished.isNotEmpty() || failed.isNotEmpty()) {
+                        TextButton(onClick = vm::clearFinished) {
+                            Text("Clear", color = FinnencerColors.TextSecondary)
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
@@ -183,8 +196,8 @@ fun TasksScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(top = 0.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (grouped) {
                 // Folder-per-ticker view: ignore the running/finished/failed
@@ -248,81 +261,24 @@ private fun open(
     }
 }
 
-/** Title cluster in the top bar — "TASKS" + status sub-line. */
-@Composable
-private fun TerminalTitle(running: Int, failed: Int) {
-    Column {
-        Text("TASKS", style = MonoStyles.Brand, color = FinnencerColors.TextPrimary)
-        val sub = buildString {
-            append(if (running == 0) "IDLE" else "$running ACTIVE")
-            if (failed > 0) append("  ·  $failed FAILED")
-        }
-        Text(sub, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
-    }
-}
-
-@Composable
-private fun BackChip(onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .padding(start = 8.dp, end = 2.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("← BACK", style = MonoStyles.NavLabel, color = FinnencerColors.TextSecondary)
-    }
-}
-
-@Composable
-private fun ToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
-    val border = if (active) FinnencerColors.Violet else FinnencerColors.HairlineStrong
-    val color = if (active) FinnencerColors.Violet else FinnencerColors.TextSecondary
-    Row(
-        modifier = Modifier
-            .padding(horizontal = 2.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, border, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MonoStyles.NavLabel, color = color)
-    }
-}
-
-@Composable
-private fun TextChip(label: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .padding(horizontal = 2.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, FinnencerColors.HairlineStrong, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MonoStyles.NavLabel, color = FinnencerColors.TextSecondary)
-    }
-}
-
 @Composable
 private fun SectionHeader(label: String, count: Int) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)) {
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = FinnencerColors.TextTertiary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.size(8.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(FinnencerColors.SurfaceGlass)
+                .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(8.dp))
+                .padding(horizontal = 6.dp, vertical = 1.dp),
         ) {
-            Text(label.uppercase(), style = MonoStyles.SectionHead, color = FinnencerColors.TextSecondary)
-            Box(modifier = Modifier.weight(1f))
-            Text(
-                "$count " + if (count == 1) "JOB" else "JOBS",
-                style = MonoStyles.SectionHead,
-                color = FinnencerColors.TextTertiary,
-            )
+            Text("$count", style = MaterialTheme.typography.labelSmall, color = FinnencerColors.TextTertiary)
         }
     }
 }
@@ -348,50 +304,46 @@ private fun JobRow(
         job.resultRefId?.toLongOrNull()
     } else null
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                // Running / queued / failed / waiting jobs always go to the
-                // detail screen so the user can see what's happening (#43).
-                // Completed jobs prefer the inline expand-for-text path or
-                // navigation to the produced artifact.
-                val isLive = job.status == AiJobStatus.RUNNING.name ||
-                    job.status == AiJobStatus.QUEUED.name ||
-                    job.status == AiJobStatus.FAILED.name ||
-                    job.status == AiJobStatus.CANCELED.name
-                when {
-                    isLive -> onOpen()
-                    hasNavigable -> onOpen()
-                    hasInlineResult -> expanded = !expanded
-                }
-            },
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    GlassCard(onClick = {
+        // Running / queued / failed / waiting jobs always go to the
+        // detail screen so the user can see what's happening (#43).
+        // Completed jobs prefer the inline expand-for-text path or
+        // navigation to the produced artifact.
+        val isLive = job.status == AiJobStatus.RUNNING.name ||
+            job.status == AiJobStatus.QUEUED.name ||
+            job.status == AiJobStatus.FAILED.name ||
+            job.status == AiJobStatus.CANCELED.name
+        when {
+            isLive -> onOpen()
+            hasNavigable -> onOpen()
+            hasInlineResult -> expanded = !expanded
+        }
+    }) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusIcon(status = job.status, tint = statusColor)
-                Spacer(Modifier.size(12.dp))
+                Spacer(Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        job.title.uppercase(),
-                        style = MonoStyles.NavLabel,
+                        job.title,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                     val meta = buildString {
-                        append(typeLabel(job.type).uppercase())
-                        job.tickerSymbol?.let { append("  ·  ").append(it) }
+                        append(typeLabel(job.type))
+                        job.tickerSymbol?.let { append(" · ").append(it) }
                         if (job.status == AiJobStatus.RUNNING.name && job.startedAtMillis != null) {
                             // Use the screen-level [nowMs] tick (1 Hz) so the
                             // counter actually advances while the user is
                             // looking at it.
                             val secs = ((nowMs - job.startedAtMillis) / 1000).coerceAtLeast(0)
-                            append("  ·  ").append(secs).append("s")
+                            append(" · ").append(secs).append("s")
                         }
                     }
-                    Spacer(Modifier.size(2.dp))
-                    Text(meta, style = MonoStyles.BrandSub, color = FinnencerColors.TextTertiary)
+                    Text(meta, style = MaterialTheme.typography.labelSmall, color = FinnencerColors.TextTertiary)
                     // Live stage indicator under the meta row — shows
                     // "Synthesizing audio · chunk 3/6 · 47%" etc. so the
                     // user can see at-a-glance what the worker is doing
@@ -406,28 +358,16 @@ private fun JobRow(
                             job.stageDetail?.takeIf { it.isNotBlank() }?.let(::add)
                             if (job.stageProgress > 0) add("${job.stageProgress}%")
                         }
-                        Spacer(Modifier.size(4.dp))
                         Text(
-                            parts.joinToString("  ·  ").uppercase(),
-                            style = MonoStyles.BrandSub,
+                            parts.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
                             color = FinnencerColors.Violet,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (job.stageProgress > 0) {
-                            Spacer(Modifier.size(6.dp))
-                            ProgressHairline(progress = job.stageProgress / 100f)
-                        }
                     }
                     job.errorMessage?.takeIf { it.isNotBlank() }?.let {
-                        Spacer(Modifier.size(2.dp))
-                        Text(
-                            it.uppercase(),
-                            style = MonoStyles.BrandSub,
-                            color = FinnencerColors.Coral,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = FinnencerColors.Coral, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 if (hasInlineResult) {
@@ -572,35 +512,28 @@ private fun JobRow(
                 }
             }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(FinnencerColors.Hairline))
     }
 }
 
-/**
- * Tiny filled circle that signals job status — no card, no border,
- * just a 10dp dot in [tint]. Running jobs get a spinning ring inside
- * a slightly larger ring so the user can tell at a glance which row
- * is the live one without color hunting.
- */
 @Composable
 private fun StatusIcon(status: String, tint: Color) {
     Box(
-        modifier = Modifier.size(20.dp),
+        modifier = Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(tint.copy(alpha = 0.18f))
+            .border(1.dp, tint.copy(alpha = 0.4f), RoundedCornerShape(14.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        if (status == AiJobStatus.RUNNING.name) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 1.5.dp,
+        when (status) {
+            AiJobStatus.RUNNING.name -> CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
                 color = tint,
             )
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(tint),
-            )
+            AiJobStatus.QUEUED.name -> Text("•", color = tint, fontWeight = FontWeight.Bold)
+            AiJobStatus.COMPLETED.name -> Icon(Icons.Default.Check, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+            AiJobStatus.FAILED.name, AiJobStatus.CANCELED.name -> Icon(Icons.Default.Close, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -623,26 +556,6 @@ private fun typeLabel(type: String): String = when (type) {
     else -> type
 }
 
-/**
- * Inline 2dp progress bar drawn as a base hairline with a violet fill
- * over the leading [progress] portion. Used by the row to show "we're
- * 62% through generating the script" without opening the detail page.
- */
-@Composable
-private fun ProgressHairline(progress: Float) {
-    val clamped = progress.coerceIn(0f, 1f)
-    Box(
-        modifier = Modifier.fillMaxWidth().height(2.dp).background(FinnencerColors.HairlineStrong),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(clamped)
-                .height(2.dp)
-                .background(FinnencerColors.Violet),
-        )
-    }
-}
-
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier) {
     Column(
@@ -653,19 +566,15 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            "NO TASKS",
-            style = MonoStyles.Brand,
+            "No tasks yet",
+            style = MaterialTheme.typography.titleMedium,
             color = FinnencerColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
-            "LONG-PRESS ARTICLES IN A FEED, HIT SUMMARIZE,",
-            style = MonoStyles.BrandSub,
-            color = FinnencerColors.TextSecondary,
-        )
-        Text(
-            "AND YOUR JOB RUNS HERE",
-            style = MonoStyles.BrandSub,
+            "Long-press articles in a ticker feed, hit Summarize, and your job runs here. You can leave the app — finished tasks show a notification.",
+            style = MaterialTheme.typography.bodySmall,
             color = FinnencerColors.TextSecondary,
         )
     }

@@ -6,19 +6,15 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.itsikh.finnencer.data.repo.ThemePreferences
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.DebugSettings
-import io.itsikh.finnencer.ui.theme.ThemeId
 import io.itsikh.finnencer.update.AppUpdateManager
 import io.itsikh.finnencer.update.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -34,7 +30,6 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val updateManager: AppUpdateManager,
     private val debugSettings: DebugSettings,
-    themePreferences: ThemePreferences,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -46,12 +41,6 @@ class MainViewModel @Inject constructor(
 
     private val _updatePrompt = MutableStateFlow<UpdatePromptState>(UpdatePromptState.None)
     val updatePrompt: StateFlow<UpdatePromptState> = _updatePrompt
-
-    /** Current color theme. Wraps [ThemePreferences.themeId] so
-     *  MainActivity can collect it and hand a fresh value to
-     *  [io.itsikh.finnencer.ui.theme.FinnencerTheme] each composition. */
-    val themeId: StateFlow<ThemeId> = themePreferences.themeId
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemePreferences.DEFAULT)
 
     init {
         viewModelScope.launch {
