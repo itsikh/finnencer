@@ -132,14 +132,29 @@ fun TickerSnapshotScreen(onBack: () -> Unit) {
     infoTarget?.let { info ->
         AlertDialog(
             onDismissRequest = { infoTarget = null },
-            title = { Text(info.label, color = FinnencerColors.TextPrimary) },
-            text = { Text(info.definition, color = FinnencerColors.TextSecondary) },
+            title = {
+                Text(
+                    info.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Text(
+                    info.definition,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FinnencerColors.TextPrimary,
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { infoTarget = null }) {
-                    Text("Got it", color = FinnencerColors.Violet)
+                    Text("Got it", color = FinnencerColors.Violet, fontWeight = FontWeight.SemiBold)
                 }
             },
-            containerColor = FinnencerColors.SurfaceGlassStrong,
+            containerColor = FinnencerColors.Surface,
+            titleContentColor = FinnencerColors.TextPrimary,
+            textContentColor = FinnencerColors.TextPrimary,
         )
     }
 

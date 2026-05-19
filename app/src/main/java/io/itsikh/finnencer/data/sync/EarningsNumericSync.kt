@@ -64,6 +64,13 @@ class EarningsNumericSync @Inject constructor(
                 .onFailure { AppLogger.w(TAG, "earningsCalendar ${ticker.symbol} failed: ${it.message}") }
                 .getOrNull() ?: continue
 
+            // Pass 1: write all numbers immediately and collect the planned
+            // (year, quarter) relabels. Splitting label changes out of the
+            // numbers write lets us resolve swap chains in pass 2 — when
+            // two MSFT-style filings each want a slot the other currently
+            // occupies, a single-shot per-row update silently drops one of
+            // them (#45).
+            val plannedRelabels = mutableListOf<PlannedRelabel>()
             for (row in resp.earningsCalendar) {
                 val dateStr = row.date ?: continue
                 val dateMs = runCatching {
@@ -73,9 +80,44 @@ class EarningsNumericSync @Inject constructor(
 
                 val existing = earningsDao.findNearestByDate(ticker.symbol, dateMs, windowMillis)
                 if (existing != null) {
-                    if (applyFinnhubUpdate(existing, row, dateMs)) touched++
+                    val (wroteNumbers, relabel) = applyNumbersAndPlanRelabel(existing, row, dateMs)
+                    if (wroteNumbers) touched++
+                    if (relabel != null) plannedRelabels += relabel
                 } else {
                     if (insertFromFinnhub(ticker.symbol, row, dateMs)) touched++
+                }
+            }
+
+            // Pass 2: iterative relabel. Each iteration applies every
+            // relabel whose target slot is free (or held by self). Cycles
+            // would deadlock, which is fine — we just log and stop; in
+            // practice Finnhub's per-company quarters strictly increase
+            // with date so the order resolves in O(n) passes.
+            if (plannedRelabels.isNotEmpty()) {
+                val pending = plannedRelabels.toMutableList()
+                while (pending.isNotEmpty()) {
+                    val applied = mutableListOf<PlannedRelabel>()
+                    for (p in pending) {
+                        val occupier = earningsDao.findFiscal(p.row.tickerSymbol, p.targetYear, p.targetQuarter)
+                        if (occupier == null || occupier.id == p.row.id) {
+                            earningsDao.updateEvent(
+                                p.row.copy(
+                                    fiscalYear = p.targetYear,
+                                    fiscalQuarter = p.targetQuarter,
+                                )
+                            )
+                            touched++
+                            applied += p
+                        }
+                    }
+                    if (applied.isEmpty()) {
+                        AppLogger.w(
+                            TAG,
+                            "relabel deadlock on ${ticker.symbol}: ${pending.size} row(s) stuck",
+                        )
+                        break
+                    }
+                    pending.removeAll(applied)
                 }
             }
         }
@@ -83,33 +125,21 @@ class EarningsNumericSync @Inject constructor(
         return touched
     }
 
+    private data class PlannedRelabel(val row: EarningsEvent, val targetYear: Int, val targetQuarter: Int)
+
     /**
-     * Update [existing] with whatever Finnhub provides. Always overwrites
-     * fiscal labels with Finnhub's (it knows the company's fiscal calendar);
-     * skips the relabel only if a different row already occupies those
-     * labels (unique-index conflict), in which case numbers still get
-     * written. Returns true if a write actually happened.
+     * Write whatever Finnhub provides — numbers + status — WITHOUT
+     * touching the fiscal labels. Returns (numbersWritten, plannedRelabel).
+     * Caller resolves all relabels together in a second pass so swap
+     * chains don't drop rows (#45).
      */
-    private suspend fun applyFinnhubUpdate(
+    private suspend fun applyNumbersAndPlanRelabel(
         existing: EarningsEvent,
         row: io.itsikh.finnencer.data.api.FinnhubEarningsEvent,
         dateMs: Long,
-    ): Boolean {
-        val newYear = row.year ?: existing.fiscalYear
-        val newQuarter = row.quarter ?: existing.fiscalQuarter
-        val labelsChange = newYear != existing.fiscalYear || newQuarter != existing.fiscalQuarter
-        val conflict = if (labelsChange) {
-            earningsDao.findFiscal(existing.tickerSymbol, newYear, newQuarter)
-                .takeIf { it != null && it.id != existing.id }
-        } else null
-
-        val targetYear = if (conflict == null) newYear else existing.fiscalYear
-        val targetQuarter = if (conflict == null) newQuarter else existing.fiscalQuarter
-
+    ): Pair<Boolean, PlannedRelabel?> {
         val hasActuals = row.epsActual != null || row.revenueActual != null
         val updated = existing.copy(
-            fiscalYear = targetYear,
-            fiscalQuarter = targetQuarter,
             consensusEps = row.epsEstimate ?: existing.consensusEps,
             consensusRevenue = row.revenueEstimate ?: existing.consensusRevenue,
             actualEps = row.epsActual ?: existing.actualEps,
@@ -117,9 +147,21 @@ class EarningsNumericSync @Inject constructor(
             actualReportedAtMillis = if (hasActuals) (existing.actualReportedAtMillis ?: dateMs) else existing.actualReportedAtMillis,
             status = if (hasActuals) EarningsStatus.REPORTED.name else existing.status,
         )
-        if (updated == existing) return false
-        earningsDao.updateEvent(updated)
-        return true
+        val wroteNumbers = if (updated != existing) {
+            earningsDao.updateEvent(updated)
+            true
+        } else false
+
+        val newYear = row.year
+        val newQuarter = row.quarter
+        val relabel = if (
+            newYear != null && newQuarter != null &&
+            (newYear != updated.fiscalYear || newQuarter != updated.fiscalQuarter)
+        ) {
+            PlannedRelabel(row = updated, targetYear = newYear, targetQuarter = newQuarter)
+        } else null
+
+        return wroteNumbers to relabel
     }
 
     /**
