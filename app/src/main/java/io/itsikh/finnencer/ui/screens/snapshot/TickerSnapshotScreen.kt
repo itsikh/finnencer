@@ -161,7 +161,9 @@ fun TickerSnapshotScreen(onBack: () -> Unit) {
     if (analysisSheetOpen) {
         ModalBottomSheet(
             onDismissRequest = vm::closeAnalysisSheet,
-            containerColor = FinnencerColors.SurfaceGlassStrong,
+            containerColor = FinnencerColors.BgTop,
+            contentColor = FinnencerColors.TextPrimary,
+            scrimColor = Color.Black.copy(alpha = 0.6f),
         ) {
             AnalysisSheet(
                 state = analysisState,
