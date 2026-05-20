@@ -162,8 +162,17 @@ class KeyValidator @Inject constructor(
      * deprecated/unenrolled preview model does instead of a clean
      * 4xx), surface that as a Failed result so the user knows their
      * key works for chat but won't render audio.
+     *
+     * Uses a 60-second per-call clone of the base OkHttp client
+     * because TTS generation takes 10-15s typically, well over the
+     * 10s default the base client uses for cheap REST calls.
      */
     private fun probeGeminiTts(token: String): KeyTestResult {
+        val ttsClient = okHttp.newBuilder()
+            .callTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
         val body = mapOf(
             "contents" to listOf(
                 mapOf("parts" to listOf(mapOf("text" to "Host: Hi.\nAnalyst: Hi back."))),
@@ -199,7 +208,7 @@ class KeyValidator @Inject constructor(
         val req = builder
             .post(gson.toJson(body).toRequestBody(JSON))
             .build()
-        okHttp.newCall(req).execute().use { resp ->
+        ttsClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val msg = parseGoogleError(resp.body?.string())
                 AppLogger.w(TAG, "GEMINI tts ${resp.code}: $msg")
