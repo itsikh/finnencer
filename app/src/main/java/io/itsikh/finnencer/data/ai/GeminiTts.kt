@@ -105,7 +105,7 @@ class GeminiTts @Inject constructor(
                     chunkFile.readBytes()
                 } else {
                     val req = buildRequest(chunk, voices)
-                    val decoded = synthesizeChunkWithRetry(model, req, idx)
+                    val decoded = synthesizeChunkWithRetry(model, req, idx, chunks.size)
                     // Write to cache atomically (tmp then rename) so a
                     // crash mid-write can never leave a half-written
                     // chunk that resume would treat as complete.
