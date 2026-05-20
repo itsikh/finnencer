@@ -288,32 +288,71 @@ class GeminiTts @Inject constructor(
 
     /**
      * Split [script] at Host:/Analyst: boundaries into chunks no larger
-     * than [maxChars] characters. Always preserves the speaker labels.
+     * than [maxChars] characters.
+     *
+     * Two invariants every chunk in the returned list must satisfy:
+     *   1. Starts with `Host:` or `Analyst:` — Gemini's multi-speaker
+     *      TTS attributes lines by the speaker label. A chunk that
+     *      starts mid-prose (e.g. with leading preamble or an orphan
+     *      sentence from a long-turn sub-split) returns no audio with
+     *      `finishReason=OTHER` (#51 root cause).
+     *   2. ≤ maxChars characters.
+     *
+     * If the LLM emitted any preamble before the first speaker line
+     * (a stray "Here is the podcast:" header, blank intro paragraphs,
+     * etc.), it is stripped at the top.
+     *
+     * If a single turn exceeds maxChars and must be sentence-split,
+     * the strip-and-re-prefix step ensures every resulting sub-chunk
+     * still starts with the same speaker label rather than stranding
+     * orphan prose that Gemini can't attribute.
+     *
+     * A final assertion catches anything the above missed before we
+     * call Gemini — better to fail loudly with a fixable error than
+     * silently get `finishReason=OTHER`.
      */
     private fun chunkAtSpeakerBoundaries(script: String, maxChars: Int): List<String> {
-        val trimmed = script.trim()
-        if (trimmed.length <= maxChars) return listOf(trimmed)
+        val trimmed = stripPreamble(script.trim())
+        if (trimmed.isEmpty()) error("Script contains no Host:/Analyst: dialogue lines")
+        if (trimmed.length <= maxChars) {
+            assertChunksWellFormed(listOf(trimmed))
+            return listOf(trimmed)
+        }
         val turns = trimmed
             .split(Regex("(?=^(?:Host:|Analyst:))", RegexOption.MULTILINE))
             .map { it.trim() }
             .filter { it.isNotBlank() }
         val out = ArrayList<String>()
         val buf = StringBuilder()
+        var currentSpeaker: String? = null
         for (turn in turns) {
+            // Track which speaker owns this turn so sub-split orphans can
+            // be re-prefixed and chunk boundaries never strand bare prose.
+            currentSpeaker = TURN_SPEAKER_RE.find(turn)?.groupValues?.getOrNull(1)
+                ?: currentSpeaker
             if (buf.length + turn.length + 2 > maxChars && buf.isNotEmpty()) {
                 out += buf.toString()
                 buf.setLength(0)
             }
             if (turn.length > maxChars) {
-                // Single turn too long — hard split at sentence boundaries.
-                val sentences = turn.split(Regex("(?<=[.!?])\\s+"))
+                // Single turn too long — hard split at sentence boundaries
+                // AND re-prefix each sub-chunk with the current speaker so
+                // every chunk we ship starts with Host: or Analyst:.
+                val speaker = currentSpeaker ?: "Host"
+                val body = turn.replaceFirst(TURN_SPEAKER_RE, "").trimStart(' ', ':', '\t')
+                val sentences = body.split(Regex("(?<=[.!?])\\s+"))
+                    .filter { it.isNotBlank() }
                 for (s in sentences) {
-                    if (buf.length + s.length + 1 > maxChars && buf.isNotEmpty()) {
+                    val prefixedLen = if (buf.isEmpty()) speaker.length + 2 + s.length else s.length + 1
+                    if (buf.length + prefixedLen > maxChars && buf.isNotEmpty()) {
                         out += buf.toString()
                         buf.setLength(0)
                     }
-                    if (buf.isNotEmpty()) buf.append(' ')
-                    buf.append(s)
+                    if (buf.isEmpty()) {
+                        buf.append(speaker).append(": ").append(s)
+                    } else {
+                        buf.append(' ').append(s)
+                    }
                 }
             } else {
                 if (buf.isNotEmpty()) buf.append("\n\n")
@@ -321,7 +360,25 @@ class GeminiTts @Inject constructor(
             }
         }
         if (buf.isNotEmpty()) out += buf.toString()
+        assertChunksWellFormed(out)
         return out
+    }
+
+    /**
+     * Drop anything before the first Host:/Analyst: line. Catches both
+     * stray preambles and accidentally-included markdown headers.
+     */
+    private fun stripPreamble(script: String): String {
+        val firstSpeaker = FIRST_SPEAKER_RE.find(script) ?: return ""
+        return script.substring(firstSpeaker.range.first).trim()
+    }
+
+    private fun assertChunksWellFormed(chunks: List<String>) {
+        chunks.forEachIndexed { i, c ->
+            if (!TURN_SPEAKER_RE.containsMatchIn(c)) {
+                error("Chunk $i missing Host:/Analyst: speaker label at start; head: ${c.take(60).replace('\n', ' ')}")
+            }
+        }
     }
 
     /**
@@ -426,6 +483,11 @@ class GeminiTts @Inject constructor(
         const val NO_AUDIO_SPLIT_THRESHOLD = 2
         const val MAX_SPLIT_DEPTH = 3
         const val MIN_SPLITTABLE_CHARS = 200
+        /** Matches a speaker label at the start of a turn (no MULTILINE
+         *  because turns are already split — the prefix is at offset 0). */
+        val TURN_SPEAKER_RE = Regex("^(Host|Analyst):")
+        /** First Host:/Analyst: line anywhere in a multi-line script. */
+        val FIRST_SPEAKER_RE = Regex("^(Host|Analyst):", RegexOption.MULTILINE)
         private fun nope(@Suppress("unused") v: Any) {
             @Suppress("UNUSED_EXPRESSION") min(0, 0)
         }
