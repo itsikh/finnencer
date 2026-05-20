@@ -110,10 +110,41 @@ class PodcastValidator @Inject constructor(
                 }
                 body
             }
-            Verdict.FAIL -> null
+            Verdict.FAIL -> {
+                // Issue #49 follow-up: even with the relaxed v0.0.68
+                // prompt, the validator's "different company" criterion
+                // is LLM-subjective and was still firing on scripts that
+                // looked structurally fine. Treat FAIL as advisory unless
+                // the script is *structurally* broken: missing speaker
+                // labels or under 500 chars. Those two conditions are
+                // verifiable in code, so we don't have to trust the LLM
+                // for them. Anything else lands as PASS-with-notes so the
+                // user hears the podcast and still sees the validator's
+                // concern surfaced on the player.
+                if (isStructurallyValid(fallback)) {
+                    return Result(
+                        verdict = Verdict.PASS,
+                        script = fallback,
+                        notes = "Validator flagged this but the script structure looks fine (Host/Analyst lines, length ok); shipping anyway. Original notes: $notes",
+                        model = modelId,
+                    )
+                }
+                null
+            }
         }
 
         return Result(verdict = verdict, script = script, notes = notes, model = modelId)
+    }
+
+    /**
+     * The two structural checks we trust ourselves to make, independent
+     * of what the validator LLM claims. Mirrors the FAIL conditions in
+     * the prompt — used as a sanity net so a hallucinated FAIL on a
+     * fine-looking script doesn't block the user.
+     */
+    private fun isStructurallyValid(script: String): Boolean {
+        if (script.length < 500) return false
+        return STRUCTURAL_SPEAKER_RE.containsMatchIn(script)
     }
 
     private companion object {
@@ -123,5 +154,8 @@ class PodcastValidator @Inject constructor(
             setOf(RegexOption.IGNORE_CASE),
         )
         const val SCRIPT_DELIMITER = "---SCRIPT---"
+        /** Multi-line speaker-line check — at least one Host: or Analyst:
+         *  line at the start of a line anywhere in the script. */
+        val STRUCTURAL_SPEAKER_RE = Regex("(?m)^(Host|Analyst):")
     }
 }

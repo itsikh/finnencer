@@ -214,7 +214,7 @@ fun SettingsScreen(
                 )
                 SettingsRow(
                     title = "Podcast script validation",
-                    subtitle = "After the script is written, run a second AI to catch mid-script re-intros, malformed lines, and fabricated facts before paying for audio. Turn off to skip the validation step entirely.",
+                    subtitle = "Optional. After the script is written, run a second AI to catch mid-script re-intros, malformed lines, and fabricated facts before paying for audio. Off by default because it occasionally false-flags a fine script; turn on if you want the extra safety check.",
                     icon = Icons.Default.AutoAwesome,
                     iconTint = FinnencerColors.Violet,
                     trailing = {

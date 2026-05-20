@@ -86,14 +86,16 @@ class PodcastPreferences @Inject constructor(
 
     /**
      * Run the second-pass validator between the script writer and TTS.
-     * Default ON — the validator catches mid-script re-intros and
-     * malformed lines before paying for audio render. Turn off if the
-     * validator is over-flagging and you'd rather ship every script
-     * straight from the writer.
+     * Default OFF as of v0.0.69 (#49 — kept flagging "again and again"
+     * even after the v0.0.68 prompt relaxation). The writer-stage
+     * script is usually shippable as-is; turning on the validator adds
+     * a second LLM round-trip + the risk of false-positive
+     * PENDING_REVIEW. Users who want the safety net flip the toggle on
+     * in Settings → AI.
      */
     val scriptValidationEnabled: Flow<Boolean> =
         context.podcastPrefsDataStore.data.map { p ->
-            p[KEY_VALIDATION_ENABLED] ?: true
+            p[KEY_VALIDATION_ENABLED] ?: false
         }
 
     suspend fun setScriptValidationEnabled(value: Boolean) {
