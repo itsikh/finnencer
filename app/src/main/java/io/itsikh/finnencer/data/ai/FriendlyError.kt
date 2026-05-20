@@ -74,6 +74,13 @@ object FriendlyError {
         if (message.contains("Job was cancelled", ignoreCase = true)) {
             return "The task was cancelled before it could finish. Try again."
         }
+        // Gemini TTS returned a successful HTTP response but no audio.
+        // After v0.0.71 this only surfaces if all 10 retries also came
+        // back empty — almost always means the chunk hit a persistent
+        // safety/recitation block rather than a transient glitch (#50).
+        if (message.contains("Gemini returned no audio", ignoreCase = true)) {
+            return "Gemini blocked one of the script chunks (likely a safety filter). Tap Read the script to inspect it, then retry — sometimes a fresh attempt sails through."
+        }
         // I/O fallback — only after the more specific checks above, since
         // UnknownHostException and SocketTimeoutException both extend IOException.
         if (frame is IOException) {

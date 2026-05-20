@@ -105,10 +105,7 @@ class GeminiTts @Inject constructor(
                     chunkFile.readBytes()
                 } else {
                     val req = buildRequest(chunk, voices)
-                    val resp = generateWithRetry(model, req, idx)
-                    val part = resp.candidates.firstOrNull()?.content?.parts?.firstOrNull()
-                    val inline = part?.inlineData ?: error("Gemini returned no inlineData in chunk $idx")
-                    val decoded = Base64.decode(inline.data, Base64.DEFAULT)
+                    val decoded = synthesizeChunkWithRetry(model, req, idx)
                     // Write to cache atomically (tmp then rename) so a
                     // crash mid-write can never leave a half-written
                     // chunk that resume would treat as complete.
@@ -159,22 +156,47 @@ class GeminiTts @Inject constructor(
     }
 
     /**
-     * Call Gemini's generate-content endpoint with retry on any transient
-     * network error. 10 attempts with linear 5n-second backoff (5s, 10s,
-     * 15s, … 50s) — matches the podcast-script retry policy so a flaky
-     * network is equally tolerated by the TTS stage (#41 follow-up).
+     * Synthesize one chunk of dialogue with retry on transient errors. 10
+     * attempts with linear 5n-second backoff (5s, 10s, 15s, … 50s) —
+     * matches the podcast-script retry policy so a flaky network is
+     * equally tolerated by the TTS stage (#41 follow-up).
+     *
+     * Folds the inline-audio extraction INTO the retry loop so a
+     * response that succeeds at the HTTP layer but returns no
+     * inlineData (#50 — "Gemini returned no inlineData in chunk 0")
+     * counts as a retryable transient instead of an immediate fail.
+     * Most "no inlineData" responses are model-side glitches that
+     * resolve on the next attempt; the few that don't (safety blocks
+     * etc.) surface their `finishReason` in the final error message
+     * so the user knows why retries didn't help.
+     *
      * Coroutine cancellation is re-thrown so cooperative cancellation
      * still works.
      */
-    private suspend fun generateWithRetry(
+    private suspend fun synthesizeChunkWithRetry(
         model: String,
         req: GeminiGenerateRequest,
         chunkIdx: Int,
-    ): io.itsikh.finnencer.data.api.GeminiGenerateResponse {
+    ): ByteArray {
         var lastErr: Throwable? = null
         for (attempt in 1..RETRY_ATTEMPTS) {
             try {
-                return service.generateContent(model = model, request = req)
+                val resp = service.generateContent(model = model, request = req)
+                val candidate = resp.candidates.firstOrNull()
+                val inline = candidate?.content?.parts?.firstOrNull()?.inlineData
+                if (inline?.data.isNullOrBlank()) {
+                    // The HTTP call succeeded but Gemini returned no audio.
+                    // Most often a transient model glitch; occasionally a
+                    // safety/recitation block on the chunk's content.
+                    // Throw a typed message so the catch below retries
+                    // it, AND so the final-failure message tells the
+                    // user which finishReason they hit.
+                    val finishReason = candidate?.finishReason ?: "unspecified"
+                    throw java.io.IOException(
+                        "Gemini returned no audio for chunk $chunkIdx (finishReason=$finishReason)"
+                    )
+                }
+                return Base64.decode(inline!!.data, Base64.DEFAULT)
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (t: Throwable) {
