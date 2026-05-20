@@ -20,6 +20,7 @@ import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
+import kotlinx.coroutines.flow.first
 
 /**
  * Wraps Gemini 2.5 Flash multi-speaker TTS, chunks long dialogue scripts,
@@ -35,6 +36,7 @@ class GeminiTts @Inject constructor(
     private val apiUsageDao: ApiUsageDao,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
+    private val podcastPrefs: io.itsikh.finnencer.data.repo.PodcastPreferences,
 ) {
 
     /** Reasonable default voice pair: Charon (host) + Aoede (analyst). */
@@ -66,7 +68,12 @@ class GeminiTts @Inject constructor(
         model: String = "gemini-2.5-flash-preview-tts",
         cacheDir: File? = null,
     ): TtsResult {
-        val chunks = chunkAtSpeakerBoundaries(script, CHARS_PER_CHUNK)
+        // Read the user-configurable chunk size once at the top so the
+        // same value drives both the planned chunk count and the cache
+        // file naming (changing the pref mid-flight would invalidate
+        // the cache from a prior attempt).
+        val maxCharsPerChunk = podcastPrefs.ttsChunkChars.first()
+        val chunks = chunkAtSpeakerBoundaries(script, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
         outputFile.parentFile?.mkdirs()
@@ -347,7 +354,6 @@ class GeminiTts @Inject constructor(
 
     private companion object {
         const val TAG = "GeminiTts"
-        const val CHARS_PER_CHUNK = 4_500
         const val SAMPLE_RATE = 24_000
         const val BYTES_PER_SAMPLE = 2 // 16-bit mono
         const val RETRY_ATTEMPTS = 10

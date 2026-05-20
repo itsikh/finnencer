@@ -99,6 +99,11 @@ class SettingsViewModel @Inject constructor(
     val podcastScriptValidationEnabled: StateFlow<Boolean> = podcastPrefs.scriptValidationEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    /** Max characters per Gemini TTS call. Smaller = more chunks but each
+     *  is faster and less likely to time out (#49 follow-up). */
+    val podcastTtsChunkChars: StateFlow<Int> = podcastPrefs.ttsChunkChars
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PodcastPreferences.TTS_CHUNK_DEFAULT)
+
     /** Active color theme. The settings screen exposes a swatch picker
      *  to change it; the swap happens at app root via
      *  [io.itsikh.finnencer.ui.theme.FinnencerTheme]. */
@@ -169,6 +174,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastScriptValidationEnabled(value: Boolean) {
         viewModelScope.launch { podcastPrefs.setScriptValidationEnabled(value) }
+    }
+
+    fun setPodcastTtsChunkChars(value: Int) {
+        viewModelScope.launch { podcastPrefs.setTtsChunkChars(value) }
     }
 
     fun setThemeId(id: ThemeId) {

@@ -104,14 +104,43 @@ class PodcastPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Maximum characters per Gemini TTS call. Smaller chunks → more
+     * API calls but each one is faster and less likely to time out;
+     * the per-chunk PCM cache means a failed chunk only loses one
+     * slot of work instead of the whole tail. v0.0.69 dropped from
+     * 4500 → 1500 to chase stability on long (20-30 min) podcasts
+     * that were retrying repeatedly (#49 follow-up).
+     *
+     * Bounded to [TTS_CHUNK_MIN]..[TTS_CHUNK_MAX] on read so a
+     * manually-edited DataStore can't push the value into ranges
+     * that break Gemini's per-call budget.
+     */
+    val ttsChunkChars: Flow<Int> =
+        context.podcastPrefsDataStore.data.map { p ->
+            (p[KEY_TTS_CHUNK_CHARS] ?: TTS_CHUNK_DEFAULT)
+                .coerceIn(TTS_CHUNK_MIN, TTS_CHUNK_MAX)
+        }
+
+    suspend fun setTtsChunkChars(value: Int) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_TTS_CHUNK_CHARS] = value.coerceIn(TTS_CHUNK_MIN, TTS_CHUNK_MAX)
+        }
+    }
+
     companion object {
         const val CHARS_PER_MIN_DEFAULT = 800
         const val CHARS_PER_MIN_MIN = 400
         const val CHARS_PER_MIN_MAX = 1600
 
+        const val TTS_CHUNK_DEFAULT = 1500
+        const val TTS_CHUNK_MIN = 500
+        const val TTS_CHUNK_MAX = 6000
+
         private val KEY_AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_in_queue")
         private val KEY_END_ACTION = stringPreferencesKey("end_of_podcast_action")
         private val KEY_CHARS_PER_MIN = intPreferencesKey("podcast_chars_per_minute")
         private val KEY_VALIDATION_ENABLED = booleanPreferencesKey("podcast_script_validation_enabled")
+        private val KEY_TTS_CHUNK_CHARS = intPreferencesKey("podcast_tts_chunk_chars")
     }
 }

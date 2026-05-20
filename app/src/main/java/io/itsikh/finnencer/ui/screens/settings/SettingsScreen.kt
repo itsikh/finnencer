@@ -97,6 +97,7 @@ fun SettingsScreen(
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
+    val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
@@ -211,6 +212,10 @@ fun SettingsScreen(
                 PodcastCharsPerMinRow(
                     current = podcastCharsPerMin,
                     onChange = viewModel::setPodcastCharsPerMinute,
+                )
+                PodcastTtsChunkRow(
+                    current = podcastTtsChunkChars,
+                    onChange = viewModel::setPodcastTtsChunkChars,
                 )
                 SettingsRow(
                     title = "Podcast script validation",
@@ -687,6 +692,69 @@ private fun PodcastCharsPerMinRow(
             ) {
                 Text(
                     "$current chars / min",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            StepperButton(
+                label = "+",
+                enabled = current < max,
+                onClick = { onChange((current + step).coerceAtMost(max)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PodcastTtsChunkRow(
+    current: Int,
+    onChange: (Int) -> Unit,
+) {
+    val step = 250
+    val min = io.itsikh.finnencer.data.repo.PodcastPreferences.TTS_CHUNK_MIN
+    val max = io.itsikh.finnencer.data.repo.PodcastPreferences.TTS_CHUNK_MAX
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Podcast TTS chunk size",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "$current characters per Gemini call. Smaller = more API calls but each is faster and less likely to time out; failures only lose one chunk thanks to the resume cache.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StepperButton(
+                label = "−",
+                enabled = current > min,
+                onClick = { onChange((current - step).coerceAtLeast(min)) },
+            )
+            Spacer(Modifier.size(12.dp))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FinnencerColors.Violet.copy(alpha = 0.20f))
+                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "$current chars / chunk",
                     style = MaterialTheme.typography.titleSmall,
                     color = FinnencerColors.TextPrimary,
                     fontWeight = FontWeight.SemiBold,
