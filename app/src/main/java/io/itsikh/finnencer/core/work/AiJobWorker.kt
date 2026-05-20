@@ -22,15 +22,12 @@ import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.dao.EarningsDao
-import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.entity.AiJobResultKind
 import io.itsikh.finnencer.data.entity.AiJobStage
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
-import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.logging.AppLogger
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
@@ -67,7 +64,6 @@ class AiJobWorker @AssistedInject constructor(
     private val gson: Gson,
     private val reportGenerator: ReportGenerator,
     private val earningsDao: EarningsDao,
-    private val podcastDao: PodcastDao,
     private val concurrencyGate: JobConcurrencyGate,
     private val endpointReachability: EndpointReachability,
     private val progressReporter: JobProgressReporter,
@@ -152,10 +148,18 @@ class AiJobWorker @AssistedInject constructor(
     }
 
     /**
-     * Block until every endpoint in [endpointsFor(type)] resolves via
-     * DNS. Polls every [POLL_INTERVAL_MS]. Keeps the foreground
-     * notification current with which hosts are still down so the user
-     * isn't staring at a blank "waiting" message.
+     * Run one DNS probe for diagnostic logging, then ALWAYS proceed to
+     * the actual pipeline.
+     *
+     * Earlier versions polled here forever when an endpoint was
+     * unreachable, on the theory that we'd surface WAITING_FOR_NETWORK
+     * until the user moved somewhere with usable internet. In
+     * practice this caused #52 — a slow/blocked DNS lookup pinned
+     * the worker in CONNECTIVITY_CHECK indefinitely, with no
+     * automatic recovery. WorkManager's `NetworkType.CONNECTED`
+     * constraint already gates the worker on network availability,
+     * and the actual API calls have their own retry + friendly-error
+     * paths, so the probe here is purely informational.
      */
     private suspend fun waitForReachableEndpoints(jobId: String, title: String, type: AiJobType) {
         val needed = endpointsFor(type)
@@ -165,42 +169,18 @@ class AiJobWorker @AssistedInject constructor(
             "Checking ${needed.joinToString(", ") { it.host }}",
         )
 
-        var report = endpointReachability.probe(needed)
-        if (report.allReachable) return
-
-        // First failure — also mark any existing Podcast row so the
-        // player screen shows WAITING_FOR_NETWORK rather than
-        // GENERATING when there's clearly nothing happening yet.
-        val podcastRowId = dao.get(jobId)?.resultRefId?.toLongOrNull()
-            ?.takeIf { type.producesPodcast() }
-
-        var pollCount = 0
-        while (!report.allReachable && !isStopped) {
-            val unreachable = report.unreachable.joinToString(", ") { it.host }
-            val detail = "Waiting for $unreachable to come back…"
-            progressReporter.update(AiJobStage.WAITING_FOR_NETWORK, 0, detail)
-            podcastRowId?.let { id ->
-                podcastDao.get(id)?.let { existing ->
-                    runCatching {
-                        podcastDao.update(
-                            existing.copy(
-                                status = PodcastGenerationStatus.WAITING_FOR_NETWORK.name,
-                                generationError = detail,
-                            )
-                        )
-                    }
-                }
-            }
-            runCatching {
-                setForeground(buildForegroundInfo(jobId, title, detail))
-            }
-            AppLogger.i(TAG, "ai job $jobId: $detail; poll #${++pollCount}, sleeping ${POLL_INTERVAL_MS / 1000}s")
-            delay(POLL_INTERVAL_MS)
-            report = endpointReachability.probe(needed)
-        }
-        if (!isStopped) {
-            AppLogger.i(TAG, "ai job $jobId: all endpoints reachable after $pollCount poll(s), proceeding")
+        val report = endpointReachability.probe(needed)
+        if (report.allReachable) {
+            AppLogger.i(TAG, "ai job $jobId: all ${needed.size} endpoint(s) reachable, proceeding")
             progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "All endpoints reachable")
+        } else {
+            val unreachable = report.unreachable.joinToString(", ") { it.host }
+            AppLogger.w(TAG, "ai job $jobId: DNS couldn't resolve $unreachable — proceeding optimistically; the API call is the source of truth")
+            progressReporter.update(
+                AiJobStage.CONNECTIVITY_CHECK,
+                100,
+                "DNS couldn't see $unreachable — trying API call anyway",
+            )
         }
     }
 
@@ -250,13 +230,6 @@ class AiJobWorker @AssistedInject constructor(
         } else {
             ForegroundInfo(notifId, notification)
         }
-    }
-
-    private fun AiJobType.producesPodcast(): Boolean = when (this) {
-        AiJobType.PODCAST_BATCH,
-        AiJobType.SUMMARY_AND_PODCAST_BATCH,
-        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> true
-        else -> false
     }
 
     // ─── pipeline dispatch ────────────────────────────────────────────────
@@ -455,7 +428,5 @@ class AiJobWorker @AssistedInject constructor(
     companion object {
         const val KEY_JOB_ID = "ai_job_id"
         private const val TAG = "AiJobWorker"
-        /** How often to recheck endpoint reachability while waiting. */
-        private const val POLL_INTERVAL_MS: Long = 60_000L
     }
 }
