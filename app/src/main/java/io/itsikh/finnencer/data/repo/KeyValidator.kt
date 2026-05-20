@@ -108,6 +108,23 @@ class KeyValidator @Inject constructor(
     }
 
     private fun validateGemini(token: String): KeyTestResult {
+        // Two-stage probe. The Gemini key has to work BOTH for chat (any
+        // generally-available model) AND for the specific multi-speaker
+        // TTS model the podcast feature uses — the latter is a preview
+        // model whose access is sometimes restricted independently of
+        // the project-wide Gemini API enablement. Catching this at key-
+        // save time saves the user 10+ minutes of script generation
+        // before the first TTS chunk fails with finishReason=OTHER.
+
+        // Stage 1: cheap chat probe.
+        val chatResult = probeGeminiChat(token) ?: return KeyTestResult.Failed("Gemini probe failed")
+        if (chatResult !is KeyTestResult.Ok) return chatResult
+
+        // Stage 2: TTS probe with a tiny multi-speaker request.
+        return probeGeminiTts(token)
+    }
+
+    private fun probeGeminiChat(token: String): KeyTestResult? {
         // Don't pre-reject by prefix — Google ships multiple long-lived key
         // formats (classic "AIzaSy..." and newer "AQ..." with different
         // length/charset). Let the actual API tell us if it's good.
@@ -128,12 +145,83 @@ class KeyValidator @Inject constructor(
             .build()
         okHttp.newCall(req).execute().use { resp ->
             return if (resp.isSuccessful) {
-                AppLogger.i(TAG, "GEMINI ok")
+                AppLogger.i(TAG, "GEMINI chat ok")
                 KeyTestResult.Ok
             } else {
                 val msg = parseGoogleError(resp.body?.string())
-                AppLogger.w(TAG, "GEMINI ${resp.code}: $msg (pkg=${signingInfo.packageName} sha1=${signingInfo.signingCertSha1Hex?.take(16)}…)")
+                AppLogger.w(TAG, "GEMINI chat ${resp.code}: $msg (pkg=${signingInfo.packageName} sha1=${signingInfo.signingCertSha1Hex?.take(16)}…)")
                 KeyTestResult.Failed("Gemini (HTTP ${resp.code}): $msg")
+            }
+        }
+    }
+
+    /**
+     * Send a tiny multi-speaker TTS request — exactly the shape the
+     * podcast pipeline uses, just shorter. If the API returns no
+     * inlineData (e.g. with finishReason=OTHER, which is what a
+     * deprecated/unenrolled preview model does instead of a clean
+     * 4xx), surface that as a Failed result so the user knows their
+     * key works for chat but won't render audio.
+     */
+    private fun probeGeminiTts(token: String): KeyTestResult {
+        val body = mapOf(
+            "contents" to listOf(
+                mapOf("parts" to listOf(mapOf("text" to "Host: Hi.\nAnalyst: Hi back."))),
+            ),
+            "generationConfig" to mapOf(
+                "responseModalities" to listOf("AUDIO"),
+                "speechConfig" to mapOf(
+                    "multiSpeakerVoiceConfig" to mapOf(
+                        "speakerVoiceConfigs" to listOf(
+                            mapOf(
+                                "speaker" to "Host",
+                                "voiceConfig" to mapOf(
+                                    "prebuiltVoiceConfig" to mapOf("voiceName" to "Charon"),
+                                ),
+                            ),
+                            mapOf(
+                                "speaker" to "Analyst",
+                                "voiceConfig" to mapOf(
+                                    "prebuiltVoiceConfig" to mapOf("voiceName" to "Aoede"),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val builder = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/${io.itsikh.finnencer.data.ai.GeminiTts.TTS_MODEL}:generateContent")
+            .addHeader("x-goog-api-key", token)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("X-Android-Package", signingInfo.packageName)
+        signingInfo.signingCertSha1Hex?.let { builder.addHeader("X-Android-Cert", it) }
+        val req = builder
+            .post(gson.toJson(body).toRequestBody(JSON))
+            .build()
+        okHttp.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = parseGoogleError(resp.body?.string())
+                AppLogger.w(TAG, "GEMINI tts ${resp.code}: $msg")
+                return KeyTestResult.Failed("Gemini key works for chat but TTS rejected it (HTTP ${resp.code}): $msg. Enable preview-model access at aistudio.google.com or check the key's allowed services.")
+            }
+            // 200 — verify the response actually carried inline audio.
+            // An empty audio + finishReason=OTHER is what a deprecated
+            // preview model or unenrolled key returns; we'd rather tell
+            // the user now than burn 10 minutes of script generation
+            // before the first chunk fails the same way.
+            val raw = resp.body?.string().orEmpty()
+            val hasInlineAudio = raw.contains("\"inlineData\"") && raw.contains("\"data\":")
+            return if (hasInlineAudio) {
+                AppLogger.i(TAG, "GEMINI tts ok (${raw.length} bytes)")
+                KeyTestResult.Ok
+            } else {
+                val finishReason = Regex("\"finishReason\"\\s*:\\s*\"([^\"]+)\"")
+                    .find(raw)?.groupValues?.getOrNull(1) ?: "unknown"
+                AppLogger.w(TAG, "GEMINI tts returned no audio (finishReason=$finishReason, body head: ${raw.take(200)})")
+                KeyTestResult.Failed(
+                    "Gemini chat works but TTS returned no audio (finishReason=$finishReason). Likely your key/project doesn't have access to the ${io.itsikh.finnencer.data.ai.GeminiTts.TTS_MODEL} preview model. Enable preview access at aistudio.google.com or try a different Gemini key."
+                )
             }
         }
     }

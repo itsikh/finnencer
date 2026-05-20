@@ -65,7 +65,7 @@ class GeminiTts @Inject constructor(
         script: String,
         voices: VoicePair = VoicePair.Default,
         outputFile: File,
-        model: String = "gemini-2.5-flash-preview-tts",
+        model: String = TTS_MODEL,
         cacheDir: File? = null,
     ): TtsResult {
         // Read the user-configurable chunk size once at the top so the
@@ -474,20 +474,27 @@ class GeminiTts @Inject constructor(
         val chunks: Int,
     )
 
-    private companion object {
-        const val TAG = "GeminiTts"
-        const val SAMPLE_RATE = 24_000
-        const val BYTES_PER_SAMPLE = 2 // 16-bit mono
-        const val RETRY_ATTEMPTS = 10
-        const val RETRY_BACKOFF_STEP_MS = 5_000L
-        const val NO_AUDIO_SPLIT_THRESHOLD = 2
-        const val MAX_SPLIT_DEPTH = 3
-        const val MIN_SPLITTABLE_CHARS = 200
+    companion object {
+        /** Multi-speaker TTS model id. As of May 2026 the previous
+         *  preview alias `gemini-2.5-flash-preview-tts` was deprecated;
+         *  the current preview model id is below. Exposed publicly so
+         *  KeyValidator can probe the same model when validating a
+         *  newly-saved Gemini key. */
+        const val TTS_MODEL = "gemini-3.1-flash-tts-preview"
+
+        private const val TAG = "GeminiTts"
+        private const val SAMPLE_RATE = 24_000
+        private const val BYTES_PER_SAMPLE = 2 // 16-bit mono
+        private const val RETRY_ATTEMPTS = 10
+        private const val RETRY_BACKOFF_STEP_MS = 5_000L
+        private const val NO_AUDIO_SPLIT_THRESHOLD = 2
+        private const val MAX_SPLIT_DEPTH = 3
+        private const val MIN_SPLITTABLE_CHARS = 200
         /** Matches a speaker label at the start of a turn (no MULTILINE
          *  because turns are already split — the prefix is at offset 0). */
-        val TURN_SPEAKER_RE = Regex("^(Host|Analyst):")
+        internal val TURN_SPEAKER_RE = Regex("^(Host|Analyst):")
         /** First Host:/Analyst: line anywhere in a multi-line script. */
-        val FIRST_SPEAKER_RE = Regex("^(Host|Analyst):", RegexOption.MULTILINE)
+        internal val FIRST_SPEAKER_RE = Regex("^(Host|Analyst):", RegexOption.MULTILINE)
         private fun nope(@Suppress("unused") v: Any) {
             @Suppress("UNUSED_EXPRESSION") min(0, 0)
         }
