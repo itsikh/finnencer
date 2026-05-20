@@ -114,7 +114,13 @@ fun TasksScreen(
     val vm: TasksViewModel = hiltViewModel()
     val jobs by vm.jobs.collectAsState()
 
-    val running = jobs.filter { it.status == AiJobStatus.QUEUED.name || it.status == AiJobStatus.RUNNING.name }
+    val running = jobs.filter {
+        it.status == AiJobStatus.QUEUED.name ||
+            it.status == AiJobStatus.RUNNING.name ||
+            // Surface PENDING_REVIEW rows alongside running ones so the
+            // user notices the amber chip and reviews the script.
+            it.status == AiJobStatus.PENDING_REVIEW.name
+    }
     val finished = jobs.filter { it.status == AiJobStatus.COMPLETED.name }
     val failed = jobs.filter { it.status == AiJobStatus.FAILED.name || it.status == AiJobStatus.CANCELED.name }
     val grouped by vm.groupedByTicker.collectAsState()
@@ -534,6 +540,7 @@ private fun StatusIcon(status: String, tint: Color) {
             AiJobStatus.QUEUED.name -> Text("•", color = tint, fontWeight = FontWeight.Bold)
             AiJobStatus.COMPLETED.name -> Icon(Icons.Default.Check, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
             AiJobStatus.FAILED.name, AiJobStatus.CANCELED.name -> Icon(Icons.Default.Close, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+            AiJobStatus.PENDING_REVIEW.name -> Text("!", color = tint, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -542,6 +549,7 @@ private fun StatusIcon(status: String, tint: Color) {
 private fun statusAccent(status: String): Color = when (status) {
     AiJobStatus.RUNNING.name -> FinnencerColors.Violet
     AiJobStatus.QUEUED.name -> FinnencerColors.Amber
+    AiJobStatus.PENDING_REVIEW.name -> FinnencerColors.Amber
     AiJobStatus.COMPLETED.name -> FinnencerColors.Mint
     AiJobStatus.FAILED.name, AiJobStatus.CANCELED.name -> FinnencerColors.Coral
     else -> FinnencerColors.Neutral

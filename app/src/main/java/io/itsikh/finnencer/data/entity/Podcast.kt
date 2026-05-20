@@ -20,6 +20,15 @@ enum class PodcastGenerationStatus {
      *  become reachable. The worker is alive — see the foreground
      *  notification — but no LLM/TTS calls are being made yet (#43). */
     WAITING_FOR_NETWORK,
+    /**
+     * Validator flagged the script as broken (mid-script re-intro,
+     * missing required section, fabricated facts, unparseable output).
+     * The script is persisted; the user reviews it in the Tasks tab
+     * and either taps "Proceed anyway" (skip validation, force TTS)
+     * or "Cancel" (mark FAILED). Distinct from FAILED so a hard error
+     * is still distinguishable from a soft "needs human eyes" stop.
+     */
+    PENDING_REVIEW,
     READY,
     FAILED,
 }
@@ -47,4 +56,13 @@ data class Podcast(
      * still read the text even if audio rendering never succeeds (#42).
      */
     @ColumnInfo(name = "script_text") val scriptText: String? = null,
+    /** Validator's free-text notes about what it checked / changed /
+     *  flagged. Null until the validator stage has run. */
+    @ColumnInfo(name = "validation_notes") val validationNotes: String? = null,
+    /** Which model produced [validationNotes]. */
+    @ColumnInfo(name = "validation_model") val validationModel: String? = null,
+    /** Set true when the user taps "Proceed anyway" from a PENDING_REVIEW
+     *  row. The next worker run skips the validator and goes straight to
+     *  TTS using [scriptText]. */
+    @ColumnInfo(name = "force_accept_script") val forceAcceptScript: Boolean = false,
 )

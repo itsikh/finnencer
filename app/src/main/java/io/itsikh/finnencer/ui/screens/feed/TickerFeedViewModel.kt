@@ -351,7 +351,7 @@ class TickerFeedViewModel @Inject constructor(
                             _earningsError.value + (eventId to (job.errorMessage ?: "Report failed"))
                         watcherByEvent.remove(eventId)
                     }
-                    AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
+                    AiJobStatus.QUEUED, AiJobStatus.RUNNING, AiJobStatus.PENDING_REVIEW -> Unit
                 }
             }
         }
@@ -576,7 +576,7 @@ class TickerFeedViewModel @Inject constructor(
                                 error = job.errorMessage ?: "Report failed",
                             )
                         }
-                        AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
+                        AiJobStatus.QUEUED, AiJobStatus.RUNNING, AiJobStatus.PENDING_REVIEW -> Unit
                     }
                 }
             }

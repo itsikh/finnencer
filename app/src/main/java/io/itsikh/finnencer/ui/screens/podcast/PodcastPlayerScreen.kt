@@ -176,6 +176,34 @@ fun PodcastPlayerScreen(
                 )
             }
 
+            p.validationNotes?.takeIf { it.isNotBlank() }?.let { notes ->
+                io.itsikh.finnencer.ui.components.GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "VALIDATOR NOTES",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.TextTertiary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextPrimary,
+                        )
+                        p.validationModel?.let { model ->
+                            Text(
+                                "via $model",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                            )
+                        }
+                    }
+                }
+            }
+
             when (p.status) {
                 PodcastGenerationStatus.PENDING.name, PodcastGenerationStatus.GENERATING.name -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {

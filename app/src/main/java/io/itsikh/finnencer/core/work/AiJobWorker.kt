@@ -133,6 +133,17 @@ class AiJobWorker @AssistedInject constructor(
     }
 
     private suspend fun handleFailure(jobId: String, title: String, t: Throwable) {
+        // Validator-FAIL is a "needs human review" exit, not a real
+        // failure. The Podcast row was already flipped to PENDING_REVIEW
+        // by the validator phase; here we mirror that on the AiJob so
+        // the Tasks screen shows the amber chip + Proceed/Cancel
+        // buttons. The user later resumes via AiJobsRepository.
+        if (t is io.itsikh.finnencer.data.ai.BundleSummarizer.ValidationReviewRequiredException) {
+            AppLogger.i(TAG, "ai job $jobId: validator flagged podcast ${t.podcastId} for review")
+            progressReporter.updateExplicit(jobId, AiJobStage.VALIDATING_SCRIPT, 100, "Validator flagged — open this task to review and choose")
+            dao.markFailed(jobId, AiJobStatus.PENDING_REVIEW.name, "Script flagged for human review", System.currentTimeMillis())
+            return
+        }
         val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
         AppLogger.e(TAG, "ai job $jobId failed: $friendly", t)
         progressReporter.updateExplicit(jobId, AiJobStage.FAILED, 0, friendly)

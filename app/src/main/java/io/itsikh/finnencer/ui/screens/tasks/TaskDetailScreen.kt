@@ -63,10 +63,14 @@ import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -79,10 +83,12 @@ import javax.inject.Inject
  *    a "Show logs" toggle so the simple view stays simple
  *  - A Retry button when the job ended in FAILED state
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class TaskDetailViewModel @Inject constructor(
     savedState: SavedStateHandle,
     aiJobDao: AiJobDao,
+    private val podcastDao: io.itsikh.finnencer.data.dao.PodcastDao,
     private val repo: AiJobsRepository,
 ) : ViewModel() {
 
@@ -91,6 +97,23 @@ class TaskDetailViewModel @Inject constructor(
 
     val job: StateFlow<AiJob?> = aiJobDao.observe(jobId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** When the validator flagged the script, the user reviews it from
+     *  this screen. We observe the linked podcast row to pick up
+     *  validation_notes + script_text. */
+    val linkedPodcast: StateFlow<io.itsikh.finnencer.data.entity.Podcast?> = job
+        .map { j -> j?.resultRefId?.toLongOrNull() }
+        .distinctUntilChanged()
+        .flatMapLatest { pid -> if (pid != null) podcastDao.observe(pid) else kotlinx.coroutines.flow.flowOf(null) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun proceedFromValidationReview() {
+        viewModelScope.launch { repo.resumeFromValidationReview(jobId, podcastDao) }
+    }
+
+    fun cancelFromValidationReview() {
+        viewModelScope.launch { repo.cancelFromValidationReview(jobId, podcastDao) }
+    }
 
     /** Live tail of the in-memory log buffer, filtered to lines tagged
      *  with this job's first 8 characters of UUID. Initialized with
@@ -231,6 +254,42 @@ fun TaskDetailScreen(
                 }
             }
 
+            // ─── Validator review (PENDING_REVIEW only) ───
+            if (j.status == AiJobStatus.PENDING_REVIEW.name) {
+                val podcast by vm.linkedPodcast.collectAsState()
+                ValidatorReviewCard(
+                    notes = podcast?.validationNotes,
+                    validatorModel = podcast?.validationModel,
+                    script = podcast?.scriptText,
+                    onProceed = { vm.proceedFromValidationReview() },
+                    onCancel = { vm.cancelFromValidationReview() },
+                )
+            } else {
+                // Also surface validator notes on a podcast that already
+                // shipped — informational. Hidden when there are none.
+                val podcast by vm.linkedPodcast.collectAsState()
+                podcast?.validationNotes?.takeIf { it.isNotBlank() }?.let { notes ->
+                    GlassCard {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "VALIDATOR NOTES",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FinnencerColors.TextTertiary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(notes, style = MaterialTheme.typography.bodyMedium, color = FinnencerColors.TextPrimary)
+                            podcast?.validationModel?.let { model ->
+                                Text(
+                                    "via $model",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = FinnencerColors.TextTertiary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ─── Stage timeline ───
             GlassCard {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -285,18 +344,21 @@ private fun stagesToShow(j: AiJob): List<AiJobStage> {
         io.itsikh.finnencer.data.entity.AiJobType.PODCAST_BATCH -> listOf(
             AiJobStage.GENERATING_SCRIPT,
             AiJobStage.PERSISTING_SCRIPT,
+            AiJobStage.VALIDATING_SCRIPT,
             AiJobStage.SYNTHESIZING_AUDIO,
         )
         io.itsikh.finnencer.data.entity.AiJobType.SUMMARY_AND_PODCAST_BATCH -> listOf(
             AiJobStage.GENERATING_SUMMARY,
             AiJobStage.GENERATING_SCRIPT,
             AiJobStage.PERSISTING_SCRIPT,
+            AiJobStage.VALIDATING_SCRIPT,
             AiJobStage.SYNTHESIZING_AUDIO,
         )
         io.itsikh.finnencer.data.entity.AiJobType.EARNINGS_BRIEF_AND_PODCAST -> listOf(
             AiJobStage.GENERATING_REPORT,
             AiJobStage.GENERATING_SCRIPT,
             AiJobStage.PERSISTING_SCRIPT,
+            AiJobStage.VALIDATING_SCRIPT,
             AiJobStage.SYNTHESIZING_AUDIO,
         )
         null -> emptyList()
@@ -391,6 +453,7 @@ private fun StatusPill(status: String) {
         AiJobStatus.COMPLETED.name -> "Completed" to FinnencerColors.Mint
         AiJobStatus.FAILED.name -> "Failed" to FinnencerColors.Coral
         AiJobStatus.CANCELED.name -> "Canceled" to FinnencerColors.TextTertiary
+        AiJobStatus.PENDING_REVIEW.name -> "Needs review" to FinnencerColors.Amber
         else -> status to FinnencerColors.TextTertiary
     }
     Box(
@@ -450,5 +513,110 @@ private fun LogTail(entries: List<AppLogger.LogEntry>) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ValidatorReviewCard(
+    notes: String?,
+    validatorModel: String?,
+    script: String?,
+    onProceed: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var showScript by remember { mutableStateOf(false) }
+    var confirmCancel by remember { mutableStateOf(false) }
+    GlassCard {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "VALIDATOR FLAGGED THIS SCRIPT",
+                style = MaterialTheme.typography.labelSmall,
+                color = FinnencerColors.Amber,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                notes?.takeIf { it.isNotBlank() }
+                    ?: "The validator stopped before audio rendering, but didn't include a reason.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FinnencerColors.TextPrimary,
+            )
+            validatorModel?.let { model ->
+                Text(
+                    "via $model",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+            if (!script.isNullOrBlank()) {
+                TextButton(onClick = { showScript = !showScript }) {
+                    Text(
+                        if (showScript) "Hide script" else "Read script (${script.length} chars)",
+                        color = FinnencerColors.Violet,
+                    )
+                }
+                if (showScript) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(FinnencerColors.Surface)
+                            .border(1.dp, FinnencerColors.SurfaceBorder, RoundedCornerShape(10.dp)),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(10.dp),
+                        ) {
+                            Text(
+                                script,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FinnencerColors.TextPrimary,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onProceed) {
+                    Text("Proceed anyway")
+                }
+                FilledTonalButton(
+                    onClick = { confirmCancel = true },
+                ) {
+                    Text("Cancel", color = FinnencerColors.Coral)
+                }
+            }
+        }
+    }
+    if (confirmCancel) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmCancel = false },
+            title = { Text("Cancel this podcast?", color = FinnencerColors.TextPrimary) },
+            text = {
+                Text(
+                    "The script will be marked failed. You can regenerate a fresh podcast from the same source later.",
+                    color = FinnencerColors.TextPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmCancel = false
+                    onCancel()
+                }) {
+                    Text("Cancel podcast", color = FinnencerColors.Coral, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCancel = false }) {
+                    Text("Keep", color = FinnencerColors.Violet)
+                }
+            },
+            containerColor = FinnencerColors.Surface,
+            titleContentColor = FinnencerColors.TextPrimary,
+            textContentColor = FinnencerColors.TextPrimary,
+        )
     }
 }

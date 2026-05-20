@@ -37,7 +37,16 @@ class BundleSummarizer @Inject constructor(
     private val podcastPrefs: PodcastPreferences,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
+    private val podcastValidator: PodcastValidator,
 ) {
+
+    /**
+     * Thrown by the validator phase when the script is broken and the
+     * podcast should land in PENDING_REVIEW (NOT failed). The worker
+     * catches this specific exception, sets the right statuses, and
+     * exits cleanly.
+     */
+    class ValidationReviewRequiredException(val podcastId: Long) : RuntimeException("Validator flagged the script; podcast $podcastId is awaiting review")
 
     enum class Pages(val target: Int, val maxTokens: Int) {
         TWO(2, 2_000), FIVE(5, 4_500), TEN(10, 9_000)
@@ -335,6 +344,62 @@ class BundleSummarizer @Inject constructor(
                 freshScript
             }
 
+            // Phase 1b: validate the script unless the user already hit
+            // "Proceed anyway" from a prior PENDING_REVIEW state, in
+            // which case the user has explicitly overridden the
+            // validator and we go straight to TTS.
+            val rowBeforeValidation = podcastDao.get(id)
+            val skipValidation = rowBeforeValidation?.forceAcceptScript == true
+            val scriptForTts: String = if (skipValidation) {
+                AppLogger.i(TAG, "podcast $id: force_accept_script set — skipping validation per user override")
+                script
+            } else {
+                progressReporter.update(
+                    io.itsikh.finnencer.data.entity.AiJobStage.VALIDATING_SCRIPT,
+                    0,
+                    "Asking the validator to check the script",
+                )
+                val v = podcastValidator.validate(
+                    script = script,
+                    sourceBundle = sourceMaterial,
+                    targetChars = charBudget,
+                    minutes = minutes.minutes,
+                    customPrompt = customPrompt,
+                )
+                AppLogger.i(TAG, "podcast $id validation: verdict=${v.verdict} model=${v.model} notes=${v.notes.take(120)}…")
+                when (v.verdict) {
+                    PodcastValidator.Verdict.PASS,
+                    PodcastValidator.Verdict.FIXED -> {
+                        val finalScript = v.script ?: script
+                        podcastDao.update(
+                            podcastDao.get(id)!!.copy(
+                                scriptText = finalScript,
+                                validationNotes = v.notes,
+                                validationModel = v.model,
+                            )
+                        )
+                        progressReporter.update(
+                            io.itsikh.finnencer.data.entity.AiJobStage.VALIDATING_SCRIPT,
+                            100,
+                            if (v.verdict == PodcastValidator.Verdict.FIXED) "Validator made edits" else "Validator passed the script",
+                        )
+                        finalScript
+                    }
+                    PodcastValidator.Verdict.FAIL -> {
+                        podcastDao.update(
+                            podcastDao.get(id)!!.copy(
+                                status = PodcastGenerationStatus.PENDING_REVIEW.name,
+                                validationNotes = v.notes,
+                                validationModel = v.model,
+                                generationError = null,
+                            )
+                        )
+                        AppLogger.w(TAG, "podcast $id PENDING_REVIEW: ${v.notes.take(200)}")
+                        throw ValidationReviewRequiredException(id)
+                    }
+                }
+            }
+
             // Phase 2: synthesize. Chunk PCMs are cached under a stable
             // per-podcast dir so a partial failure resumes mid-podcast
             // instead of regenerating earlier chunks (#1).
@@ -347,7 +412,7 @@ class BundleSummarizer @Inject constructor(
             val cacheDir = File(context.filesDir, "podcasts/cache/podcast_$id")
             val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
             val result = tts.synthesizeDialogue(
-                script = script,
+                script = scriptForTts,
                 voices = GeminiTts.VoicePair.Default,
                 outputFile = outputFile,
                 cacheDir = cacheDir,
@@ -363,6 +428,11 @@ class BundleSummarizer @Inject constructor(
             )
             AppLogger.i(TAG, "bundle podcast $id ready (${result.bytes / 1024}KB, ${result.durationMs / 1000}s)")
         }.onFailure { t ->
+            // Validator-FAIL is not a real failure — the row is already
+            // PENDING_REVIEW. Just rethrow so the worker layer can flip
+            // the AiJob status to PENDING_REVIEW without touching the
+            // podcast row again.
+            if (t is ValidationReviewRequiredException) throw t
             val friendly = FriendlyError.describe(t, stage = "podcast")
             podcastDao.update(
                 podcastDao.get(id)!!.copy(
@@ -410,17 +480,32 @@ class BundleSummarizer @Inject constructor(
 
         while (rounds < MAX_CONTINUATIONS && combined.length < minAcceptable) {
             val reason = when (stop) {
-                "max_tokens" -> "Your previous response was cut off at the token limit. Continue seamlessly from the last partial line."
-                else -> "The script is still ${minAcceptable - combined.length} characters short of the required minimum. Continue the dialogue with new angles until the full target length is reached."
+                "max_tokens" -> "Your previous response was cut off at the token limit."
+                else -> "The dialogue is ${minAcceptable - combined.length} characters short of the required minimum."
             }
             val continuationSystem = buildString {
                 append(scriptSystem)
-                append("\n\nCONTINUATION INSTRUCTIONS: ").append(reason)
-                append(" Pick up mid-conversation without re-introducing the company or quarter — assume the listener heard everything so far.")
+                append("\n\n=== CONTINUATION MODE ===\n")
+                append(reason).append('\n')
+                append("Your output is the NEXT LINE of an in-progress dialogue. It will be concatenated directly to the script so far.\n\n")
+                append("ABSOLUTELY FORBIDDEN openings (the listener has been listening for ~15 minutes — these would sound like the podcast is restarting):\n")
+                append("- 'Welcome back', 'Welcome to', 'Hi everyone', 'Hello and welcome'\n")
+                append("- 'Today we're looking at', 'Today we're talking about', 'Let me introduce'\n")
+                append("- 'So, to recap', 'To summarize so far', 'Just to set the stage'\n")
+                append("- ANY company re-introduction ('XYZ Corp, the maker of...')\n")
+                append("- ANY quarter/period re-introduction\n")
+                append("- ANY meta-commentary about the conversation ('continuing our discussion', 'picking up where we left off')\n\n")
+                append("Your first character MUST be 'Host:' or 'Analyst:' starting an immediate next turn of dialogue. ")
+                append("Treat it like a natural conversational beat — the speakers are mid-sentence, mid-thought, mid-segment. ")
+                append("Keep going until you've covered the rest of the runway with new angles (segment-by-segment financials, technology deep-dives, competitive dynamics, the analyst-reactions block if 20-min+, then a wrap).")
             }
+            val anchorTail = combined.takeLast(CONTINUATION_ANCHOR_CHARS)
             val continuationUser = buildString {
-                append("Source material:\n").append(source)
-                append("\n\nScript so far (do not repeat any line):\n").append(combined)
+                append("Source material (reference only — do NOT re-introduce):\n").append(source)
+                append("\n\n=== SCRIPT SO FAR (do not repeat any line) ===\n").append(combined)
+                append("\n\n=== ANCHOR — your output must immediately follow this verbatim ===\n")
+                append(anchorTail)
+                append("\n\n=== YOUR NEXT OUTPUT ===\nBegin with 'Host:' or 'Analyst:' continuing the conversation directly. No preamble.")
             }
             val next = scriptCallWithRetry(continuationSystem, continuationUser, maxTokens, passLabel = "cont ${rounds + 1}")
             if (next == null) {
@@ -508,6 +593,13 @@ class BundleSummarizer @Inject constructor(
     }
 
     private companion object {
+        /**
+         * How many characters of the script-so-far to repeat verbatim in
+         * the continuation user message as a syntactic anchor. Long
+         * enough that the model can see speaker pattern + topic, short
+         * enough not to crowd the context window.
+         */
+        const val CONTINUATION_ANCHOR_CHARS = 600
         const val TAG = "BundleSummarizer"
         const val MAX_CONTINUATIONS = 3
         const val TARGET_THRESHOLD = 0.90

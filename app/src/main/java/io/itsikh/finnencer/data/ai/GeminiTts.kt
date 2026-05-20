@@ -186,7 +186,12 @@ class GeminiTts @Inject constructor(
     private fun buildRequest(text: String, voices: VoicePair) = GeminiGenerateRequest(
         contents = listOf(GeminiContent(parts = listOf(GeminiPart(text = text)))),
         generationConfig = GeminiGenerationConfig(
-            temperature = 0.6,
+            // Low temperature keeps voice timbre + prosody consistent
+            // across chunks. We want deterministic delivery here, not
+            // creative readings — creativity belongs in the script
+            // model, not the TTS render. At 0.6 the voice can audibly
+            // drift between chunks of the same podcast.
+            temperature = 0.1,
             responseModalities = listOf("AUDIO"),
             speechConfig = GeminiSpeechConfig(
                 multiSpeakerVoiceConfig = GeminiMultiSpeakerConfig(

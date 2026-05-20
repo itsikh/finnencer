@@ -14,6 +14,7 @@ import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.AiJobType
+import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.ReportTier
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
@@ -209,6 +210,70 @@ class AiJobsRepository @Inject constructor(
     suspend fun clearFinished() = dao.clearFinished()
 
     suspend fun delete(jobId: String) = dao.delete(jobId)
+
+    /**
+     * User read the validator-flagged script and decided to ship it
+     * anyway. Flip the podcast row's `forceAcceptScript` so the next
+     * worker run skips validation, reset the AiJob to QUEUED, and
+     * re-enqueue. The worker picks up where it left off — script is
+     * already persisted, so it goes straight to TTS.
+     */
+    suspend fun resumeFromValidationReview(jobId: String, podcastDao: io.itsikh.finnencer.data.dao.PodcastDao) {
+        val existing = dao.get(jobId) ?: return
+        if (existing.status != AiJobStatus.PENDING_REVIEW.name) return
+        val podcastId = existing.resultRefId?.toLongOrNull()
+        if (podcastId != null) {
+            podcastDao.get(podcastId)?.let { row ->
+                podcastDao.update(
+                    row.copy(
+                        forceAcceptScript = true,
+                        status = PodcastGenerationStatus.PENDING.name,
+                        generationError = null,
+                    )
+                )
+            }
+        }
+        dao.markQueued(jobId)
+        val request = OneTimeWorkRequestBuilder<AiJobWorker>()
+            .setInputData(workDataOf(AiJobWorker.KEY_JOB_ID to existing.id))
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .addTag(TAG_AI_JOB)
+            .addTag("ai-job:${existing.id}")
+            .build()
+        WorkManager.getInstance(context).enqueue(request)
+    }
+
+    /**
+     * User read the validator-flagged script and decided to give up on
+     * it. Mark both rows FAILED with the validator's reason so they
+     * appear in the failed list and can be retried-fresh later.
+     */
+    suspend fun cancelFromValidationReview(jobId: String, podcastDao: io.itsikh.finnencer.data.dao.PodcastDao) {
+        val existing = dao.get(jobId) ?: return
+        val reason = existing.errorMessage?.takeIf { it.isNotBlank() }
+            ?: "Cancelled by user after validator review"
+        val podcastId = existing.resultRefId?.toLongOrNull()
+        if (podcastId != null) {
+            podcastDao.get(podcastId)?.let { row ->
+                podcastDao.update(
+                    row.copy(
+                        status = PodcastGenerationStatus.FAILED.name,
+                        generationError = reason,
+                    )
+                )
+            }
+        }
+        dao.markFailed(
+            jobId,
+            AiJobStatus.FAILED.name,
+            reason,
+            System.currentTimeMillis(),
+        )
+    }
 
     /**
      * Re-run a previously-finished job (failed, completed, or canceled).

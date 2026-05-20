@@ -38,6 +38,10 @@ enum class AiUsage(val displayName: String, val description: String) {
         displayName = "Snapshot interpretation",
         description = "Plain-English read of the current valuation, momentum, and risk numbers for one ticker. Runs on user tap from the snapshot screen.",
     ),
+    PODCAST_VALIDATION(
+        displayName = "Podcast script validation",
+        description = "After the script writer produces a podcast script, a second model reads it against the requirements (length, alternating speakers, no mid-script re-intros, no fabricated numbers, analyst-reactions segment for 20-min+) and either passes it through, rewrites it, or flags it for your review.",
+    ),
 }
 
 /**
@@ -121,4 +125,9 @@ val AiUsage.defaultModel: AiModel
         AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_4_6
         AiUsage.MOVE_EXPLAIN -> AiModel.CLAUDE_HAIKU_4_5
         AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_4_6
+        // Validator runs against the script-writer's output — using a
+        // stronger model gives a meaningful second opinion. If the
+        // validator is the same model as the writer it risks endorsing
+        // its own mistakes.
+        AiUsage.PODCAST_VALIDATION -> AiModel.CLAUDE_OPUS_4_7
     }

@@ -57,7 +57,11 @@ enum class AiJobType {
 }
 
 enum class AiJobStatus {
-    QUEUED, RUNNING, COMPLETED, FAILED, CANCELED
+    QUEUED, RUNNING, COMPLETED, FAILED, CANCELED,
+    /** Worker stopped cleanly because the podcast validator flagged the
+     *  script. UI surfaces the validator notes + a preview of the script
+     *  with "Proceed anyway" / "Cancel" buttons (#feedback-human-review-escape-hatch). */
+    PENDING_REVIEW,
 }
 
 enum class AiJobResultKind {
@@ -84,6 +88,7 @@ enum class AiJobStage(val displayName: String) {
     GENERATING_REPORT("Generating earnings report"),
     GENERATING_SCRIPT("Writing podcast script"),
     PERSISTING_SCRIPT("Saving podcast script"),
+    VALIDATING_SCRIPT("Validating script"),
     SYNTHESIZING_AUDIO("Synthesizing audio"),
     FINALIZING("Finalizing"),
     DONE("Done"),

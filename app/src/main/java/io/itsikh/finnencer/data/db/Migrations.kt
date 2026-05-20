@@ -132,6 +132,21 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
     }
 }
 
+/**
+ * v9 → v10: adds the podcast script validation surface — a validator
+ * runs between script gen and TTS, producing notes (and either an
+ * unchanged or rewritten script). If the validator FAILs the script,
+ * the row enters PENDING_REVIEW; the user can flip `force_accept_script`
+ * via the Tasks UI to bypass validation on the next worker run.
+ */
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE podcasts ADD COLUMN validation_notes TEXT")
+        db.execSQL("ALTER TABLE podcasts ADD COLUMN validation_model TEXT")
+        db.execSQL("ALTER TABLE podcasts ADD COLUMN force_accept_script INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
@@ -139,4 +154,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_6_7,
     MIGRATION_7_8,
     MIGRATION_8_9,
+    MIGRATION_9_10,
 )

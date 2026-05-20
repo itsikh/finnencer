@@ -147,6 +147,10 @@ class EarningsViewModel @Inject constructor(
                             error = job.errorMessage ?: "Report failed",
                         )
                     }
+                    // PENDING_REVIEW is a podcast-validator state; can't
+                    // occur for an earnings report job. Defensive no-op
+                    // so the compiler is satisfied if the enum grows again.
+                    AiJobStatus.PENDING_REVIEW -> Unit
                     AiJobStatus.QUEUED, AiJobStatus.RUNNING -> Unit
                 }
             }
