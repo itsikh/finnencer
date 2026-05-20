@@ -104,8 +104,7 @@ class GeminiTts @Inject constructor(
                     Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} reused from cache (${chunkFile.length()}B)")
                     chunkFile.readBytes()
                 } else {
-                    val req = buildRequest(chunk, voices)
-                    val decoded = synthesizeChunkWithRetry(model, req, idx, chunks.size)
+                    val decoded = synthesizeChunkWithRetry(model, chunk, voices, idx, chunks.size)
                     // Write to cache atomically (tmp then rename) so a
                     // crash mid-write can never leave a half-written
                     // chunk that resume would treat as complete.
@@ -165,33 +164,54 @@ class GeminiTts @Inject constructor(
      * response that succeeds at the HTTP layer but returns no
      * inlineData (#50 — "Gemini returned no inlineData in chunk 0")
      * counts as a retryable transient instead of an immediate fail.
-     * Most "no inlineData" responses are model-side glitches that
-     * resolve on the next attempt; the few that don't (safety blocks
-     * etc.) surface their `finishReason` in the final error message
-     * so the user knows why retries didn't help.
+     *
+     * On repeated no-audio responses (#51 — "Stuck on chunk 1") the
+     * same text won't suddenly start rendering, so we split the chunk
+     * in half and recurse on each half. Gemini's "no audio" responses
+     * are almost always content-shape sensitivity (length, a specific
+     * phrase that recitation-blocks, etc.) and reliably resolve when
+     * the input is smaller. This bounds the total wait time AND gives
+     * the user a real audio result instead of a 20-minute hang.
      *
      * Coroutine cancellation is re-thrown so cooperative cancellation
      * still works.
      */
     private suspend fun synthesizeChunkWithRetry(
         model: String,
-        req: GeminiGenerateRequest,
+        text: String,
+        voices: VoicePair,
         chunkIdx: Int,
+        chunkTotal: Int,
+        splitDepth: Int = 0,
     ): ByteArray {
+        val req = buildRequest(text, voices)
         var lastErr: Throwable? = null
+        var noAudioCount = 0
         for (attempt in 1..RETRY_ATTEMPTS) {
             try {
                 val resp = service.generateContent(model = model, request = req)
                 val candidate = resp.candidates.firstOrNull()
                 val inline = candidate?.content?.parts?.firstOrNull()?.inlineData
                 if (inline?.data.isNullOrBlank()) {
-                    // The HTTP call succeeded but Gemini returned no audio.
-                    // Most often a transient model glitch; occasionally a
-                    // safety/recitation block on the chunk's content.
-                    // Throw a typed message so the catch below retries
-                    // it, AND so the final-failure message tells the
-                    // user which finishReason they hit.
+                    noAudioCount++
                     val finishReason = candidate?.finishReason ?: "unspecified"
+                    // Once we've seen the same chunk return no audio twice,
+                    // stop hoping the model will change its mind — split
+                    // the text and recurse. Bounded by MAX_SPLIT_DEPTH so
+                    // a pathological chunk can't recurse forever.
+                    if (noAudioCount >= NO_AUDIO_SPLIT_THRESHOLD && splitDepth < MAX_SPLIT_DEPTH) {
+                        val halves = splitTextInHalf(text)
+                        if (halves.size > 1) {
+                            Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal: $noAudioCount no-audio responses (finishReason=$finishReason); splitting into ${halves.size} sub-chunks at depth ${splitDepth + 1}")
+                            val combined = java.io.ByteArrayOutputStream()
+                            for (half in halves) {
+                                combined.write(
+                                    synthesizeChunkWithRetry(model, half, voices, chunkIdx, chunkTotal, splitDepth + 1)
+                                )
+                            }
+                            return combined.toByteArray()
+                        }
+                    }
                     throw java.io.IOException(
                         "Gemini returned no audio for chunk $chunkIdx (finishReason=$finishReason)"
                     )
@@ -210,6 +230,29 @@ class GeminiTts @Inject constructor(
             }
         }
         throw lastErr ?: IllegalStateException("tts chunk $chunkIdx failed after $RETRY_ATTEMPTS attempts")
+    }
+
+    /**
+     * Split [text] in half, preferring a Host:/Analyst: speaker boundary
+     * near the midpoint, then a sentence boundary, then the raw midpoint.
+     * Returns the original text as a single-element list when it's too
+     * short to usefully split — the caller should treat that as "give up".
+     */
+    private fun splitTextInHalf(text: String): List<String> {
+        val trimmed = text.trim()
+        if (trimmed.length < MIN_SPLITTABLE_CHARS) return listOf(trimmed)
+        val mid = trimmed.length / 2
+        val speakerSplits = Regex("\\n(?=(?:Host:|Analyst:))")
+            .findAll(trimmed)
+            .map { it.range.first }
+            .toList()
+        val splitAt = speakerSplits.minByOrNull { kotlin.math.abs(it - mid) }
+            ?: trimmed.indexOf(". ", mid).takeIf { it > 0 }?.plus(1)
+            ?: mid
+        if (splitAt <= 0 || splitAt >= trimmed.length - 1) return listOf(trimmed)
+        val first = trimmed.substring(0, splitAt).trim()
+        val second = trimmed.substring(splitAt).trim()
+        return if (first.isBlank() || second.isBlank()) listOf(trimmed) else listOf(first, second)
     }
 
     private fun buildRequest(text: String, voices: VoicePair) = GeminiGenerateRequest(
@@ -380,6 +423,9 @@ class GeminiTts @Inject constructor(
         const val BYTES_PER_SAMPLE = 2 // 16-bit mono
         const val RETRY_ATTEMPTS = 10
         const val RETRY_BACKOFF_STEP_MS = 5_000L
+        const val NO_AUDIO_SPLIT_THRESHOLD = 2
+        const val MAX_SPLIT_DEPTH = 3
+        const val MIN_SPLITTABLE_CHARS = 200
         private fun nope(@Suppress("unused") v: Any) {
             @Suppress("UNUSED_EXPRESSION") min(0, 0)
         }
