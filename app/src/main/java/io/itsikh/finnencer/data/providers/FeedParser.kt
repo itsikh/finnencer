@@ -1,12 +1,28 @@
 package io.itsikh.finnencer.data.providers
 
 import android.util.Xml
+import androidx.core.text.HtmlCompat
 import org.xmlpull.v1.XmlPullParser
 import java.io.StringReader
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+
+/**
+ * RSS `<description>` fields routinely contain HTML markup (anchors, `<br/>`,
+ * image tags, even full inline stylesheets from Google News). Rendered as a
+ * plain Compose Text those tags show up literally — useless to the reader and
+ * noisy when fed to the summarizer. Convert to plain text once at parse time.
+ */
+fun stripHtmlToText(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val plain = HtmlCompat.fromHtml(raw, HtmlCompat.FROM_HTML_MODE_LEGACY)
+        .toString()
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    return plain.takeIf { it.isNotBlank() }
+}
 
 /**
  * Minimal RSS 2.0 + Atom 1.0 parser tuned for the publishers finnencer talks
@@ -83,7 +99,7 @@ object FeedParser {
             title = resolvedTitle,
             link = resolvedLink,
             publishedAtMillis = parseRfc822(pubDate) ?: System.currentTimeMillis(),
-            summary = description?.trim()?.takeIf { it.isNotBlank() && it != resolvedTitle },
+            summary = stripHtmlToText(description)?.takeIf { it != resolvedTitle },
             source = source?.trim(),
         )
     }
@@ -130,7 +146,7 @@ object FeedParser {
             publishedAtMillis = parseIso8601(published)
                 ?: parseIso8601(updated)
                 ?: System.currentTimeMillis(),
-            summary = summary?.trim()?.takeIf { it.isNotBlank() && it != resolvedTitle },
+            summary = stripHtmlToText(summary)?.takeIf { it != resolvedTitle },
             source = null,
         )
     }

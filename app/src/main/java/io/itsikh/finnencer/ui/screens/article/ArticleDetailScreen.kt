@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.QueueItemKind
+import io.itsikh.finnencer.data.providers.stripHtmlToText
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
@@ -194,21 +195,49 @@ fun ArticleDetailScreen(
                 }
             }
 
-            // Source snippet (if any)
-            article.snippet?.takeIf { it.isNotBlank() }?.let { snippet ->
+            // Source snippet (if any). Strip HTML at display time so legacy
+            // rows ingested before the parse-time cleanup also render as
+            // plain prose instead of raw `<p>`/`<a>` markup.
+            val cleanedSnippet = remember(article.snippet) { stripHtmlToText(article.snippet) }
+            val sourceUrl = article.url.takeIf { it.isNotBlank() }
+            if (cleanedSnippet != null || sourceUrl != null) {
                 GlassCard {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             "Source excerpt",
                             style = MaterialTheme.typography.labelMedium,
                             color = FinnencerColors.TextTertiary,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Text(
-                            snippet,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = FinnencerColors.TextSecondary,
-                        )
+                        if (cleanedSnippet != null) {
+                            Text(
+                                cleanedSnippet,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = FinnencerColors.TextSecondary,
+                            )
+                        }
+                        if (sourceUrl != null) {
+                            FilledTonalButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(sourceUrl)))
+                                    }
+                                },
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = FinnencerColors.SurfaceGlass,
+                                    contentColor = FinnencerColors.Violet,
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.OpenInNew,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.size(8.dp))
+                                Text("Read original article", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }
