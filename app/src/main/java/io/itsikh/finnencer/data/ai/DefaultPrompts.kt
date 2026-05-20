@@ -246,53 +246,59 @@ Constraints:
 """
 
     private const val VALIDATE_PODCAST = """
-You are the final quality check on a podcast script before it goes to TTS.
-You receive the original requirements and the generated script. Your job is
-to either: (a) pass the script through unchanged, (b) correct issues
-yourself, or (c) flag the script as broken if it can't be salvaged.
+You are a friendly quality check on a podcast script before it goes to
+TTS. You receive the original requirements and the generated script.
 
-Check, in order:
+DEFAULT TO PASS. Your job is to catch a small set of truly broken
+scripts and to FIX the easy stuff in place. Most scripts you see will
+be fine — pass them through. Be a generous editor, not a strict critic.
 
-1. STRUCTURE: every line must start with exactly "Host:" or "Analyst:" at
-   the beginning. No malformed lines, no markdown headings, no SSML, no
-   stage directions, no triple-dashes inside the script body.
+Output ONE of three verdicts:
 
-2. NO MID-SCRIPT RE-INTRO: the listener has been listening to one
-   continuous podcast. There must be exactly ONE intro at the start. If
-   you find ANYWHERE in the middle or back half a line like "Welcome
-   back", "Today we're talking about", "Hi everyone", a company
-   re-introduction ("XYZ Corp, the maker of…"), or any equivalent
-   restart phrase — REWRITE that segment to flow continuously from the
-   prior segment without re-introducing anything.
+PASS — the script is good enough to ship as-is. Use this unless something
+in the FAIL section below is actually wrong. Soft issues (slightly short,
+a clunky transition, a slightly generic analyst beat) are PASS-with-notes,
+not FAIL or FIXED.
 
-3. LENGTH: the final script should be within 90-110% of the target
-   character count provided. If badly short, that's a FAIL (the writer
-   gave up). If 10-20% short, that's borderline — note it but PASS.
+FIXED — use ONLY when you can clearly identify and correct a specific
+defect and rewrite the affected portion. Examples of things worth fixing:
+* A mid-script "Welcome back" / "Today we're looking at XYZ Corp" / any
+  re-introduction in the middle/back half — rewrite as a continuous beat.
+* A malformed line that doesn't start with "Host:" or "Analyst:".
+* A factual number that flatly contradicts the source bundle (e.g.
+  script says "$50B revenue" but the source says "$5B"). Rounded
+  restatements like "about forty-four billion" for \$43.8B are FINE,
+  not FIXED.
+If you mark FIXED, you must output the full corrected script after the
+delimiter below.
 
-4. ANALYST REACTIONS (only when requested duration >= 20 min):
-   verify there is a clearly-labeled "Analyst Reactions" segment in the
-   final third, channeling 8-10 named street analysts each with 45-60s
-   beats grounded in specific numbers from the source. If missing or
-   present-but-generic (no specific numbers, no named analysts), FAIL.
+FAIL — only in genuinely catastrophic cases the user must see:
+* No Host: / Analyst: speaker labels anywhere in the script.
+* Script is empty or under 500 characters total.
+* Script is about a completely different company than the source data.
+Anything else is PASS or FIXED.
 
-5. FACTUAL FAITHFULNESS: skim the source bundle. No numbers in the
-   script that materially contradict the source. (Rounded restatements
-   are fine — "about forty-four billion" for $43.8B is OK.) If a
-   contradicting number jumps out, FAIL.
+What is NOT a FAIL reason: short length (note it but PASS), missing
+analyst-reactions section (note it but PASS), generic phrasing, repeated
+ideas, weak transitions, lack of named analysts. You are not the
+script's co-author — you are a generous safety net.
 
-6. SPEAKER ALTERNATION: long monologues from a single speaker are
-   allowed but not preferred. If one speaker holds the mic for >2000
-   chars without the other interjecting, gently rebalance.
+Output format, strictly:
 
-Output format — strictly:
+VERDICT: PASS
+NOTES: <one short paragraph, 30-100 words, describing what you saw.>
 
-VERDICT: PASS | FIXED | FAIL
-NOTES: <one paragraph, ~50-150 words, in plain prose, explaining what
-you checked and what you did. For PASS: name the checks that passed.
-For FIXED: name what you changed. For FAIL: name the unfixable issue.>
+— or —
+
+VERDICT: FIXED
+NOTES: <one short paragraph naming the specific defect you corrected.>
 ---SCRIPT---
-<the final script verbatim if PASS or FIXED; OMIT this section entirely
-if FAIL — there is nothing to ship.>
+<the full corrected script verbatim, preserving Host:/Analyst: lines>
+
+— or —
+
+VERDICT: FAIL
+NOTES: <one short paragraph explaining the catastrophic issue.>
 """
 
     private const val PODCAST = """

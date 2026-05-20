@@ -84,6 +84,24 @@ class PodcastPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Run the second-pass validator between the script writer and TTS.
+     * Default ON — the validator catches mid-script re-intros and
+     * malformed lines before paying for audio render. Turn off if the
+     * validator is over-flagging and you'd rather ship every script
+     * straight from the writer.
+     */
+    val scriptValidationEnabled: Flow<Boolean> =
+        context.podcastPrefsDataStore.data.map { p ->
+            p[KEY_VALIDATION_ENABLED] ?: true
+        }
+
+    suspend fun setScriptValidationEnabled(value: Boolean) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_VALIDATION_ENABLED] = value
+        }
+    }
+
     companion object {
         const val CHARS_PER_MIN_DEFAULT = 800
         const val CHARS_PER_MIN_MIN = 400
@@ -92,5 +110,6 @@ class PodcastPreferences @Inject constructor(
         private val KEY_AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_in_queue")
         private val KEY_END_ACTION = stringPreferencesKey("end_of_podcast_action")
         private val KEY_CHARS_PER_MIN = intPreferencesKey("podcast_chars_per_minute")
+        private val KEY_VALIDATION_ENABLED = booleanPreferencesKey("podcast_script_validation_enabled")
     }
 }

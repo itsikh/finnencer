@@ -96,6 +96,7 @@ fun SettingsScreen(
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
+    val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
@@ -210,6 +211,19 @@ fun SettingsScreen(
                 PodcastCharsPerMinRow(
                     current = podcastCharsPerMin,
                     onChange = viewModel::setPodcastCharsPerMinute,
+                )
+                SettingsRow(
+                    title = "Podcast script validation",
+                    subtitle = "After the script is written, run a second AI to catch mid-script re-intros, malformed lines, and fabricated facts before paying for audio. Turn off to skip the validation step entirely.",
+                    icon = Icons.Default.AutoAwesome,
+                    iconTint = FinnencerColors.Violet,
+                    trailing = {
+                        Switch(
+                            checked = podcastValidationEnabled,
+                            onCheckedChange = viewModel::setPodcastScriptValidationEnabled,
+                            colors = switchColors(),
+                        )
+                    },
                 )
             }
 

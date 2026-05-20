@@ -72,14 +72,17 @@ class PodcastValidator @Inject constructor(
             "FIXED" -> Verdict.FIXED
             "FAIL" -> Verdict.FAIL
             else -> {
-                // Unparseable — treat as FAIL so the user reviews; but
-                // keep the original script available via the fallback
-                // so the resume-anyway path works.
+                // Unparseable validator output is NOT a reason to block
+                // the user's podcast. Treat as PASS — the original
+                // script is already good enough to have made it past
+                // the writer model. Surface what we saw in the notes
+                // so the user can spot if validation is consistently
+                // misbehaving.
                 return Result(
-                    verdict = Verdict.FAIL,
-                    script = null,
-                    notes = "Validator output was unparseable — could not extract a VERDICT line. Raw: " +
-                        raw.take(400).replace('\n', ' '),
+                    verdict = Verdict.PASS,
+                    script = fallback,
+                    notes = "Validator output couldn't be parsed; shipping the original script unchanged. " +
+                        "Raw head: " + raw.take(200).replace('\n', ' '),
                     model = modelId,
                 )
             }
@@ -93,13 +96,15 @@ class PodcastValidator @Inject constructor(
             Verdict.FIXED -> {
                 val body = scriptSplit.getOrNull(1)?.trim()
                 if (body.isNullOrBlank()) {
-                    // FIXED verdict but no script body — treat as FAIL
-                    // so the user reviews rather than silently dropping
-                    // a partial output to TTS.
+                    // FIXED verdict but no script body — fall back to
+                    // the original. The validator claimed it fixed
+                    // something, but didn't include the rewritten
+                    // script (likely hit max_tokens). Original script
+                    // is the safe ship; notes flag what happened.
                     return Result(
-                        verdict = Verdict.FAIL,
-                        script = null,
-                        notes = "$notes (validator returned FIXED but did not include a script body)",
+                        verdict = Verdict.PASS,
+                        script = fallback,
+                        notes = "$notes (validator marked FIXED but its output was truncated; shipping the original script)",
                         model = modelId,
                     )
                 }

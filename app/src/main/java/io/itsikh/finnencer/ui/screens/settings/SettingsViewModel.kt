@@ -95,6 +95,10 @@ class SettingsViewModel @Inject constructor(
     val podcastCharsPerMinute: StateFlow<Int> = podcastPrefs.charsPerMinute
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PodcastPreferences.CHARS_PER_MIN_DEFAULT)
 
+    /** Whether the validator runs between podcast script gen and TTS. */
+    val podcastScriptValidationEnabled: StateFlow<Boolean> = podcastPrefs.scriptValidationEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     /** Active color theme. The settings screen exposes a swatch picker
      *  to change it; the swap happens at app root via
      *  [io.itsikh.finnencer.ui.theme.FinnencerTheme]. */
@@ -161,6 +165,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastCharsPerMinute(value: Int) {
         viewModelScope.launch { podcastPrefs.setCharsPerMinute(value) }
+    }
+
+    fun setPodcastScriptValidationEnabled(value: Boolean) {
+        viewModelScope.launch { podcastPrefs.setScriptValidationEnabled(value) }
     }
 
     fun setThemeId(id: ThemeId) {

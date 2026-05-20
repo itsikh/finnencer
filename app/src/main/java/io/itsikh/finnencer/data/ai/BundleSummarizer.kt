@@ -344,14 +344,16 @@ class BundleSummarizer @Inject constructor(
                 freshScript
             }
 
-            // Phase 1b: validate the script unless the user already hit
-            // "Proceed anyway" from a prior PENDING_REVIEW state, in
-            // which case the user has explicitly overridden the
-            // validator and we go straight to TTS.
+            // Phase 1b: validate the script. Skip if the user has
+            // disabled validation in preferences, or already hit
+            // "Proceed anyway" from a prior PENDING_REVIEW state.
             val rowBeforeValidation = podcastDao.get(id)
-            val skipValidation = rowBeforeValidation?.forceAcceptScript == true
+            val validationOnByPref = podcastPrefs.scriptValidationEnabled.first()
+            val skipValidation = rowBeforeValidation?.forceAcceptScript == true || !validationOnByPref
             val scriptForTts: String = if (skipValidation) {
-                AppLogger.i(TAG, "podcast $id: force_accept_script set — skipping validation per user override")
+                val why = if (rowBeforeValidation?.forceAcceptScript == true)
+                    "force_accept_script set" else "validation disabled in preferences"
+                AppLogger.i(TAG, "podcast $id: skipping validation ($why)")
                 script
             } else {
                 progressReporter.update(
