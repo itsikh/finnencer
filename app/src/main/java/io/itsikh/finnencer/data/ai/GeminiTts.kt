@@ -65,7 +65,7 @@ class GeminiTts @Inject constructor(
         script: String,
         voices: VoicePair = VoicePair.Default,
         outputFile: File,
-        model: String = TTS_MODEL,
+        model: String? = null,
         cacheDir: File? = null,
     ): TtsResult {
         // Read the user-configurable chunk size once at the top so the
@@ -73,6 +73,11 @@ class GeminiTts @Inject constructor(
         // file naming (changing the pref mid-flight would invalidate
         // the cache from a prior attempt).
         val maxCharsPerChunk = podcastPrefs.ttsChunkChars.first()
+        // Resolve the TTS model: explicit caller override → user pref →
+        // built-in default. The pref lets the user pick between the
+        // three currently-shipping preview model ids without code
+        // changes.
+        val resolvedModel: String = model ?: podcastPrefs.ttsModel.first().modelId
         val chunks = chunkAtSpeakerBoundaries(script, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
@@ -104,7 +109,7 @@ class GeminiTts @Inject constructor(
                     Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} reused from cache (${chunkFile.length()}B)")
                     chunkFile.readBytes()
                 } else {
-                    val decoded = synthesizeChunkWithRetry(model, chunk, voices, idx, chunks.size)
+                    val decoded = synthesizeChunkWithRetry(resolvedModel, chunk, voices, idx, chunks.size)
                     // Write to cache atomically (tmp then rename) so a
                     // crash mid-write can never leave a half-written
                     // chunk that resume would treat as complete.
@@ -144,7 +149,7 @@ class GeminiTts @Inject constructor(
         val durationMs = (pcmTotalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000L
         // Only count the chunks we actually sent to Gemini against usage —
         // cached chunks were already billed on the prior attempt.
-        recordUsage(model, charsSubmitted, pcmTotalBytes.toInt(), startedAt, ok = true, err = null)
+        recordUsage(resolvedModel, charsSubmitted, pcmTotalBytes.toInt(), startedAt, ok = true, err = null)
         Log.i(TAG, "tts done: ${chunks.size} chunks total, $cachedChunks from cache, ${chunks.size - cachedChunks} freshly synthesized")
         return TtsResult(
             file = outputFile,
@@ -475,12 +480,14 @@ class GeminiTts @Inject constructor(
     )
 
     companion object {
-        /** Multi-speaker TTS model id. As of May 2026 the previous
-         *  preview alias `gemini-2.5-flash-preview-tts` was deprecated;
-         *  the current preview model id is below. Exposed publicly so
-         *  KeyValidator can probe the same model when validating a
-         *  newly-saved Gemini key. */
-        const val TTS_MODEL = "gemini-3.1-flash-tts-preview"
+        /** Default multi-speaker TTS model id used when the user hasn't
+         *  picked one in Settings. Matches `TtsModel.GEMINI_2_5_FLASH`
+         *  in [io.itsikh.finnencer.data.repo.PodcastPreferences] — the
+         *  one shipping longest and most stable on lower-tier keys.
+         *  KeyValidator uses this constant for its probe (kept as a
+         *  fixed reference target so the probe isn't affected by the
+         *  user's per-run model choice). */
+        const val TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
         private const val TAG = "GeminiTts"
         private const val SAMPLE_RATE = 24_000

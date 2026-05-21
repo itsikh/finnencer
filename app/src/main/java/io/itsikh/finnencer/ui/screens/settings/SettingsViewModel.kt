@@ -104,6 +104,15 @@ class SettingsViewModel @Inject constructor(
     val podcastTtsChunkChars: StateFlow<Int> = podcastPrefs.ttsChunkChars
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PodcastPreferences.TTS_CHUNK_DEFAULT)
 
+    /** Which Gemini TTS preview model to route podcast synthesis through.
+     *  Selectable in Settings → Podcasts (#53 follow-up). */
+    val podcastTtsModel: StateFlow<io.itsikh.finnencer.data.repo.TtsModel> = podcastPrefs.ttsModel
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH,
+        )
+
     /** Active color theme. The settings screen exposes a swatch picker
      *  to change it; the swap happens at app root via
      *  [io.itsikh.finnencer.ui.theme.FinnencerTheme]. */
@@ -178,6 +187,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastTtsChunkChars(value: Int) {
         viewModelScope.launch { podcastPrefs.setTtsChunkChars(value) }
+    }
+
+    fun setPodcastTtsModel(value: io.itsikh.finnencer.data.repo.TtsModel) {
+        viewModelScope.launch { podcastPrefs.setTtsModel(value) }
     }
 
     fun setThemeId(id: ThemeId) {

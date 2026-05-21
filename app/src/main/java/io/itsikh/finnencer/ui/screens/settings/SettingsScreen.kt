@@ -98,6 +98,7 @@ fun SettingsScreen(
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
+    val podcastTtsModel by viewModel.podcastTtsModel.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
@@ -212,6 +213,10 @@ fun SettingsScreen(
                 PodcastCharsPerMinRow(
                     current = podcastCharsPerMin,
                     onChange = viewModel::setPodcastCharsPerMinute,
+                )
+                PodcastTtsModelRow(
+                    current = podcastTtsModel,
+                    onPick = viewModel::setPodcastTtsModel,
                 )
                 PodcastTtsChunkRow(
                     current = podcastTtsChunkChars,
@@ -703,6 +708,53 @@ private fun PodcastCharsPerMinRow(
                 enabled = current < max,
                 onClick = { onChange((current + step).coerceAtMost(max)) },
             )
+        }
+    }
+}
+
+@Composable
+private fun PodcastTtsModelRow(
+    current: io.itsikh.finnencer.data.repo.TtsModel,
+    onPick: (io.itsikh.finnencer.data.repo.TtsModel) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.AutoAwesome,
+                contentDescription = null,
+                tint = FinnencerColors.Violet,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Podcast TTS model",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    current.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            io.itsikh.finnencer.data.repo.TtsModel.entries.forEach { model ->
+                EndOfPodcastChip(
+                    label = model.displayName.removePrefix("Gemini "),
+                    selected = current == model,
+                    onClick = { onPick(model) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

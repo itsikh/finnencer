@@ -26,6 +26,31 @@ private val Context.podcastPrefsDataStore by preferencesDataStore(name = "podcas
 enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
 
 /**
+ * Gemini multi-speaker TTS preview models the app can route podcast
+ * synthesis through. All three are documented at
+ * https://ai.google.dev/gemini-api/docs/speech-generation and differ
+ * mostly in cost, latency, and audio quality. The user picks one in
+ * Settings → Podcasts.
+ */
+enum class TtsModel(val modelId: String, val displayName: String, val description: String) {
+    GEMINI_2_5_FLASH(
+        modelId = "gemini-2.5-flash-preview-tts",
+        displayName = "Gemini 2.5 Flash",
+        description = "Default. Most stable on lower-tier keys.",
+    ),
+    GEMINI_2_5_PRO(
+        modelId = "gemini-2.5-pro-preview-tts",
+        displayName = "Gemini 2.5 Pro",
+        description = "Higher quality, slower, costs more per chunk.",
+    ),
+    GEMINI_3_1_FLASH(
+        modelId = "gemini-3.1-flash-tts-preview",
+        displayName = "Gemini 3.1 Flash",
+        description = "Newest preview. Try if 2.5 Flash is slow or returns no audio for you.",
+    ),
+}
+
+/**
  * User preferences for podcast playback behaviour.
  *
  * Stores [endOfPodcastAction] as a string ("STOP" / "CONTINUE" /
@@ -128,6 +153,29 @@ class PodcastPreferences @Inject constructor(
         }
     }
 
+    /**
+     * Which Gemini TTS preview model to use for multi-speaker
+     * synthesis. The official docs list three currently-supported
+     * preview models with similar capabilities but different
+     * latency/quality trade-offs. Default is the 2.5 Flash preview —
+     * it's been stable longest and is the fastest on most keys.
+     * Users who want the latest model or higher quality can switch
+     * in Settings → Podcasts. Bounded to [TtsModel.entries] on read
+     * so a manually-edited DataStore can't pick a model the API
+     * would 4xx on.
+     */
+    val ttsModel: Flow<TtsModel> =
+        context.podcastPrefsDataStore.data.map { p ->
+            val stored = p[KEY_TTS_MODEL]
+            TtsModel.entries.firstOrNull { it.modelId == stored } ?: TtsModel.GEMINI_2_5_FLASH
+        }
+
+    suspend fun setTtsModel(value: TtsModel) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_TTS_MODEL] = value.modelId
+        }
+    }
+
     companion object {
         const val CHARS_PER_MIN_DEFAULT = 800
         const val CHARS_PER_MIN_MIN = 400
@@ -142,5 +190,6 @@ class PodcastPreferences @Inject constructor(
         private val KEY_CHARS_PER_MIN = intPreferencesKey("podcast_chars_per_minute")
         private val KEY_VALIDATION_ENABLED = booleanPreferencesKey("podcast_script_validation_enabled")
         private val KEY_TTS_CHUNK_CHARS = intPreferencesKey("podcast_tts_chunk_chars")
+        private val KEY_TTS_MODEL = stringPreferencesKey("podcast_tts_model")
     }
 }

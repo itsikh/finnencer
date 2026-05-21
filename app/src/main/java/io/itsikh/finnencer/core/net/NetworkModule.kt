@@ -116,9 +116,16 @@ object NetworkModule {
      */
     private fun longLivedTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
+        // Bumped from 180s/240s → 300s/600s in v0.0.77 (#53). Gemini's TTS
+        // preview models can take 3-5 minutes to render a full chunk of
+        // multi-speaker dialogue on lower-tier keys — they accept the
+        // request, render in the background, and only stream the audio
+        // at the very end. The shorter timeouts caused callTimeout to
+        // fire BEFORE the model finished, with the user seeing
+        // SocketTimeoutException on every chunk.
+        .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
-        .callTimeout(240, TimeUnit.SECONDS)
+        .callTimeout(600, TimeUnit.SECONDS)
 
     @Provides @Singleton
     fun provideBaseOkHttp(): OkHttpClient =
