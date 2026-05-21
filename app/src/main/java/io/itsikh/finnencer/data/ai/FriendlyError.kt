@@ -81,6 +81,13 @@ object FriendlyError {
         if (message.contains("Gemini returned no audio", ignoreCase = true)) {
             return "Gemini blocked one of the script chunks (likely a safety filter). Tap Read the script to inspect it, then retry — sometimes a fresh attempt sails through."
         }
+        // Pre-flight TTS smoke probe failed at the connectivity-check
+        // stage. The message already names the model and points the
+        // user at Settings — surface it verbatim so they see actionable
+        // advice instead of a stack-style root cause (#54).
+        if (frame is io.itsikh.finnencer.data.ai.TtsSmokeTestFailedException) {
+            return message
+        }
         // I/O fallback — only after the more specific checks above, since
         // UnknownHostException and SocketTimeoutException both extend IOException.
         if (frame is IOException) {

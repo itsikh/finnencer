@@ -61,6 +61,53 @@ class GeminiTts @Inject constructor(
      * ones are re-billed (#42 — "rewire to be bulletproof"). Caller is
      * expected to wipe [cacheDir] when starting fresh.
      */
+    /**
+     * Pre-flight smoke probe used by AiJobWorker's CONNECTIVITY_CHECK
+     * stage. Sends one tiny multi-speaker request against [model] and
+     * returns `null` on success or the underlying [Throwable] on
+     * failure (network error, no inlineData, finishReason, timeout).
+     *
+     * The caller bounds the wait with [timeoutMs] and decides how to
+     * surface the failure to the user. AiJobWorker fails the podcast
+     * job fast on smoke failure so the user can switch models in
+     * Settings → Podcasts before any Anthropic tokens get burned
+     * (#54).
+     */
+    suspend fun smokeTest(
+        model: String,
+        voices: VoicePair = VoicePair.Default,
+        timeoutMs: Long,
+    ): Throwable? {
+        val tinyScript = "Host: Ready.\nAnalyst: Ready."
+        val req = buildRequest(tinyScript, voices)
+        return try {
+            // Wrap the inner block's result in a one-element list so
+            // `withTimeoutOrNull` returning null genuinely means
+            // "timeout fired", distinct from the inner block having
+            // returned a null error (= success).
+            val wrapped: List<Throwable?>? = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+                val resp = service.generateContent(model = model, request = req)
+                val candidate = resp.candidates.firstOrNull()
+                val inline = candidate?.content?.parts?.firstOrNull()?.inlineData
+                listOf(
+                    if (inline?.data.isNullOrBlank()) {
+                        val finishReason = candidate?.finishReason ?: "unspecified"
+                        java.io.IOException("Gemini $model returned no audio (finishReason=$finishReason)")
+                    } else {
+                        null // success
+                    }
+                )
+            }
+            wrapped?.firstOrNull() ?: java.util.concurrent.TimeoutException(
+                "Gemini $model didn't respond within ${timeoutMs / 1000}s"
+            )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            t
+        }
+    }
+
     suspend fun synthesizeDialogue(
         script: String,
         voices: VoicePair = VoicePair.Default,
@@ -507,3 +554,14 @@ class GeminiTts @Inject constructor(
         }
     }
 }
+
+/**
+ * Thrown by AiJobWorker's connectivity-check stage when the pre-flight
+ * TTS smoke probe fails or times out. FriendlyError maps this to a
+ * single clear sentence pointing the user at Settings → Podcasts to
+ * switch TTS models (#54).
+ */
+class TtsSmokeTestFailedException(
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)

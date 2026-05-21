@@ -67,6 +67,8 @@ class AiJobWorker @AssistedInject constructor(
     private val concurrencyGate: JobConcurrencyGate,
     private val endpointReachability: EndpointReachability,
     private val progressReporter: JobProgressReporter,
+    private val geminiTts: io.itsikh.finnencer.data.ai.GeminiTts,
+    private val podcastPrefs: io.itsikh.finnencer.data.repo.PodcastPreferences,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -96,6 +98,19 @@ class AiJobWorker @AssistedInject constructor(
                 waitForReachableEndpoints(jobId, job.title, type)
 
                 if (isStopped) return@runCatching Result.failure()
+
+                // Surface gate-wait state to the UI. If another podcast
+                // is currently holding the gate (concurrency limit = 1
+                // by default), the gate.withPermit suspends here for
+                // potentially many minutes — and the previous stage
+                // detail ("Pre-flight checks passed") would otherwise
+                // make it look like nothing was happening. Setting a
+                // queued-behind detail makes the wait visible (#54).
+                progressReporter.update(
+                    AiJobStage.CONNECTIVITY_CHECK,
+                    100,
+                    "Ready — waiting for the ${gateKind(type).name.lowercase()} pipeline to be free",
+                )
 
                 // Phase 2: under the gate, run the actual pipeline.
                 concurrencyGate.withPermit(gateKind(type), label = "${job.type} ${job.id}") {
@@ -148,18 +163,24 @@ class AiJobWorker @AssistedInject constructor(
     }
 
     /**
-     * Run one DNS probe for diagnostic logging, then ALWAYS proceed to
-     * the actual pipeline.
+     * Two-phase pre-flight inside the CONNECTIVITY_CHECK stage:
      *
-     * Earlier versions polled here forever when an endpoint was
-     * unreachable, on the theory that we'd surface WAITING_FOR_NETWORK
-     * until the user moved somewhere with usable internet. In
-     * practice this caused #52 — a slow/blocked DNS lookup pinned
-     * the worker in CONNECTIVITY_CHECK indefinitely, with no
-     * automatic recovery. WorkManager's `NetworkType.CONNECTED`
-     * constraint already gates the worker on network availability,
-     * and the actual API calls have their own retry + friendly-error
-     * paths, so the probe here is purely informational.
+     *   1. DNS probe — verifies the user's network can resolve
+     *      api.anthropic.com and (for podcast jobs)
+     *      generativelanguage.googleapis.com. Bounded by
+     *      EndpointReachability's hard-timeout daemon-thread fix
+     *      from #52. We proceed even on failure because the actual
+     *      API calls have their own retry/error paths.
+     *
+     *   2. TTS smoke probe — podcast jobs only. Sends one tiny
+     *      multi-speaker request against the user's CURRENTLY-SELECTED
+     *      Gemini TTS model with a model-tuned timeout (Pro: 60s,
+     *      Flash: 30s). A failing smoke probe throws and the worker's
+     *      outer runCatching turns the throw into a clean Failed job
+     *      with a clear "switch models in Settings" message. Without
+     *      this the user saw the connectivity stage say "All endpoints
+     *      reachable" followed by 10+ minutes of silent TTS retries on
+     *      chunk 0 (#54).
      */
     private suspend fun waitForReachableEndpoints(jobId: String, title: String, type: AiJobType) {
         val needed = endpointsFor(type)
@@ -171,17 +192,52 @@ class AiJobWorker @AssistedInject constructor(
 
         val report = endpointReachability.probe(needed)
         if (report.allReachable) {
-            AppLogger.i(TAG, "ai job $jobId: all ${needed.size} endpoint(s) reachable, proceeding")
-            progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "All endpoints reachable")
+            AppLogger.i(TAG, "ai job $jobId: all ${needed.size} endpoint(s) reachable")
         } else {
             val unreachable = report.unreachable.joinToString(", ") { it.host }
             AppLogger.w(TAG, "ai job $jobId: DNS couldn't resolve $unreachable — proceeding optimistically; the API call is the source of truth")
+        }
+
+        if (type.producesPodcast()) {
+            val model = podcastPrefs.ttsModel.first()
+            val timeoutMs = ttsSmokeTimeoutMsFor(model)
             progressReporter.update(
                 AiJobStage.CONNECTIVITY_CHECK,
-                100,
-                "DNS couldn't see $unreachable — trying API call anyway",
+                50,
+                "Verifying ${model.displayName} is responsive (timeout ${timeoutMs / 1000}s)…",
             )
+            val err = geminiTts.smokeTest(model = model.modelId, timeoutMs = timeoutMs)
+            if (err != null) {
+                AppLogger.w(TAG, "ai job $jobId: TTS smoke test for ${model.displayName} failed: ${err.message}")
+                throw io.itsikh.finnencer.data.ai.TtsSmokeTestFailedException(
+                    "${model.displayName} isn't responding within ${timeoutMs / 1000}s. " +
+                        "Open Settings → Podcasts and switch to a different TTS model, or try again later. " +
+                        "Underlying error: ${err.message}",
+                    cause = err,
+                )
+            }
+            AppLogger.i(TAG, "ai job $jobId: TTS smoke test for ${model.displayName} passed")
         }
+        progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "Pre-flight checks passed")
+    }
+
+    /**
+     * Per-model smoke-test timeout. Pro models legitimately take longer
+     * than Flash even on a trivial "Host: Ready." script. Tuned on the
+     * conservative side so a healthy key never trips the timeout.
+     */
+    private fun ttsSmokeTimeoutMsFor(model: io.itsikh.finnencer.data.repo.TtsModel): Long = when (model) {
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH -> 30_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH -> 30_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO -> 60_000L
+    }
+
+    private fun AiJobType.producesPodcast(): Boolean = when (this) {
+        AiJobType.PODCAST_BATCH,
+        AiJobType.SUMMARY_AND_PODCAST_BATCH,
+        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> true
+        AiJobType.SUMMARY_BATCH,
+        AiJobType.REPORT_EARNINGS -> false
     }
 
     private fun endpointsFor(type: AiJobType): List<EndpointReachability.Endpoint> = when (type) {
