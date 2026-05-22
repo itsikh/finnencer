@@ -237,14 +237,14 @@ fun SettingsScreen(
                     },
                 )
                 SettingsRow(
-                    title = "Skip TTS preflight",
-                    subtitle = "Skip the pre-flight Gemini TTS responsiveness check. The pipeline already retries each chunk with a 10-minute call timeout, so the preflight is purely an early-exit signal. Turn ON only if the preflight keeps failing on a key you know is working.",
+                    title = "TTS preflight smoke test",
+                    subtitle = "Verify Gemini TTS is responsive before generating the podcast script. The pipeline already retries each chunk with a 10-minute call timeout, so this is purely an early-exit signal. Turn OFF if the preflight keeps failing on a key you know is working.",
                     icon = Icons.Default.AutoAwesome,
                     iconTint = FinnencerColors.Violet,
                     trailing = {
                         Switch(
-                            checked = podcastSkipTtsPreflight,
-                            onCheckedChange = viewModel::setPodcastSkipTtsPreflight,
+                            checked = !podcastSkipTtsPreflight,
+                            onCheckedChange = { enabled -> viewModel.setPodcastSkipTtsPreflight(!enabled) },
                             colors = switchColors(),
                         )
                     },
