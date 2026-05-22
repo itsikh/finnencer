@@ -99,6 +99,7 @@ fun SettingsScreen(
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
     val podcastTtsModel by viewModel.podcastTtsModel.collectAsState()
+    val podcastSkipTtsPreflight by viewModel.podcastSkipTtsPreflight.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
     val summaryConcurrency by viewModel.summaryConcurrency.collectAsState()
@@ -231,6 +232,19 @@ fun SettingsScreen(
                         Switch(
                             checked = podcastValidationEnabled,
                             onCheckedChange = viewModel::setPodcastScriptValidationEnabled,
+                            colors = switchColors(),
+                        )
+                    },
+                )
+                SettingsRow(
+                    title = "Skip TTS preflight",
+                    subtitle = "Skip the pre-flight Gemini TTS responsiveness check. The pipeline already retries each chunk with a 10-minute call timeout, so the preflight is purely an early-exit signal. Turn ON only if the preflight keeps failing on a key you know is working.",
+                    icon = Icons.Default.AutoAwesome,
+                    iconTint = FinnencerColors.Violet,
+                    trailing = {
+                        Switch(
+                            checked = podcastSkipTtsPreflight,
+                            onCheckedChange = viewModel::setPodcastSkipTtsPreflight,
                             colors = switchColors(),
                         )
                     },

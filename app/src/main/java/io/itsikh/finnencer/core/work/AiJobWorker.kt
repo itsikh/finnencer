@@ -199,37 +199,143 @@ class AiJobWorker @AssistedInject constructor(
         }
 
         if (type.producesPodcast()) {
-            val model = podcastPrefs.ttsModel.first()
-            val timeoutMs = ttsSmokeTimeoutMsFor(model)
-            progressReporter.update(
-                AiJobStage.CONNECTIVITY_CHECK,
-                50,
-                "Verifying ${model.displayName} is responsive (timeout ${timeoutMs / 1000}s)…",
-            )
-            val err = geminiTts.smokeTest(model = model.modelId, timeoutMs = timeoutMs)
-            if (err != null) {
-                AppLogger.w(TAG, "ai job $jobId: TTS smoke test for ${model.displayName} failed: ${err.message}")
-                throw io.itsikh.finnencer.data.ai.TtsSmokeTestFailedException(
-                    "${model.displayName} isn't responding within ${timeoutMs / 1000}s. " +
-                        "Open Settings → Podcasts and switch to a different TTS model, or try again later. " +
-                        "Underlying error: ${err.message}",
-                    cause = err,
+            if (podcastPrefs.skipTtsPreflight.first()) {
+                AppLogger.i(TAG, "ai job $jobId: TTS preflight skipped via user preference")
+                progressReporter.update(
+                    AiJobStage.CONNECTIVITY_CHECK,
+                    100,
+                    "Pre-flight checks skipped (user preference)",
                 )
+                return
             }
-            AppLogger.i(TAG, "ai job $jobId: TTS smoke test for ${model.displayName} passed")
+            runTtsSmokeWithFallback(jobId)
         }
         progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "Pre-flight checks passed")
     }
 
     /**
-     * Per-model smoke-test timeout. Pro models legitimately take longer
-     * than Flash even on a trivial "Host: Ready." script. Tuned on the
-     * conservative side so a healthy key never trips the timeout.
+     * Run the TTS smoke probe against an ordered fallback chain starting
+     * with the user's currently-selected model. The chain is built so
+     * the cheap-and-fast options are tried first and Pro is only reached
+     * after every Flash variant has failed.
+     *
+     * Observed (May 2026 / #55): both Flash TTS preview models can be
+     * completely unresponsive on certain keys / at certain times (180s
+     * with zero bytes received), while Pro responds in 3s on the same
+     * key. Restricting auto-fallback to the cheap models meant the user
+     * saw the same "TTS isn't responding" failure even though a working
+     * model was right there in the picker. Extending the chain to Pro
+     * trades a ~7x per-chunk cost increase for "the job actually
+     * completes instead of failing after the user has paid for the
+     * script generation." When Pro is auto-selected the task detail
+     * spells out the cost change so the user can manually downgrade
+     * later if Flash recovers.
+     *
+     * If every model in the chain fails, throw the original error so
+     * the user can fix the underlying problem (dead key, GCP outage,
+     * etc.).
+     */
+    private suspend fun runTtsSmokeWithFallback(jobId: String) {
+        val selected = podcastPrefs.ttsModel.first()
+        val chain = fallbackChainFor(selected)
+        var firstErr: Throwable? = null
+        for ((idx, candidate) in chain.withIndex()) {
+            if (idx > 0) {
+                progressReporter.update(
+                    AiJobStage.CONNECTIVITY_CHECK,
+                    50 + (idx * 15).coerceAtMost(45),
+                    "${chain[idx - 1].displayName} didn't respond — trying ${candidate.displayName}…",
+                )
+            }
+            val err = probeTtsModel(jobId, candidate, attemptLabel = if (idx == 0) "primary" else "fallback-$idx")
+            if (err == null) {
+                if (candidate != selected) {
+                    // Working fallback found. Persist it so the next job
+                    // doesn't pay the failed-probe time again, and tell
+                    // the user explicitly — especially important when
+                    // we crossed the Pro tier line.
+                    podcastPrefs.setTtsModel(candidate)
+                    val costNote = if (candidate == io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO) {
+                        " — Pro costs more per chunk; switch back in Settings when Flash recovers"
+                    } else ""
+                    progressReporter.update(
+                        AiJobStage.CONNECTIVITY_CHECK,
+                        100,
+                        "Switched to ${candidate.displayName} (default updated)$costNote",
+                    )
+                    AppLogger.i(TAG, "ai job $jobId: persisted ${candidate.displayName} as new default after fallback (was ${selected.displayName})")
+                }
+                return
+            }
+            if (firstErr == null) firstErr = err
+        }
+        // Every candidate failed. Surface the original error since that's
+        // the most diagnostic — the fallback errors are usually variants
+        // of the same root cause.
+        val names = chain.joinToString(", ") { it.displayName }
+        throw io.itsikh.finnencer.data.ai.TtsSmokeTestFailedException(
+            "None of the Gemini TTS models responded ($names). " +
+                "Check that your Gemini API key has TTS access and that the Generative Language API is enabled. " +
+                "Last error: ${firstErr?.message}",
+            cause = firstErr,
+        )
+    }
+
+    /**
+     * Send one smoke probe to [model] and return null on success, or the
+     * Throwable on failure. Logs the outcome and updates the progress
+     * detail line so the user can see which model is being probed.
+     */
+    private suspend fun probeTtsModel(
+        jobId: String,
+        model: io.itsikh.finnencer.data.repo.TtsModel,
+        attemptLabel: String,
+    ): Throwable? {
+        val timeoutMs = ttsSmokeTimeoutMsFor(model)
+        progressReporter.update(
+            AiJobStage.CONNECTIVITY_CHECK,
+            50,
+            "Verifying ${model.displayName} is responsive (timeout ${timeoutMs / 1000}s)…",
+        )
+        val err = geminiTts.smokeTest(model = model.modelId, timeoutMs = timeoutMs)
+        if (err != null) {
+            AppLogger.w(TAG, "ai job $jobId: $attemptLabel TTS smoke test for ${model.displayName} failed: ${err.message}")
+        } else {
+            AppLogger.i(TAG, "ai job $jobId: $attemptLabel TTS smoke test for ${model.displayName} passed")
+        }
+        return err
+    }
+
+    /**
+     * Ordered list of models to try, starting with [selected]. Every
+     * other model is appended in cheap-first order. Pro is always last
+     * because of the cost difference, but it IS included so a key with
+     * broken Flash access can still produce a podcast.
+     */
+    private fun fallbackChainFor(selected: io.itsikh.finnencer.data.repo.TtsModel): List<io.itsikh.finnencer.data.repo.TtsModel> {
+        // Cheap-first ordering. Putting Pro last means a user who picked
+        // 3.1 Flash gets 2.5 Flash as their first fallback (same cost
+        // tier) before we silently bump them up to Pro pricing.
+        val cheapFirst = listOf(
+            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH,
+            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH,
+            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO,
+        )
+        return listOf(selected) + cheapFirst.filter { it != selected }
+    }
+
+    /**
+     * Per-model smoke-test timeout. Bumped in v0.0.80 (#55) — the
+     * previous 30s cap was firing before the model actually finished
+     * its first-byte latency on lower-tier keys, even though the real
+     * synth callTimeout is 600s. These values match observed real-world
+     * first-byte latencies with a 2x safety margin so a healthy key
+     * never trips the timeout.
      */
     private fun ttsSmokeTimeoutMsFor(model: io.itsikh.finnencer.data.repo.TtsModel): Long = when (model) {
-        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH -> 30_000L
-        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH -> 30_000L
-        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO -> 60_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH -> 45_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH -> 60_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO -> 90_000L
     }
 
     private fun AiJobType.producesPodcast(): Boolean = when (this) {

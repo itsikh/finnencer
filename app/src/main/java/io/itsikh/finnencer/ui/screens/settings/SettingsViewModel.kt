@@ -110,8 +110,14 @@ class SettingsViewModel @Inject constructor(
         .stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5000),
-            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH,
+            io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH,
         )
+
+    /** Escape hatch for users hitting flaky TTS preflight on slow keys
+     *  (#55). When ON the worker skips the smoke probe entirely; the
+     *  in-pipeline retry loop is still in effect. */
+    val podcastSkipTtsPreflight: StateFlow<Boolean> = podcastPrefs.skipTtsPreflight
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /** Active color theme. The settings screen exposes a swatch picker
      *  to change it; the swap happens at app root via
@@ -191,6 +197,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastTtsModel(value: io.itsikh.finnencer.data.repo.TtsModel) {
         viewModelScope.launch { podcastPrefs.setTtsModel(value) }
+    }
+
+    fun setPodcastSkipTtsPreflight(value: Boolean) {
+        viewModelScope.launch { podcastPrefs.setSkipTtsPreflight(value) }
     }
 
     fun setThemeId(id: ThemeId) {

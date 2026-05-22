@@ -84,7 +84,12 @@ class GeminiTts @Inject constructor(
             // Wrap the inner block's result in a one-element list so
             // `withTimeoutOrNull` returning null genuinely means
             // "timeout fired", distinct from the inner block having
-            // returned a null error (= success).
+            // returned a null error (= success). Extract via wrapped[0]
+            // NOT firstOrNull() — the latter collapses [null] (success)
+            // and null (timeout) into the same null and the elvis below
+            // would mis-report every success as a timeout (#55 root cause:
+            // Pro probes legitimately returned 200 + audio in ~10s and
+            // were still being marked "didn't respond within 90s").
             val wrapped: List<Throwable?>? = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 val resp = service.generateContent(model = model, request = req)
                 val candidate = resp.candidates.firstOrNull()
@@ -98,9 +103,13 @@ class GeminiTts @Inject constructor(
                     }
                 )
             }
-            wrapped?.firstOrNull() ?: java.util.concurrent.TimeoutException(
-                "Gemini $model didn't respond within ${timeoutMs / 1000}s"
-            )
+            if (wrapped == null) {
+                java.util.concurrent.TimeoutException(
+                    "Gemini $model didn't respond within ${timeoutMs / 1000}s"
+                )
+            } else {
+                wrapped[0]
+            }
         } catch (ce: kotlinx.coroutines.CancellationException) {
             throw ce
         } catch (t: Throwable) {
@@ -527,14 +536,27 @@ class GeminiTts @Inject constructor(
     )
 
     companion object {
-        /** Default multi-speaker TTS model id used when the user hasn't
-         *  picked one in Settings. Matches `TtsModel.GEMINI_2_5_FLASH`
-         *  in [io.itsikh.finnencer.data.repo.PodcastPreferences] — the
-         *  one shipping longest and most stable on lower-tier keys.
-         *  KeyValidator uses this constant for its probe (kept as a
-         *  fixed reference target so the probe isn't affected by the
-         *  user's per-run model choice). */
-        const val TTS_MODEL = "gemini-2.5-flash-preview-tts"
+        /** Ordered list of TTS model IDs the KeyValidator probes when
+         *  testing a Gemini key. The validator tries them in order and
+         *  stops at the first 200-with-audio response; "key works at
+         *  all for TTS" is what matters, not which specific model is
+         *  selected for synth. Order: cheapest first (Flash variants),
+         *  Pro last. Pro is included because in practice (#55) Flash
+         *  TTS preview can be completely unresponsive on a key while
+         *  Pro responds fine — probing only Flash would falsely tell
+         *  the user "your key doesn't support TTS" when in fact it
+         *  does. */
+        val TTS_PROBE_CHAIN: List<String> = listOf(
+            "gemini-3.1-flash-tts-preview",
+            "gemini-2.5-flash-preview-tts",
+            "gemini-2.5-pro-preview-tts",
+        )
+
+        /** Legacy single-model alias retained for callers that still
+         *  expect a single string. New code should iterate
+         *  [TTS_PROBE_CHAIN] instead. */
+        @Deprecated("Use TTS_PROBE_CHAIN", ReplaceWith("TTS_PROBE_CHAIN.first()"))
+        const val TTS_MODEL = "gemini-3.1-flash-tts-preview"
 
         private const val TAG = "GeminiTts"
         private const val SAMPLE_RATE = 24_000

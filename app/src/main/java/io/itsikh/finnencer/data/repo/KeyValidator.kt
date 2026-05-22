@@ -168,6 +168,10 @@ class KeyValidator @Inject constructor(
      * 10s default the base client uses for cheap REST calls.
      */
     private fun probeGeminiTts(token: String): KeyTestResult {
+        // Per-model 60s timeout. Flash TTS preview can hang completely
+        // on some keys (#55) while Pro responds in 3s — so we iterate
+        // GeminiTts.TTS_PROBE_CHAIN and accept the first success. The
+        // worker uses the same chain for its preflight + auto-fallback.
         val ttsClient = okHttp.newBuilder()
             .callTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
@@ -199,40 +203,46 @@ class KeyValidator @Inject constructor(
                 ),
             ),
         )
-        val builder = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/${io.itsikh.finnencer.data.ai.GeminiTts.TTS_MODEL}:generateContent")
-            .addHeader("x-goog-api-key", token)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("X-Android-Package", signingInfo.packageName)
-        signingInfo.signingCertSha1Hex?.let { builder.addHeader("X-Android-Cert", it) }
-        val req = builder
-            .post(gson.toJson(body).toRequestBody(JSON))
-            .build()
-        ttsClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val msg = parseGoogleError(resp.body?.string())
-                AppLogger.w(TAG, "GEMINI tts ${resp.code}: $msg")
-                return KeyTestResult.Failed("Gemini key works for chat but TTS rejected it (HTTP ${resp.code}): $msg. Enable preview-model access at aistudio.google.com or check the key's allowed services.")
-            }
-            // 200 — verify the response actually carried inline audio.
-            // An empty audio + finishReason=OTHER is what a deprecated
-            // preview model or unenrolled key returns; we'd rather tell
-            // the user now than burn 10 minutes of script generation
-            // before the first chunk fails the same way.
-            val raw = resp.body?.string().orEmpty()
-            val hasInlineAudio = raw.contains("\"inlineData\"") && raw.contains("\"data\":")
-            return if (hasInlineAudio) {
-                AppLogger.i(TAG, "GEMINI tts ok (${raw.length} bytes)")
-                KeyTestResult.Ok
-            } else {
-                val finishReason = Regex("\"finishReason\"\\s*:\\s*\"([^\"]+)\"")
-                    .find(raw)?.groupValues?.getOrNull(1) ?: "unknown"
-                AppLogger.w(TAG, "GEMINI tts returned no audio (finishReason=$finishReason, body head: ${raw.take(200)})")
-                KeyTestResult.Failed(
-                    "Gemini chat works but TTS returned no audio (finishReason=$finishReason). Likely your key/project doesn't have access to the ${io.itsikh.finnencer.data.ai.GeminiTts.TTS_MODEL} preview model. Enable preview access at aistudio.google.com or try a different Gemini key."
-                )
+        val bodyJson = gson.toJson(body).toRequestBody(JSON)
+        var lastErrorMessage: String? = null
+        @Suppress("DEPRECATION") val chain = io.itsikh.finnencer.data.ai.GeminiTts.TTS_PROBE_CHAIN
+        for (model in chain) {
+            val builder = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent")
+                .addHeader("x-goog-api-key", token)
+                .addHeader("Content-Type", "application/json")
+                .addHeader("X-Android-Package", signingInfo.packageName)
+            signingInfo.signingCertSha1Hex?.let { builder.addHeader("X-Android-Cert", it) }
+            val req = builder.post(bodyJson).build()
+            try {
+                ttsClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        val msg = parseGoogleError(resp.body?.string())
+                        AppLogger.w(TAG, "GEMINI tts probe $model -> HTTP ${resp.code}: $msg")
+                        lastErrorMessage = "HTTP ${resp.code} on $model: $msg"
+                        return@use
+                    }
+                    val raw = resp.body?.string().orEmpty()
+                    val hasInlineAudio = raw.contains("\"inlineData\"") && raw.contains("\"data\":")
+                    if (hasInlineAudio) {
+                        AppLogger.i(TAG, "GEMINI tts ok via $model (${raw.length} bytes)")
+                        return KeyTestResult.Ok
+                    }
+                    val finishReason = Regex("\"finishReason\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(raw)?.groupValues?.getOrNull(1) ?: "unknown"
+                    AppLogger.w(TAG, "GEMINI tts probe $model returned no audio (finishReason=$finishReason)")
+                    lastErrorMessage = "$model returned no audio (finishReason=$finishReason)"
+                }
+            } catch (t: Throwable) {
+                AppLogger.w(TAG, "GEMINI tts probe $model threw: ${t.javaClass.simpleName}: ${t.message}")
+                lastErrorMessage = "$model: ${t.javaClass.simpleName}: ${t.message}"
             }
         }
+        return KeyTestResult.Failed(
+            "Gemini chat works but no TTS model responded with audio (tried ${chain.joinToString()}). " +
+                "Likely your key/project doesn't have access to the TTS preview models. " +
+                "Enable preview access at aistudio.google.com or try a different Gemini key. Last error: ${lastErrorMessage ?: "none"}"
+        )
     }
 
     private fun validateGitHub(token: String): KeyTestResult {

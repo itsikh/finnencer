@@ -33,7 +33,7 @@ enum class ApiKey(
     GEMINI(
         alias = "key_gemini",
         displayName = "Google Gemini",
-        purpose = "Multi-voice podcast generation (Gemini 2.5 Flash TTS).",
+        purpose = "Multi-voice podcast generation (Gemini multi-speaker TTS).",
         signupUrl = "https://aistudio.google.com/",
     ),
     GITHUB_PAT(

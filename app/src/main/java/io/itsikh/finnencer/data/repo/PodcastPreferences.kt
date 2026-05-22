@@ -33,20 +33,20 @@ enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
  * Settings → Podcasts.
  */
 enum class TtsModel(val modelId: String, val displayName: String, val description: String) {
+    GEMINI_3_1_FLASH(
+        modelId = "gemini-3.1-flash-tts-preview",
+        displayName = "Gemini 3.1 Flash",
+        description = "Default. Newest preview (April 2026), fastest on most keys.",
+    ),
     GEMINI_2_5_FLASH(
         modelId = "gemini-2.5-flash-preview-tts",
         displayName = "Gemini 2.5 Flash",
-        description = "Default. Most stable on lower-tier keys.",
+        description = "Older preview. Try this if 3.1 Flash misbehaves on your key.",
     ),
     GEMINI_2_5_PRO(
         modelId = "gemini-2.5-pro-preview-tts",
         displayName = "Gemini 2.5 Pro",
         description = "Higher quality, slower, costs more per chunk.",
-    ),
-    GEMINI_3_1_FLASH(
-        modelId = "gemini-3.1-flash-tts-preview",
-        displayName = "Gemini 3.1 Flash",
-        description = "Newest preview. Try if 2.5 Flash is slow or returns no audio for you.",
     ),
 }
 
@@ -167,8 +167,26 @@ class PodcastPreferences @Inject constructor(
     val ttsModel: Flow<TtsModel> =
         context.podcastPrefsDataStore.data.map { p ->
             val stored = p[KEY_TTS_MODEL]
-            TtsModel.entries.firstOrNull { it.modelId == stored } ?: TtsModel.GEMINI_2_5_FLASH
+            TtsModel.entries.firstOrNull { it.modelId == stored } ?: TtsModel.GEMINI_3_1_FLASH
         }
+
+    /**
+     * Skip the pre-flight Gemini TTS smoke probe. Default OFF: the probe
+     * catches dead keys / unresponsive models BEFORE Claude burns tokens
+     * writing a 30-page script. Users on flaky / slow networks who want
+     * to bypass the gate entirely (the in-pipeline retry loop is robust)
+     * can flip this in Settings → Podcasts.
+     */
+    val skipTtsPreflight: Flow<Boolean> =
+        context.podcastPrefsDataStore.data.map { p ->
+            p[KEY_SKIP_TTS_PREFLIGHT] ?: false
+        }
+
+    suspend fun setSkipTtsPreflight(value: Boolean) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_SKIP_TTS_PREFLIGHT] = value
+        }
+    }
 
     suspend fun setTtsModel(value: TtsModel) {
         context.podcastPrefsDataStore.edit {
@@ -191,5 +209,6 @@ class PodcastPreferences @Inject constructor(
         private val KEY_VALIDATION_ENABLED = booleanPreferencesKey("podcast_script_validation_enabled")
         private val KEY_TTS_CHUNK_CHARS = intPreferencesKey("podcast_tts_chunk_chars")
         private val KEY_TTS_MODEL = stringPreferencesKey("podcast_tts_model")
+        private val KEY_SKIP_TTS_PREFLIGHT = booleanPreferencesKey("podcast_skip_tts_preflight")
     }
 }
