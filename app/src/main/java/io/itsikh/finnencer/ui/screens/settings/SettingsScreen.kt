@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -45,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -100,6 +102,7 @@ fun SettingsScreen(
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
     val podcastTtsModel by viewModel.podcastTtsModel.collectAsState()
     val podcastTtsProvider by viewModel.podcastTtsProvider.collectAsState()
+    val vertexProbe by viewModel.vertexProbe.collectAsState()
     val podcastSkipTtsPreflight by viewModel.podcastSkipTtsPreflight.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
@@ -223,6 +226,11 @@ fun SettingsScreen(
                 PodcastTtsProviderRow(
                     current = podcastTtsProvider,
                     onPick = viewModel::setPodcastTtsProvider,
+                )
+                VertexProbeRow(
+                    state = vertexProbe,
+                    onRun = viewModel::runVertexProbe,
+                    onAck = viewModel::ackVertexProbe,
                 )
                 PodcastTtsChunkRow(
                     current = podcastTtsChunkChars,
@@ -824,6 +832,96 @@ private fun PodcastTtsProviderRow(
                     modifier = Modifier.weight(1f),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun VertexProbeRow(
+    state: SettingsViewModel.VertexProbeResult,
+    onRun: () -> Unit,
+    onAck: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Test TTS provider setup",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Fires one tiny TTS call through the provider you picked above. Verifies credentials, IAM, and that the model returns audio — before you spend Claude tokens writing a podcast script that would have failed at the TTS stage.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+            FilledTonalButton(
+                onClick = onRun,
+                enabled = state !is SettingsViewModel.VertexProbeResult.Running,
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = FinnencerColors.Violet,
+                    contentColor = FinnencerColors.TextOnAccent,
+                ),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                if (state is SettingsViewModel.VertexProbeResult.Running) {
+                    CircularProgressIndicator(
+                        color = FinnencerColors.TextOnAccent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Testing…")
+                } else {
+                    Text("Run test", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        when (state) {
+            is SettingsViewModel.VertexProbeResult.Ok -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(FinnencerColors.Mint.copy(alpha = 0.10f))
+                            .border(1.dp, FinnencerColors.Mint.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            "TTS setup OK — ${state.model} responded in ${state.elapsedMs / 1000}s.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Mint,
+                        )
+                    }
+                    TextButton(onClick = onAck) { Text("Dismiss") }
+                }
+            }
+            is SettingsViewModel.VertexProbeResult.Failed -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(FinnencerColors.Coral.copy(alpha = 0.10f))
+                            .border(1.dp, FinnencerColors.Coral.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            state.message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = FinnencerColors.Coral,
+                        )
+                    }
+                    TextButton(onClick = onAck) { Text("Dismiss") }
+                }
+            }
+            else -> Unit
         }
     }
 }

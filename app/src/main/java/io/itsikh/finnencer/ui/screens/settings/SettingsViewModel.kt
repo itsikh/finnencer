@@ -22,6 +22,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -63,8 +65,26 @@ class SettingsViewModel @Inject constructor(
     private val podcastPrefs: PodcastPreferences,
     private val themePrefs: ThemePreferences,
     private val jobConcurrencyPrefs: io.itsikh.finnencer.data.repo.JobConcurrencyPreferences,
+    private val geminiTts: io.itsikh.finnencer.data.ai.GeminiTts,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    /**
+     * Result of the "Test Vertex setup" probe in Settings → Podcasts.
+     * Surfaced as a colored inline card so the user knows exactly
+     * which piece of the chain (auth / IAM / model / network) is
+     * broken before they kick off a multi-minute podcast generation
+     * that would have failed the same way.
+     */
+    sealed interface VertexProbeResult {
+        object Idle : VertexProbeResult
+        object Running : VertexProbeResult
+        data class Ok(val model: String, val elapsedMs: Long) : VertexProbeResult
+        data class Failed(val message: String) : VertexProbeResult
+    }
+
+    private val _vertexProbe = MutableStateFlow<VertexProbeResult>(VertexProbeResult.Idle)
+    val vertexProbe: StateFlow<VertexProbeResult> = _vertexProbe.asStateFlow()
 
     // ── Debug settings state ──────────────────────────────────────────────────
 
@@ -215,6 +235,47 @@ class SettingsViewModel @Inject constructor(
     fun setPodcastTtsProvider(value: io.itsikh.finnencer.data.repo.TtsProvider) {
         viewModelScope.launch { podcastPrefs.setTtsProvider(value) }
     }
+
+    /**
+     * Fire one tiny TTS probe through whichever provider the user has
+     * picked (Generative Language or Vertex). Verifies the entire
+     * chain end-to-end: credential resolution, OAuth/JWT token mint,
+     * the actual `generateContent` call, and the audio coming back.
+     *
+     * Specifically actionable failures we map:
+     *  - "Vertex auth failed" / VertexConfigError → bad SA JSON, missing
+     *    Web Client ID, revoked OAuth grant, expired refresh token.
+     *  - HTTP 401/403 → IAM problem (account missing aiplatform.user
+     *    role on the project).
+     *  - HTTP 404 → model not available on Vertex in the chosen region.
+     *  - "returned no audio" → model accepted the request but the
+     *    response had no inlineData (preview-TTS region restrictions).
+     *
+     * Bounded to 60s so a hung call doesn't leave the UI spinning
+     * forever — the same envelope the podcast pipeline uses for its
+     * own pre-flight check.
+     */
+    fun runVertexProbe() {
+        if (_vertexProbe.value is VertexProbeResult.Running) return
+        _vertexProbe.value = VertexProbeResult.Running
+        viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            val model = podcastPrefs.ttsModel.first().modelId
+            val result = runCatching {
+                geminiTts.smokeTest(model = model, timeoutMs = PROBE_TIMEOUT_MS)
+            }.getOrElse { it }
+            val elapsed = System.currentTimeMillis() - startedAt
+            _vertexProbe.value = if (result == null) {
+                VertexProbeResult.Ok(model, elapsed)
+            } else {
+                VertexProbeResult.Failed(
+                    io.itsikh.finnencer.data.ai.FriendlyError.describe(result, stage = "Test")
+                )
+            }
+        }
+    }
+
+    fun ackVertexProbe() { _vertexProbe.value = VertexProbeResult.Idle }
 
     fun setPodcastSkipTtsPreflight(value: Boolean) {
         viewModelScope.launch { podcastPrefs.setSkipTtsPreflight(value) }
@@ -394,5 +455,10 @@ class SettingsViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "SettingsViewModel"
+        /** Envelope for the in-Settings Vertex probe. Same shape as
+         *  AiJobWorker's pre-flight smoke test — long enough for
+         *  Pro-tts cold starts (#55), short enough to keep the UI from
+         *  hanging if a credential dead-ends. */
+        private const val PROBE_TIMEOUT_MS = 60_000L
     }
 }
