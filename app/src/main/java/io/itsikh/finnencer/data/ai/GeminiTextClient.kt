@@ -50,9 +50,30 @@ class GeminiTextClient @Inject constructor(
             ),
         )
         val startedAt = System.currentTimeMillis()
-        val resp = runCatching { service.generateContent(model, request) }
-            .onFailure { recordUsage(model, 0, 0, startedAt, ok = false, error = it.message) }
-            .getOrThrow()
+        val resp = try {
+            service.generateContent(model, request)
+        } catch (he: retrofit2.HttpException) {
+            // Strip Retrofit's loss-of-detail default message and
+            // attach Google's actual error body excerpt — same
+            // pattern as GeminiTts.dispatchGenerateContent (#61) so
+            // 403/400/etc. from the text path show e.g.
+            // "PERMISSION_DENIED: Generative Language API has not
+            // been used in project X" instead of a bare
+            // "HTTP 403 " (#63 was undebuggable for exactly this
+            // reason).
+            val body = runCatching { he.response()?.errorBody()?.string() }.getOrNull()
+            val shortBody = body?.takeIf { it.isNotBlank() }
+                ?.replace(Regex("\\s+"), " ")
+                ?.take(600)
+            recordUsage(model, 0, 0, startedAt, ok = false, error = he.message)
+            throw java.io.IOException(
+                "Gemini HTTP ${he.code()}" + (shortBody?.let { ": $it" } ?: ""),
+                he,
+            )
+        } catch (t: Throwable) {
+            recordUsage(model, 0, 0, startedAt, ok = false, error = t.message)
+            throw t
+        }
         val candidate = resp.candidates.firstOrNull()
         val text = candidate?.content?.parts?.mapNotNull { it.text }?.joinToString("")
             ?.trim().orEmpty()

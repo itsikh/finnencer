@@ -313,7 +313,14 @@ class BundleSummarizer @Inject constructor(
             // the synth call so a mid-flight pref edit can't desync the
             // status label from the model actually used.
             val resolvedTtsModel = ttsModelOverride ?: podcastPrefs.ttsModel.first()
-            val plannedTtsDisplay = resolvedTtsModel.displayName
+            // Surface the active TTS provider next to the model name in
+            // the task subtitle so the user can confirm at a glance that
+            // their Settings → Podcasts choice is in effect (#63 —
+            // "please confirm we are using vertex now"). Examples:
+            //   "Gemini 2.5 Pro · Vertex AI"
+            //   "Gemini 2.5 Pro · Generative Language API"
+            val resolvedTtsProvider = podcastPrefs.ttsProvider.first()
+            val plannedTtsDisplay = "${resolvedTtsModel.displayName} · ${resolvedTtsProvider.displayName}"
             // Phase 1: produce the script (skip if a prior failed attempt
             // already persisted one). Persisted to the row IMMEDIATELY so
             // a subsequent TTS-stage failure can reuse it without

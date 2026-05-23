@@ -212,7 +212,7 @@ class GeminiTts @Inject constructor(
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
                     ((idx.toFloat() / chunks.size) * 100).toInt().coerceIn(0, 100),
-                    "Chunk ${idx + 1} of ${chunks.size} · $resolvedDisplay" +
+                    "Chunk ${idx + 1} of ${chunks.size} · $resolvedDisplay · ${provider.displayName}" +
                         if (cachedChunks > 0) " ($cachedChunks reused from cache)" else "",
                 )
                 val chunkFile = cacheDir?.let { File(it, "chunk_$idx.pcm") }
@@ -267,7 +267,7 @@ class GeminiTts @Inject constructor(
         progressReporter.update(
             io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
             100,
-            "Done · $resolvedDisplay · ${formatElapsed(elapsedMs)}",
+            "Done · $resolvedDisplay · ${provider.displayName} · ${formatElapsed(elapsedMs)}",
         )
         return TtsResult(
             file = outputFile,
