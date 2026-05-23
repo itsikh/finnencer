@@ -123,6 +123,7 @@ class BundleSummarizer @Inject constructor(
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
     ): Long {
         require(articleIds.isNotEmpty()) { "selection must be non-empty" }
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
@@ -148,6 +149,7 @@ class BundleSummarizer @Inject constructor(
             customPrompt = customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
+            ttsModelOverride = ttsModelOverride,
         )
     }
 
@@ -162,6 +164,7 @@ class BundleSummarizer @Inject constructor(
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
     ): Long {
         val report = earningsDao.getReport(reportId)
             ?: error("EarningsReport $reportId not found")
@@ -173,6 +176,7 @@ class BundleSummarizer @Inject constructor(
             customPrompt = customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
+            ttsModelOverride = ttsModelOverride,
         )
     }
 
@@ -190,6 +194,7 @@ class BundleSummarizer @Inject constructor(
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
     ): Long {
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
         val ticker = articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"
@@ -203,6 +208,7 @@ class BundleSummarizer @Inject constructor(
             customPrompt = customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
+            ttsModelOverride = ttsModelOverride,
         )
     }
 
@@ -214,6 +220,7 @@ class BundleSummarizer @Inject constructor(
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
     ): Long {
         // Read the user-configurable chars-per-minute ratio once up
         // front so the same number flows into the DB column, the
@@ -299,23 +306,31 @@ class BundleSummarizer @Inject constructor(
             // target length (#34/#35). Capped well under Anthropic's
             // 16k-token output limit on Sonnet 4.6 / Opus 4.7.
             val maxTokens = (charBudget / 2.5).toInt().coerceIn(2000, 12000)
+            // Resolve the TTS model NOW so the script-stage status detail
+            // names which engine will render the audio. Lets users verify
+            // their Settings choice persisted before the (expensive)
+            // script LLM call kicks off. Single read — reused later in
+            // the synth call so a mid-flight pref edit can't desync the
+            // status label from the model actually used.
+            val resolvedTtsModel = ttsModelOverride ?: podcastPrefs.ttsModel.first()
+            val plannedTtsDisplay = resolvedTtsModel.displayName
             // Phase 1: produce the script (skip if a prior failed attempt
             // already persisted one). Persisted to the row IMMEDIATELY so
             // a subsequent TTS-stage failure can reuse it without
             // re-billing the LLM (#42).
             val script: String = if (preservedScript != null) {
-                AppLogger.i(TAG, "podcast $id: reusing persisted script (${preservedScript.length} chars)")
+                AppLogger.i(TAG, "podcast $id: reusing persisted script (${preservedScript.length} chars); TTS model=$plannedTtsDisplay")
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
                     100,
-                    "Reusing script from prior attempt (${preservedScript.length} chars)",
+                    "Reusing script from prior attempt (${preservedScript.length} chars) · TTS: $plannedTtsDisplay",
                 )
                 preservedScript
             } else {
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
                     0,
-                    "Asking Claude for a ${minutes.minutes}-minute dialogue",
+                    "Asking Claude for a ${minutes.minutes}-minute dialogue · TTS: $plannedTtsDisplay",
                 )
                 val freshScript = generateScript(
                     scriptSystem = scriptSystem,
@@ -408,7 +423,7 @@ class BundleSummarizer @Inject constructor(
             progressReporter.update(
                 io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
                 0,
-                "Starting voice synthesis",
+                "Starting voice synthesis · ${resolvedTtsModel.displayName}",
             )
             val outputDir = File(context.filesDir, "podcasts").apply { mkdirs() }
             val cacheDir = File(context.filesDir, "podcasts/cache/podcast_$id")
@@ -417,6 +432,10 @@ class BundleSummarizer @Inject constructor(
                 script = scriptForTts,
                 voices = GeminiTts.VoicePair.Default,
                 outputFile = outputFile,
+                // Always pin to the model we already resolved up-front
+                // (override OR pref snapshot) so a mid-flight pref edit
+                // can't change engines partway through the synth.
+                model = resolvedTtsModel.modelId,
                 cacheDir = cacheDir,
             )
 
@@ -428,7 +447,7 @@ class BundleSummarizer @Inject constructor(
                     generationError = null,
                 )
             )
-            AppLogger.i(TAG, "bundle podcast $id ready (${result.bytes / 1024}KB, ${result.durationMs / 1000}s)")
+            AppLogger.i(TAG, "bundle podcast $id ready (${result.bytes / 1024}KB, audio=${result.durationMs / 1000}s, synth=${result.synthesisMillis}ms via ${result.modelDisplay})")
         }.onFailure { t ->
             // Validator-FAIL is not a real failure — the row is already
             // PENDING_REVIEW. Just rethrow so the worker layer can flip

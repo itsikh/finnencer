@@ -134,6 +134,10 @@ class GeminiTts @Inject constructor(
         // three currently-shipping preview model ids without code
         // changes.
         val resolvedModel: String = model ?: podcastPrefs.ttsModel.first().modelId
+        val resolvedDisplay: String = io.itsikh.finnencer.data.repo.TtsModel.entries
+            .firstOrNull { it.modelId == resolvedModel }?.displayName
+            ?: resolvedModel
+        Log.i(TAG, "tts synth starting with model=$resolvedModel ($resolvedDisplay)")
         val chunks = chunkAtSpeakerBoundaries(script, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
@@ -156,7 +160,7 @@ class GeminiTts @Inject constructor(
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
                     ((idx.toFloat() / chunks.size) * 100).toInt().coerceIn(0, 100),
-                    "Chunk ${idx + 1} of ${chunks.size}" +
+                    "Chunk ${idx + 1} of ${chunks.size} · $resolvedDisplay" +
                         if (cachedChunks > 0) " ($cachedChunks reused from cache)" else "",
                 )
                 val chunkFile = cacheDir?.let { File(it, "chunk_$idx.pcm") }
@@ -203,16 +207,32 @@ class GeminiTts @Inject constructor(
         }
 
         val durationMs = (pcmTotalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000L
+        val elapsedMs = System.currentTimeMillis() - startedAt
         // Only count the chunks we actually sent to Gemini against usage —
         // cached chunks were already billed on the prior attempt.
         recordUsage(resolvedModel, charsSubmitted, pcmTotalBytes.toInt(), startedAt, ok = true, err = null)
-        Log.i(TAG, "tts done: ${chunks.size} chunks total, $cachedChunks from cache, ${chunks.size - cachedChunks} freshly synthesized")
+        Log.i(TAG, "tts done: ${chunks.size} chunks total, $cachedChunks from cache, ${chunks.size - cachedChunks} freshly synthesized via $resolvedDisplay in ${formatElapsed(elapsedMs)}")
+        progressReporter.update(
+            io.itsikh.finnencer.data.entity.AiJobStage.SYNTHESIZING_AUDIO,
+            100,
+            "Done · $resolvedDisplay · ${formatElapsed(elapsedMs)}",
+        )
         return TtsResult(
             file = outputFile,
             durationMs = durationMs,
             bytes = outputFile.length(),
             chunks = chunks.size,
+            modelId = resolvedModel,
+            modelDisplay = resolvedDisplay,
+            synthesisMillis = elapsedMs,
         )
+    }
+
+    private fun formatElapsed(ms: Long): String {
+        val totalSec = ms / 1000
+        val m = totalSec / 60
+        val s = totalSec % 60
+        return if (m > 0) "${m}m ${s}s" else "${s}s"
     }
 
     /**
@@ -533,6 +553,16 @@ class GeminiTts @Inject constructor(
         val durationMs: Long,
         val bytes: Long,
         val chunks: Int,
+        /** The Gemini model id actually used for synthesis (resolved
+         *  from the explicit caller override or the user preference). */
+        val modelId: String,
+        /** Human-readable display name for [modelId] — for log lines
+         *  and user-facing stage details. */
+        val modelDisplay: String,
+        /** Wall-clock duration of the synth call (including all chunks,
+         *  retries, and the WAV write). Used by the worker to surface
+         *  "took 2m 14s" in the DONE status. */
+        val synthesisMillis: Long,
     )
 
     companion object {

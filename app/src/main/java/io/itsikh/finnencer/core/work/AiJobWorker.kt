@@ -95,7 +95,16 @@ class AiJobWorker @AssistedInject constructor(
                 // Phase 1: pre-flight + WAITING_FOR_NETWORK wait loop.
                 // Run BEFORE acquiring the concurrency gate so a waiting
                 // job doesn't hold a permit that other jobs could use.
-                waitForReachableEndpoints(jobId, job.title, type)
+                //
+                // For podcast jobs, the smoke test returns the TTS model
+                // that actually responded (the user's selected default,
+                // or a one-run-only fallback if the default was dead).
+                // We thread it through every bundle.* call below so the
+                // synth uses the same model the smoke test verified,
+                // WITHOUT silently overwriting the user's saved
+                // preference (was a bug — picker felt non-functional).
+                val resolvedTtsModel: io.itsikh.finnencer.data.repo.TtsModel? =
+                    waitForReachableEndpoints(jobId, job.title, type)
 
                 if (isStopped) return@runCatching Result.failure()
 
@@ -120,14 +129,17 @@ class AiJobWorker @AssistedInject constructor(
                     runCatching {
                         when (type) {
                             AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
-                            AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson)
-                            AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title)
-                            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title)
+                            AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson, resolvedTtsModel)
+                            AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
+                            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
                             AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
                         }
                     }.fold(
                         onSuccess = {
-                            progressReporter.update(AiJobStage.DONE, 100, "Complete")
+                            val doneDetail = if (resolvedTtsModel != null) {
+                                "Complete · ${resolvedTtsModel.displayName}"
+                            } else "Complete"
+                            progressReporter.update(AiJobStage.DONE, 100, doneDetail)
                             Result.success()
                         },
                         onFailure = { t ->
@@ -182,7 +194,11 @@ class AiJobWorker @AssistedInject constructor(
      *      reachable" followed by 10+ minutes of silent TTS retries on
      *      chunk 0 (#54).
      */
-    private suspend fun waitForReachableEndpoints(jobId: String, title: String, type: AiJobType) {
+    private suspend fun waitForReachableEndpoints(
+        jobId: String,
+        title: String,
+        type: AiJobType,
+    ): io.itsikh.finnencer.data.repo.TtsModel? {
         val needed = endpointsFor(type)
         progressReporter.update(
             AiJobStage.CONNECTIVITY_CHECK,
@@ -198,19 +214,25 @@ class AiJobWorker @AssistedInject constructor(
             AppLogger.w(TAG, "ai job $jobId: DNS couldn't resolve $unreachable — proceeding optimistically; the API call is the source of truth")
         }
 
+        var resolvedTtsModel: io.itsikh.finnencer.data.repo.TtsModel? = null
         if (type.producesPodcast()) {
             if (podcastPrefs.skipTtsPreflight.first()) {
-                AppLogger.i(TAG, "ai job $jobId: TTS preflight skipped via user preference")
+                // User opted out of preflight — honor their saved
+                // default verbatim without verifying it (the in-pipeline
+                // retry loop will catch a dead model).
+                resolvedTtsModel = podcastPrefs.ttsModel.first()
+                AppLogger.i(TAG, "ai job $jobId: TTS preflight skipped via user preference; will use ${resolvedTtsModel.displayName}")
                 progressReporter.update(
                     AiJobStage.CONNECTIVITY_CHECK,
                     100,
-                    "Pre-flight checks skipped (user preference)",
+                    "Pre-flight checks skipped · using ${resolvedTtsModel.displayName}",
                 )
-                return
+                return resolvedTtsModel
             }
-            runTtsSmokeWithFallback(jobId)
+            resolvedTtsModel = runTtsSmokeWithFallback(jobId)
         }
         progressReporter.update(AiJobStage.CONNECTIVITY_CHECK, 100, "Pre-flight checks passed")
+        return resolvedTtsModel
     }
 
     /**
@@ -235,7 +257,7 @@ class AiJobWorker @AssistedInject constructor(
      * the user can fix the underlying problem (dead key, GCP outage,
      * etc.).
      */
-    private suspend fun runTtsSmokeWithFallback(jobId: String) {
+    private suspend fun runTtsSmokeWithFallback(jobId: String): io.itsikh.finnencer.data.repo.TtsModel {
         val selected = podcastPrefs.ttsModel.first()
         val chain = fallbackChainFor(selected)
         var firstErr: Throwable? = null
@@ -250,22 +272,25 @@ class AiJobWorker @AssistedInject constructor(
             val err = probeTtsModel(jobId, candidate, attemptLabel = if (idx == 0) "primary" else "fallback-$idx")
             if (err == null) {
                 if (candidate != selected) {
-                    // Working fallback found. Persist it so the next job
-                    // doesn't pay the failed-probe time again, and tell
-                    // the user explicitly — especially important when
-                    // we crossed the Pro tier line.
-                    podcastPrefs.setTtsModel(candidate)
+                    // Working fallback found. Use it for THIS run only —
+                    // do NOT mutate the user's saved preference. Users
+                    // expect the Settings picker to be the source of
+                    // truth; auto-persisting a fallback meant the next
+                    // job thought the user had picked the fallback (the
+                    // picker felt non-functional).
                     val costNote = if (candidate == io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO) {
-                        " — Pro costs more per chunk; switch back in Settings when Flash recovers"
+                        " — Pro costs more per chunk; pick it in Settings if you want it persistently"
                     } else ""
                     progressReporter.update(
                         AiJobStage.CONNECTIVITY_CHECK,
                         100,
-                        "Switched to ${candidate.displayName} (default updated)$costNote",
+                        "Using ${candidate.displayName} for this run (your default ${selected.displayName} didn't respond)$costNote",
                     )
-                    AppLogger.i(TAG, "ai job $jobId: persisted ${candidate.displayName} as new default after fallback (was ${selected.displayName})")
+                    AppLogger.i(TAG, "ai job $jobId: using ${candidate.displayName} for this run only; user's default (${selected.displayName}) is unchanged")
+                } else {
+                    AppLogger.i(TAG, "ai job $jobId: selected model ${candidate.displayName} responded — using it")
                 }
-                return
+                return candidate
             }
             if (firstErr == null) firstErr = err
         }
@@ -415,7 +440,11 @@ class AiJobWorker @AssistedInject constructor(
         notifier.notifyCompleted(jobId, title, "Summary ready · open Tasks")
     }
 
-    private suspend fun runPodcast(jobId: String, json: String) {
+    private suspend fun runPodcast(
+        jobId: String,
+        json: String,
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel?,
+    ) {
         val input = gson.fromJson(json, PodcastInput::class.java)
         val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
             ?: BundleSummarizer.PodcastMinutes.FIVE
@@ -426,6 +455,7 @@ class AiJobWorker @AssistedInject constructor(
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
+            ttsModelOverride = ttsModelOverride,
         )
         progressReporter.update(AiJobStage.FINALIZING, 95, "Saving podcast")
         dao.markCompleted(
@@ -518,7 +548,12 @@ class AiJobWorker @AssistedInject constructor(
         notifier.notifyCompleted(jobId, title, "${tier.name.lowercase()} report ready · open Tasks")
     }
 
-    private suspend fun runEarningsBriefAndPodcast(jobId: String, json: String, title: String) {
+    private suspend fun runEarningsBriefAndPodcast(
+        jobId: String,
+        json: String,
+        title: String,
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel?,
+    ) {
         val input = gson.fromJson(json, EarningsBriefAndPodcastInput::class.java)
         val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
             ?: BundleSummarizer.PodcastMinutes.TEN
@@ -539,6 +574,7 @@ class AiJobWorker @AssistedInject constructor(
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
+            ttsModelOverride = ttsModelOverride,
         )
         progressReporter.update(AiJobStage.FINALIZING, 95, "Saving podcast")
         dao.markCompleted(
@@ -553,7 +589,12 @@ class AiJobWorker @AssistedInject constructor(
         notifier.notifyCompleted(jobId, title, "Earnings podcast ready · open Tasks")
     }
 
-    private suspend fun runSummaryAndPodcast(jobId: String, json: String, title: String) {
+    private suspend fun runSummaryAndPodcast(
+        jobId: String,
+        json: String,
+        title: String,
+        ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel?,
+    ) {
         val input = gson.fromJson(json, SummaryAndPodcastInput::class.java)
         val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
             ?: BundleSummarizer.Pages.FIVE
@@ -573,6 +614,7 @@ class AiJobWorker @AssistedInject constructor(
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
+            ttsModelOverride = ttsModelOverride,
         )
         progressReporter.update(AiJobStage.FINALIZING, 95, "Saving artifacts")
         dao.markCompleted(
