@@ -10,8 +10,10 @@ import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -52,16 +54,24 @@ class VertexAuthManager @Inject constructor(
      * Return a valid bearer token, refreshing if cache is empty or
      * within [REFRESH_MARGIN_MS] of expiry. Throws if the service
      * account JSON is missing / malformed.
+     *
+     * Runs the synchronous OkHttp + JCA work on [Dispatchers.IO] —
+     * the suspend caller might be on the main thread (the OkHttp
+     * interceptor uses runBlocking, the OAuth sign-in completion
+     * dispatches from viewModelScope) and either path would hit
+     * `NetworkOnMainThreadException` without the explicit IO context.
      */
-    suspend fun getAccessToken(): String = mutex.withLock {
-        val now = System.currentTimeMillis()
-        val cur = cached
-        if (cur != null && cur.expiresAtMs - now > REFRESH_MARGIN_MS) {
-            return@withLock cur.token
+    suspend fun getAccessToken(): String = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val now = System.currentTimeMillis()
+            val cur = cached
+            if (cur != null && cur.expiresAtMs - now > REFRESH_MARGIN_MS) {
+                return@withLock cur.token
+            }
+            val fresh = mintNewToken()
+            cached = fresh
+            fresh.token
         }
-        val fresh = mintNewToken()
-        cached = fresh
-        fresh.token
     }
 
     /** Force a refresh on the next call. Used by 401-aware retry paths. */
@@ -145,11 +155,12 @@ class VertexAuthManager @Inject constructor(
      * "public" — the package name + SHA-1 fingerprint already proven
      * to Google by the device serve as the proof-of-app.
      */
-    suspend fun exchangeServerAuthCode(serverAuthCode: String): String = mutex.withLock {
-        val webClientId = repo.get(ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID)?.takeIf { it.isNotBlank() }
-            ?: throw VertexConfigError(
-                "Vertex OAuth Web Client ID is missing. Save it in Settings → API keys before signing in."
-            )
+    suspend fun exchangeServerAuthCode(serverAuthCode: String): String = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val webClientId = repo.get(ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID)?.takeIf { it.isNotBlank() }
+                ?: throw VertexConfigError(
+                    "Vertex OAuth Web Client ID is missing. Save it in Settings → API keys before signing in."
+                )
         val body = FormBody.Builder()
             .add("client_id", webClientId)
             .add("code", serverAuthCode)
@@ -182,6 +193,7 @@ class VertexAuthManager @Inject constructor(
             }
             Log.i(TAG, "vertex: stored OAuth refresh token; access expires in ${parsed.expiresIn}s")
             refresh
+            }
         }
     }
 
