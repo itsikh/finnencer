@@ -131,17 +131,41 @@ class GeminiTts @Inject constructor(
         provider: TtsProvider,
         model: String,
         request: GeminiGenerateRequest,
-    ): GeminiGenerateResponse = when (provider) {
-        TtsProvider.GENERATIVE_LANGUAGE -> service.generateContent(model = model, request = request)
-        TtsProvider.VERTEX_AI -> {
-            val project = apiKeys.get(ApiKey.VERTEX_PROJECT_ID)
-                ?: throw io.itsikh.finnencer.data.api.VertexConfigError(
-                    "Vertex AI is selected but project ID is missing. Set it in Settings → API keys."
-                )
-            val region = apiKeys.get(ApiKey.VERTEX_REGION) ?: "us-central1"
-            val url = VertexService.buildGenerateContentUrl(project, region, model)
-            vertexService.generateContent(url = url, request = request)
+    ): GeminiGenerateResponse = try {
+        when (provider) {
+            TtsProvider.GENERATIVE_LANGUAGE -> service.generateContent(model = model, request = request)
+            TtsProvider.VERTEX_AI -> {
+                val project = apiKeys.get(ApiKey.VERTEX_PROJECT_ID)
+                    ?: throw io.itsikh.finnencer.data.api.VertexConfigError(
+                        "Vertex AI is selected but project ID is missing. Set it in Settings → API keys."
+                    )
+                val region = apiKeys.get(ApiKey.VERTEX_REGION) ?: "us-central1"
+                val url = VertexService.buildGenerateContentUrl(project, region, model)
+                vertexService.generateContent(url = url, request = request)
+            }
         }
+    } catch (he: retrofit2.HttpException) {
+        // FriendlyError keys off the substring "HTTP <code>" in the
+        // exception message, but Retrofit's default message
+        // ("HTTP 400 ") loses the actual upstream error body —
+        // exactly the part the user (and we) need to know whether
+        // it's a model-not-found, an unsupported speechConfig on
+        // Vertex, an IAM denial, etc. (#61 root cause: a bare
+        // "HTTP 400. Try again." told us nothing about *why*
+        // Vertex rejected the request.) Read the body once, attach
+        // a shortened excerpt, and rethrow.
+        val body = runCatching { he.response()?.errorBody()?.string() }.getOrNull()
+        val shortBody = body?.takeIf { it.isNotBlank() }
+            ?.replace(Regex("\\s+"), " ")
+            ?.take(600)
+        val providerLabel = when (provider) {
+            TtsProvider.VERTEX_AI -> "Vertex AI"
+            TtsProvider.GENERATIVE_LANGUAGE -> "Gemini"
+        }
+        throw java.io.IOException(
+            "$providerLabel HTTP ${he.code()}" + (shortBody?.let { ": $it" } ?: ""),
+            he,
+        )
     }
 
     suspend fun synthesizeDialogue(

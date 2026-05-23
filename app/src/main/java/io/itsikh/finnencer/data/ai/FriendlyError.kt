@@ -62,12 +62,24 @@ object FriendlyError {
         // or "Gemini HTTP 429: ..." per ClaudeClient / GeminiTextClient).
         val httpStatus = Regex("HTTP (\\d{3})").find(message)?.groupValues?.get(1)?.toIntOrNull()
         if (httpStatus != null) {
+            // When the message includes ": <body excerpt>" (set by
+            // GeminiTts.dispatchGenerateContent — #61), surface that
+            // body as the tail so the user sees Google's actual
+            // reason ("model not found", "responseModalities AUDIO
+            // unsupported", "Permission denied on resource project
+            // …") rather than a generic "try again".
+            val bodyTail = Regex("HTTP \\d{3}:?\\s*(.*)$", RegexOption.DOT_MATCHES_ALL)
+                .find(message)?.groupValues?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() && it.length > 5 }
+                ?.let { " — ${shorten(it)}" }
+                ?: ""
             return when (httpStatus) {
-                401, 403 -> "Your API key was rejected. Check it in Settings → API keys."
-                404 -> "The model or endpoint wasn't found. The provider may have changed it — try a different model in Settings → AI."
+                401, 403 -> "Your account or API key was rejected by the provider$bodyTail. Check it in Settings → API keys."
+                404 -> "The model or endpoint wasn't found$bodyTail. On Vertex AI, the Gemini multi-speaker TTS preview models aren't hosted — switch the provider to Generative Language API for TTS."
                 429 -> "Rate limit hit. Wait a minute, then try again — or pick a different model in Settings → AI."
-                500, 502, 503, 504 -> "The AI provider is having trouble right now. Try again in a few minutes."
-                else -> "The AI provider returned HTTP $httpStatus. Try again, or pick a different model."
+                500, 502, 503, 504 -> "The AI provider is having trouble right now$bodyTail. Try again in a few minutes."
+                else -> "The AI provider returned HTTP $httpStatus$bodyTail."
             }
         }
         // Cancellation (WorkManager / scope teardown)
