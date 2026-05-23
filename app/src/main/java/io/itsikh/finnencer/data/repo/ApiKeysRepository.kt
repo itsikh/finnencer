@@ -83,6 +83,20 @@ enum class ApiKey(
         purpose = "Web application OAuth client ID from GCP Console. Required for the \"Sign in with Google\" path below — not used for the SA-JSON path.",
         signupUrl = "https://console.cloud.google.com/apis/credentials",
     ),
+    VERTEX_OAUTH_WEB_CLIENT_SECRET(
+        // Google rejects the code/refresh exchange with
+        // `error=invalid_request: client_secret is missing` if this
+        // isn't supplied — Web application OAuth clients are
+        // confidential clients in Google's model, even when the actual
+        // app holding the secret is a mobile app. (#59 root cause.)
+        // The secret is downloadable from the same GCP Console page
+        // the Web Client ID came from. Stored in SecureKeyManager
+        // (encrypted on-device) alongside the other credentials.
+        alias = "key_vertex_oauth_web_client_secret",
+        displayName = "Vertex OAuth Web Client Secret",
+        purpose = "Client secret for the Web application OAuth client. Required by Google to exchange the server auth code for a refresh token. Download from the same GCP credentials page as the Web Client ID.",
+        signupUrl = "https://console.cloud.google.com/apis/credentials",
+    ),
     VERTEX_OAUTH_REFRESH_TOKEN(
         // Long-lived refresh token written by the app AFTER the user
         // completes the in-app Sign in with Google flow. Lets the
@@ -224,6 +238,10 @@ class ApiKeysRepository @Inject constructor(
                 // Format: <project-number>-<random>.apps.googleusercontent.com
                 if (value.endsWith(".apps.googleusercontent.com") && value.length in 40..120) KeyTestResult.Ok
                 else KeyTestResult.BadFormat("Expected a Google OAuth client ID ending in .apps.googleusercontent.com.")
+            ApiKey.VERTEX_OAUTH_WEB_CLIENT_SECRET ->
+                // Google client secrets are short (~24-40 chars) and use a restricted alphabet.
+                if (value.length in 18..80 && value.all { it.isLetterOrDigit() || it in "-_" }) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Doesn't look like a Google OAuth client secret. Expected 18-80 chars of letters/digits/-/_.")
             ApiKey.VERTEX_OAUTH_REFRESH_TOKEN ->
                 // Managed by the sign-in flow; basic length check only.
                 if (value.length in 30..2000) KeyTestResult.Ok

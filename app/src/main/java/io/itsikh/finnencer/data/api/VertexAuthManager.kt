@@ -116,8 +116,13 @@ class VertexAuthManager @Inject constructor(
             ?: throw VertexConfigError(
                 "Vertex OAuth Web Client ID is missing. Set it in Settings → API keys before using Sign-in with Google."
             )
+        val webClientSecret = repo.get(ApiKey.VERTEX_OAUTH_WEB_CLIENT_SECRET)?.takeIf { it.isNotBlank() }
+            ?: throw VertexConfigError(
+                "Vertex OAuth Web Client Secret is missing. Web application OAuth clients require the secret on every token exchange — set it in Settings → API keys."
+            )
         val body = FormBody.Builder()
             .add("client_id", webClientId)
+            .add("client_secret", webClientSecret)
             .add("refresh_token", refreshToken)
             .add("grant_type", "refresh_token")
             .build()
@@ -151,9 +156,15 @@ class VertexAuthManager @Inject constructor(
      * for a refresh token + access token. Run once per device — the
      * refresh token gets persisted and reused thereafter.
      *
-     * No client secret is needed because Android OAuth clients are
-     * "public" — the package name + SHA-1 fingerprint already proven
-     * to Google by the device serve as the proof-of-app.
+     * Requires the Web application client's `client_secret` from GCP
+     * Console (#59). Counter-intuitively for an Android-side flow:
+     * AuthorizationClient.requestOfflineAccess binds the server auth
+     * code to the *web* client, and Google's token endpoint treats
+     * web clients as confidential — without the secret it returns
+     * HTTP 400 `invalid_request: client_secret is missing`. Storing
+     * it locally in SecureKeyManager (encrypted at rest) is the
+     * least-bad option short of switching to a full PKCE/AppAuth
+     * flow.
      */
     suspend fun exchangeServerAuthCode(serverAuthCode: String): String = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -161,14 +172,21 @@ class VertexAuthManager @Inject constructor(
                 ?: throw VertexConfigError(
                     "Vertex OAuth Web Client ID is missing. Save it in Settings → API keys before signing in."
                 )
-        val body = FormBody.Builder()
-            .add("client_id", webClientId)
-            .add("code", serverAuthCode)
-            .add("grant_type", "authorization_code")
-            // Native (Android) clients use this exact redirect URI for
-            // the offline-access exchange — see Google's OAuth docs.
-            .add("redirect_uri", "")
-            .build()
+            val webClientSecret = repo.get(ApiKey.VERTEX_OAUTH_WEB_CLIENT_SECRET)?.takeIf { it.isNotBlank() }
+                ?: throw VertexConfigError(
+                    "Vertex OAuth Web Client Secret is missing. Save it in Settings → API keys before signing in — Google's token exchange requires it for Web application OAuth clients."
+                )
+            val body = FormBody.Builder()
+                .add("client_id", webClientId)
+                .add("client_secret", webClientSecret)
+                .add("code", serverAuthCode)
+                .add("grant_type", "authorization_code")
+                // Empty redirect_uri is the documented value when the
+                // server auth code came from a native sign-in (Android
+                // AuthorizationClient) rather than a real browser
+                // redirect flow.
+                .add("redirect_uri", "")
+                .build()
         val req = Request.Builder().url(GOOGLE_TOKEN_URL).post(body).build()
         tokenHttpClient.newCall(req).execute().use { resp ->
             val responseBody = resp.body?.string().orEmpty()

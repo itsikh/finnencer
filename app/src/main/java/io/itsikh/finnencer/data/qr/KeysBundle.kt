@@ -164,6 +164,7 @@ private fun ApiKey.slugForBundle(): String = when (this) {
     ApiKey.VERTEX_PROJECT_ID -> "vertex_project_id"
     ApiKey.VERTEX_REGION -> "vertex_region"
     ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID -> "vertex_oauth_web_client_id"
+    ApiKey.VERTEX_OAUTH_WEB_CLIENT_SECRET -> "vertex_oauth_web_client_secret"
     // Filtered out of bundles by KeysBundle.DEVICE_BOUND_KEYS, but
     // still needs a well-formed slug so the enum branch is exhaustive
     // and a future code-path that wanted to round-trip it would have

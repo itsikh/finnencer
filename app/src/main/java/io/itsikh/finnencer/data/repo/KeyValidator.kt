@@ -54,6 +54,7 @@ class KeyValidator @Inject constructor(
                 ApiKey.VERTEX_PROJECT_ID,
                 ApiKey.VERTEX_REGION,
                 ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID,
+                ApiKey.VERTEX_OAUTH_WEB_CLIENT_SECRET,
                 ApiKey.VERTEX_OAUTH_REFRESH_TOKEN -> KeyTestResult.ChecksSyntax
             }
         } catch (e: Throwable) {
