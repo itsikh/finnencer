@@ -430,7 +430,14 @@ class GeminiTts @Inject constructor(
     }
 
     private fun buildRequest(text: String, voices: VoicePair) = GeminiGenerateRequest(
-        contents = listOf(GeminiContent(parts = listOf(GeminiPart(text = text)))),
+        // Vertex AI requires `role` to be "user" or "model" on every
+        // `contents` entry — it returns
+        // `INVALID_ARGUMENT: Please use a valid role: user, model.`
+        // when role is missing (#62). Generative Language API is
+        // lenient about missing role, but supplying "user" on both
+        // paths is harmless and gives us one fewer Vertex-specific
+        // branch to maintain.
+        contents = listOf(GeminiContent(role = "user", parts = listOf(GeminiPart(text = text)))),
         generationConfig = GeminiGenerationConfig(
             // Low temperature keeps voice timbre + prosody consistent
             // across chunks. We want deterministic delivery here, not
