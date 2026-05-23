@@ -60,6 +60,22 @@ fastlane/readme.md
 # ── 3rd-party SDK files we don't ship ─────────────────────────
 google-services.json
 
+# ── Service-account JSON files (NEVER commit) ─────────────────
+# Anything downloaded from GCP IAM for the Vertex AI integration
+# (and friends) — Google's downloaded SA filenames typically embed
+# the project ID and a random hex suffix. The catch-all `.secrets/`
+# directory below is the safe place to drop them when you want a
+# local copy. The app reads SA JSON only through Settings → API
+# keys (encrypted on-device storage), never from disk.
+*-service-account*.json
+*service_account*.json
+service-account*.json
+service_account*.json
+credentials*.json
+gen-lang-client-*.json
+.secrets/
+.local-secrets/
+
 # ── In-app artifacts (must stay out of code repo) ─────────────
 #   The bug reporter writes screenshots to a dedicated orphan
 #   branch ("bug-screenshots") via the GitHub Contents API — they

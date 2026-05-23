@@ -4,6 +4,7 @@ import android.util.Base64
 import io.itsikh.finnencer.logging.AppLogger as Log
 import io.itsikh.finnencer.data.api.GeminiContent
 import io.itsikh.finnencer.data.api.GeminiGenerateRequest
+import io.itsikh.finnencer.data.api.GeminiGenerateResponse
 import io.itsikh.finnencer.data.api.GeminiGenerationConfig
 import io.itsikh.finnencer.data.api.GeminiMultiSpeakerConfig
 import io.itsikh.finnencer.data.api.GeminiPart
@@ -12,6 +13,10 @@ import io.itsikh.finnencer.data.api.GeminiService
 import io.itsikh.finnencer.data.api.GeminiSpeakerVoiceConfig
 import io.itsikh.finnencer.data.api.GeminiSpeechConfig
 import io.itsikh.finnencer.data.api.GeminiVoiceConfig
+import io.itsikh.finnencer.data.api.VertexService
+import io.itsikh.finnencer.data.repo.ApiKey
+import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.data.repo.TtsProvider
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.entity.ApiUsage
 import java.io.File
@@ -33,6 +38,8 @@ import kotlinx.coroutines.flow.first
 @Singleton
 class GeminiTts @Inject constructor(
     private val service: GeminiService,
+    private val vertexService: VertexService,
+    private val apiKeys: ApiKeysRepository,
     private val apiUsageDao: ApiUsageDao,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
@@ -80,18 +87,10 @@ class GeminiTts @Inject constructor(
     ): Throwable? {
         val tinyScript = "Host: Ready.\nAnalyst: Ready."
         val req = buildRequest(tinyScript, voices)
+        val provider = podcastPrefs.ttsProvider.first()
         return try {
-            // Wrap the inner block's result in a one-element list so
-            // `withTimeoutOrNull` returning null genuinely means
-            // "timeout fired", distinct from the inner block having
-            // returned a null error (= success). Extract via wrapped[0]
-            // NOT firstOrNull() — the latter collapses [null] (success)
-            // and null (timeout) into the same null and the elvis below
-            // would mis-report every success as a timeout (#55 root cause:
-            // Pro probes legitimately returned 200 + audio in ~10s and
-            // were still being marked "didn't respond within 90s").
             val wrapped: List<Throwable?>? = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
-                val resp = service.generateContent(model = model, request = req)
+                val resp = dispatchGenerateContent(provider, model, req)
                 val candidate = resp.candidates.firstOrNull()
                 val inline = candidate?.content?.parts?.firstOrNull()?.inlineData
                 listOf(
@@ -117,6 +116,34 @@ class GeminiTts @Inject constructor(
         }
     }
 
+    /**
+     * Single chokepoint that picks the right Google backend based on
+     * the user's TtsProvider preference:
+     *  - [TtsProvider.GENERATIVE_LANGUAGE] → GeminiService (API key)
+     *  - [TtsProvider.VERTEX_AI] → VertexService (OAuth bearer token)
+     *
+     * Vertex requires the user to have configured project + region in
+     * Settings → API keys; if either is missing we fail fast with a
+     * config error rather than letting Retrofit construct an obviously
+     * broken URL.
+     */
+    private suspend fun dispatchGenerateContent(
+        provider: TtsProvider,
+        model: String,
+        request: GeminiGenerateRequest,
+    ): GeminiGenerateResponse = when (provider) {
+        TtsProvider.GENERATIVE_LANGUAGE -> service.generateContent(model = model, request = request)
+        TtsProvider.VERTEX_AI -> {
+            val project = apiKeys.get(ApiKey.VERTEX_PROJECT_ID)
+                ?: throw io.itsikh.finnencer.data.api.VertexConfigError(
+                    "Vertex AI is selected but project ID is missing. Set it in Settings → API keys."
+                )
+            val region = apiKeys.get(ApiKey.VERTEX_REGION) ?: "us-central1"
+            val url = VertexService.buildGenerateContentUrl(project, region, model)
+            vertexService.generateContent(url = url, request = request)
+        }
+    }
+
     suspend fun synthesizeDialogue(
         script: String,
         voices: VoicePair = VoicePair.Default,
@@ -137,7 +164,8 @@ class GeminiTts @Inject constructor(
         val resolvedDisplay: String = io.itsikh.finnencer.data.repo.TtsModel.entries
             .firstOrNull { it.modelId == resolvedModel }?.displayName
             ?: resolvedModel
-        Log.i(TAG, "tts synth starting with model=$resolvedModel ($resolvedDisplay)")
+        val provider = podcastPrefs.ttsProvider.first()
+        Log.i(TAG, "tts synth starting with model=$resolvedModel ($resolvedDisplay) provider=${provider.name}")
         val chunks = chunkAtSpeakerBoundaries(script, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
@@ -169,7 +197,7 @@ class GeminiTts @Inject constructor(
                     Log.i(TAG, "tts chunk ${idx + 1}/${chunks.size} reused from cache (${chunkFile.length()}B)")
                     chunkFile.readBytes()
                 } else {
-                    val decoded = synthesizeChunkWithRetry(resolvedModel, chunk, voices, idx, chunks.size)
+                    val decoded = synthesizeChunkWithRetry(resolvedModel, provider, chunk, voices, idx, chunks.size)
                     // Write to cache atomically (tmp then rename) so a
                     // crash mid-write can never leave a half-written
                     // chunk that resume would treat as complete.
@@ -236,29 +264,24 @@ class GeminiTts @Inject constructor(
     }
 
     /**
-     * Synthesize one chunk of dialogue with retry on transient errors. 10
-     * attempts with linear 5n-second backoff (5s, 10s, 15s, … 50s) —
-     * matches the podcast-script retry policy so a flaky network is
-     * equally tolerated by the TTS stage (#41 follow-up).
+     * Synthesize one chunk of dialogue with retry on transient errors.
      *
-     * Folds the inline-audio extraction INTO the retry loop so a
-     * response that succeeds at the HTTP layer but returns no
-     * inlineData (#50 — "Gemini returned no inlineData in chunk 0")
-     * counts as a retryable transient instead of an immediate fail.
-     *
-     * On repeated no-audio responses (#51 — "Stuck on chunk 1") the
-     * same text won't suddenly start rendering, so we split the chunk
-     * in half and recurse on each half. Gemini's "no audio" responses
-     * are almost always content-shape sensitivity (length, a specific
-     * phrase that recitation-blocks, etc.) and reliably resolve when
-     * the input is smaller. This bounds the total wait time AND gives
-     * the user a real audio result instead of a 20-minute hang.
-     *
-     * Coroutine cancellation is re-thrown so cooperative cancellation
-     * still works.
+     * Retry policy (v0.0.83 — #57):
+     *  - HTTP 429 (Too Many Requests): honor the Retry-After header
+     *    (seconds-int OR HTTP-date), capped at [RETRY_AFTER_CAP_MS].
+     *    These waits do NOT count against [RETRY_ATTEMPTS] — Google's
+     *    rate limiter tells you exactly when to come back, so eating
+     *    an attempt slot per 429 makes the loop give up just when
+     *    capacity returns.
+     *  - HTTP 5xx and network errors: exponential backoff with jitter
+     *    (base * 2^attempt ± 25%), capped at [BACKOFF_CAP_MS].
+     *  - "No audio" responses: split in half on the second occurrence
+     *    (Gemini's content-shape sensitivity rarely resolves on retry).
+     *  - Cancellation: re-thrown so cooperative cancellation works.
      */
     private suspend fun synthesizeChunkWithRetry(
         model: String,
+        provider: TtsProvider,
         text: String,
         voices: VoicePair,
         chunkIdx: Int,
@@ -268,18 +291,16 @@ class GeminiTts @Inject constructor(
         val req = buildRequest(text, voices)
         var lastErr: Throwable? = null
         var noAudioCount = 0
-        for (attempt in 1..RETRY_ATTEMPTS) {
+        var rateLimitWaits = 0
+        var attempt = 0
+        while (attempt < RETRY_ATTEMPTS) {
             try {
-                val resp = service.generateContent(model = model, request = req)
+                val resp = dispatchGenerateContent(provider, model, req)
                 val candidate = resp.candidates.firstOrNull()
                 val inline = candidate?.content?.parts?.firstOrNull()?.inlineData
                 if (inline?.data.isNullOrBlank()) {
                     noAudioCount++
                     val finishReason = candidate?.finishReason ?: "unspecified"
-                    // Once we've seen the same chunk return no audio twice,
-                    // stop hoping the model will change its mind — split
-                    // the text and recurse. Bounded by MAX_SPLIT_DEPTH so
-                    // a pathological chunk can't recurse forever.
                     if (noAudioCount >= NO_AUDIO_SPLIT_THRESHOLD && splitDepth < MAX_SPLIT_DEPTH) {
                         val halves = splitTextInHalf(text)
                         if (halves.size > 1) {
@@ -287,7 +308,7 @@ class GeminiTts @Inject constructor(
                             val combined = java.io.ByteArrayOutputStream()
                             for (half in halves) {
                                 combined.write(
-                                    synthesizeChunkWithRetry(model, half, voices, chunkIdx, chunkTotal, splitDepth + 1)
+                                    synthesizeChunkWithRetry(model, provider, half, voices, chunkIdx, chunkTotal, splitDepth + 1)
                                 )
                             }
                             return combined.toByteArray()
@@ -302,15 +323,63 @@ class GeminiTts @Inject constructor(
                 throw ce
             } catch (t: Throwable) {
                 lastErr = t
+                val retryAfterMs = extractRetryAfterMs(t)
+                if (retryAfterMs != null && rateLimitWaits < MAX_RATE_LIMIT_WAITS) {
+                    rateLimitWaits++
+                    val capped = retryAfterMs.coerceAtMost(RETRY_AFTER_CAP_MS)
+                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal hit rate limit; honoring Retry-After=${capped / 1000}s (rate-limit wait #$rateLimitWaits/$MAX_RATE_LIMIT_WAITS, attempt $attempt/$RETRY_ATTEMPTS preserved)")
+                    kotlinx.coroutines.delay(capped)
+                    continue
+                }
+                attempt++
                 if (attempt >= RETRY_ATTEMPTS) break
-                val backoffMs = attempt * RETRY_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
-                Log.w(TAG, "tts chunk $chunkIdx attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s for network")
-                // Wake the retry the moment connectivity returns rather
-                // than sleeping the full backoff window blind (#42).
+                val backoffMs = exponentialBackoffMs(attempt)
+                Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s")
                 networkAvailability.awaitNetwork(backoffMs)
             }
         }
         throw lastErr ?: IllegalStateException("tts chunk $chunkIdx failed after $RETRY_ATTEMPTS attempts")
+    }
+
+    /**
+     * Returns the Retry-After hint in milliseconds when [t] is a 429
+     * (or 503 with a Retry-After header), else null. Parses both the
+     * integer-seconds form Google uses and the rare HTTP-date form.
+     */
+    private fun extractRetryAfterMs(t: Throwable): Long? {
+        val http = t as? retrofit2.HttpException ?: return null
+        if (http.code() != 429 && http.code() != 503) return null
+        val rawResp = http.response()?.raw() ?: return defaultRateLimitFallbackMs(http.code())
+        val header = rawResp.header("Retry-After")
+            ?: rawResp.header("retry-after")
+            ?: return defaultRateLimitFallbackMs(http.code())
+        // Plain integer = seconds.
+        header.trim().toLongOrNull()?.let { return it * 1000L }
+        // HTTP-date — rare, but specified.
+        return runCatching {
+            val parsed = java.util.Date(java.util.Date.parse(header))
+            (parsed.time - System.currentTimeMillis()).coerceAtLeast(0L)
+        }.getOrNull() ?: defaultRateLimitFallbackMs(http.code())
+    }
+
+    /**
+     * When the server says "rate limited" but doesn't tell us when to
+     * come back, fall back to a sensible default. Preview TTS models
+     * are per-minute quota-bound, so ~30s is the right ballpark.
+     */
+    private fun defaultRateLimitFallbackMs(httpCode: Int): Long =
+        if (httpCode == 429) 30_000L else 15_000L
+
+    private fun exponentialBackoffMs(attempt: Int): Long {
+        // attempt=1 → ~5s, 2 → ~10s, 3 → ~20s, 4 → ~40s, capped at BACKOFF_CAP_MS.
+        val base = RETRY_BACKOFF_STEP_MS * (1L shl (attempt - 1).coerceAtMost(6))
+        val capped = base.coerceAtMost(BACKOFF_CAP_MS)
+        // ±25% jitter so concurrent retries from multiple devices /
+        // multiple chunks don't synchronize and re-collide on the
+        // next attempt.
+        val jitterRange = (capped / 4).coerceAtLeast(1L)
+        val jitter = (kotlin.random.Random.nextLong(2 * jitterRange + 1)) - jitterRange
+        return (capped + jitter).coerceAtLeast(1_000L)
     }
 
     /**
@@ -592,7 +661,19 @@ class GeminiTts @Inject constructor(
         private const val SAMPLE_RATE = 24_000
         private const val BYTES_PER_SAMPLE = 2 // 16-bit mono
         private const val RETRY_ATTEMPTS = 10
+        /** Base for the exponential backoff schedule used on
+         *  network / 5xx errors. Doubles per attempt up to
+         *  [BACKOFF_CAP_MS], with ±25% jitter. */
         private const val RETRY_BACKOFF_STEP_MS = 5_000L
+        /** Ceiling on any single backoff wait. */
+        private const val BACKOFF_CAP_MS = 90_000L
+        /** Ceiling on any single Retry-After wait — protects against
+         *  a buggy upstream telling us to wait an hour. */
+        private const val RETRY_AFTER_CAP_MS = 120_000L
+        /** How many 429s in a row are allowed to "stop the clock"
+         *  on the retry budget. Past this, 429s start consuming
+         *  attempt slots like any other transient. */
+        private const val MAX_RATE_LIMIT_WAITS = 6
         private const val NO_AUDIO_SPLIT_THRESHOLD = 2
         private const val MAX_SPLIT_DEPTH = 3
         private const val MIN_SPLITTABLE_CHARS = 200

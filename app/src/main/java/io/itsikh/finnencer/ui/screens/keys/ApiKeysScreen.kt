@@ -24,15 +24,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -50,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -70,6 +78,22 @@ fun ApiKeysScreen(
 ) {
     val vm: ApiKeysViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
+    val vertexSignInState by vm.vertexSignInState.collectAsState()
+    val ctx = LocalContext.current
+
+    // Activity-result launcher for the Google consent dialog. The
+    // sign-in helper hands us an IntentSender once the user must
+    // approve scopes; this contract wraps it for ActivityResult.
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> vm.completeVertexSignIn(result.data) }
+
+    // When the VM moves to NeedsConsent, launch immediately and drop
+    // back to Working so the launcher only fires once per state.
+    LaunchedEffect(vertexSignInState) {
+        val ns = vertexSignInState as? VertexSignInState.NeedsConsent ?: return@LaunchedEffect
+        signInLauncher.launch(IntentSenderRequest.Builder(ns.intentSender).build())
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -101,6 +125,11 @@ fun ApiKeysScreen(
                     onSave = { vm.saveAndValidate(key) },
                     onClear = { vm.clear(key) },
                     onTest = { vm.test(key) },
+                    vertexSignInState = if (key == ApiKey.VERTEX_SA_JSON) vertexSignInState else null,
+                    onStartVertexSignIn = if (key == ApiKey.VERTEX_SA_JSON) {
+                        { (ctx as? Activity)?.let(vm::startVertexSignIn) }
+                    } else null,
+                    onAckVertexSignIn = vm::ackVertexSignInState,
                 )
             }
             Spacer(Modifier.height(32.dp))
@@ -250,6 +279,11 @@ private fun KeyCard(
     onSave: () -> Unit,
     onClear: () -> Unit,
     onTest: () -> Unit,
+    /** Non-null only for the Vertex SA card — drives the sign-in
+     *  button rendered inside the expanded editor. */
+    vertexSignInState: VertexSignInState? = null,
+    onStartVertexSignIn: (() -> Unit)? = null,
+    onAckVertexSignIn: () -> Unit = {},
 ) {
     GlassCard(onClick = onToggleExpand) {
         Column(modifier = Modifier.padding(18.dp)) {
@@ -286,6 +320,9 @@ private fun KeyCard(
                     onSave = onSave,
                     onClear = onClear,
                     onTest = onTest,
+                    vertexSignInState = vertexSignInState,
+                    onStartVertexSignIn = onStartVertexSignIn,
+                    onAckVertexSignIn = onAckVertexSignIn,
                 )
             }
         }
@@ -323,15 +360,30 @@ private fun ExpandedKeyEditor(
     onSave: () -> Unit,
     onClear: () -> Unit,
     onTest: () -> Unit,
+    vertexSignInState: VertexSignInState? = null,
+    onStartVertexSignIn: (() -> Unit)? = null,
+    onAckVertexSignIn: () -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
+    // Multi-line inputs for keys whose value is a JSON blob or anything
+    // that wouldn't fit comfortably on one line. PasswordVisualTransformation
+    // on a multi-line field flattens newlines into asterisks, so we skip
+    // it for those keys — they're still toggled to hidden via the reveal
+    // icon (state.reveal), just without the masking transform.
+    val isMultiline = state.key == ApiKey.VERTEX_SA_JSON
     Column(modifier = Modifier.padding(top = 16.dp)) {
         OutlinedTextField(
             value = state.draft,
             onValueChange = onDraftChange,
-            label = { Text("Key value") },
-            visualTransformation = if (state.reveal) VisualTransformation.None else PasswordVisualTransformation(),
-            singleLine = true,
+            label = { Text(if (isMultiline) "Paste JSON" else "Key value") },
+            visualTransformation = when {
+                state.reveal -> VisualTransformation.None
+                isMultiline -> VisualTransformation.None
+                else -> PasswordVisualTransformation()
+            },
+            singleLine = !isMultiline,
+            minLines = if (isMultiline) 4 else 1,
+            maxLines = if (isMultiline) 10 else 1,
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = {
@@ -412,6 +464,108 @@ private fun ExpandedKeyEditor(
             style = MaterialTheme.typography.labelSmall,
             color = FinnencerColors.TextTertiary,
         )
+
+        if (onStartVertexSignIn != null && vertexSignInState != null) {
+            VertexSignInSection(
+                state = vertexSignInState,
+                onStart = onStartVertexSignIn,
+                onAck = onAckVertexSignIn,
+            )
+        }
+    }
+}
+
+/**
+ * "Sign in with Google" affordance shown only inside the Vertex AI
+ * Service Account card. Lets the user authenticate Vertex via their
+ * own Google identity instead of pasting an SA JSON — see #57.
+ *
+ * The button reflects the current [VertexSignInState]: idle, working
+ * (with spinner), success (one-shot confirmation), or error (inline
+ * red text + retry-on-tap behavior). Consent dialogs are launched at
+ * the screen level via an ActivityResultLauncher.
+ */
+@Composable
+private fun VertexSignInSection(
+    state: VertexSignInState,
+    onStart: () -> Unit,
+    onAck: () -> Unit,
+) {
+    Spacer(Modifier.height(14.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(FinnencerColors.Violet.copy(alpha = 0.08f))
+            .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.30f), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+    ) {
+        Column {
+            Text(
+                "Or sign in with Google instead",
+                style = MaterialTheme.typography.labelLarge,
+                color = FinnencerColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Skip the JSON. Tap below to authenticate Vertex with your Google account. Requires the Web Client ID field above to be saved first.",
+                style = MaterialTheme.typography.labelSmall,
+                color = FinnencerColors.TextSecondary,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalButton(
+                    onClick = onStart,
+                    enabled = state !is VertexSignInState.Working,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = FinnencerColors.Violet,
+                        contentColor = FinnencerColors.TextOnAccent,
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    if (state is VertexSignInState.Working) {
+                        CircularProgressIndicator(
+                            color = FinnencerColors.TextOnAccent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Signing in…")
+                    } else {
+                        Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (state is VertexSignInState.Success) "Signed in — re-run" else "Sign in with Google",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (state is VertexSignInState.Success || state is VertexSignInState.Error) {
+                    TextButton(onClick = onAck) { Text("Dismiss") }
+                }
+            }
+            when (state) {
+                is VertexSignInState.Success -> {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Refresh token saved. Vertex calls will use your Google account.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.Mint,
+                    )
+                }
+                is VertexSignInState.Error -> {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.Coral,
+                    )
+                }
+                else -> Unit
+            }
+        }
     }
 }
 

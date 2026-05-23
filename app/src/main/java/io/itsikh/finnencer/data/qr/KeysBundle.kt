@@ -123,6 +123,7 @@ class KeysBundle @Inject constructor(
     }
 
     private fun collectKeys(): Map<String, String> = ApiKey.entries
+        .filter { it !in DEVICE_BOUND_KEYS }
         .mapNotNull { k -> repo.get(k)?.let { k.slugForBundle() to it } }
         .toMap()
 
@@ -140,6 +141,16 @@ class KeysBundle @Inject constructor(
 
     companion object {
         const val PBKDF2_ITERATIONS = 100_000
+
+        /**
+         * Keys that must never be exported in a QR bundle. The OAuth
+         * refresh token is bound to a device-level consent grant — sharing
+         * it across devices would silently move account access without
+         * the second device's user confirming, and would leave a
+         * "phantom" grant that's hard to revoke. Each device should run
+         * the in-app sign-in flow independently.
+         */
+        val DEVICE_BOUND_KEYS: Set<ApiKey> = setOf(ApiKey.VERTEX_OAUTH_REFRESH_TOKEN)
     }
 }
 
@@ -148,6 +159,16 @@ private fun ApiKey.slugForBundle(): String = when (this) {
     ApiKey.ANTHROPIC -> "anthropic"
     ApiKey.FINNHUB -> "finnhub"
     ApiKey.GEMINI -> "gemini"
+    ApiKey.GEMINI_PROJECT_ID -> "gemini_project_id"
+    ApiKey.VERTEX_SA_JSON -> "vertex_sa_json"
+    ApiKey.VERTEX_PROJECT_ID -> "vertex_project_id"
+    ApiKey.VERTEX_REGION -> "vertex_region"
+    ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID -> "vertex_oauth_web_client_id"
+    // Filtered out of bundles by KeysBundle.DEVICE_BOUND_KEYS, but
+    // still needs a well-formed slug so the enum branch is exhaustive
+    // and a future code-path that wanted to round-trip it would have
+    // a place to land.
+    ApiKey.VERTEX_OAUTH_REFRESH_TOKEN -> "vertex_oauth_refresh_token"
     ApiKey.GITHUB_PAT -> "github_pat"
     ApiKey.EDGAR_UA -> "edgar_ua"
 }

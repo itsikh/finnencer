@@ -113,6 +113,19 @@ class SettingsViewModel @Inject constructor(
             io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH,
         )
 
+    /** Which Google API surface to send TTS calls to. Generative
+     *  Language uses an API key (easy to set up, tight quotas);
+     *  Vertex AI uses an OAuth bearer minted from a service-account
+     *  JSON (more setup, but inherits the project's Vertex quota
+     *  uplift). */
+    val podcastTtsProvider: StateFlow<io.itsikh.finnencer.data.repo.TtsProvider> =
+        podcastPrefs.ttsProvider
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                io.itsikh.finnencer.data.repo.TtsProvider.GENERATIVE_LANGUAGE,
+            )
+
     /** Escape hatch for users hitting flaky TTS preflight on slow keys
      *  (#55). When ON the worker skips the smoke probe entirely; the
      *  in-pipeline retry loop is still in effect. */
@@ -197,6 +210,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setPodcastTtsModel(value: io.itsikh.finnencer.data.repo.TtsModel) {
         viewModelScope.launch { podcastPrefs.setTtsModel(value) }
+    }
+
+    fun setPodcastTtsProvider(value: io.itsikh.finnencer.data.repo.TtsProvider) {
+        viewModelScope.launch { podcastPrefs.setTtsProvider(value) }
     }
 
     fun setPodcastSkipTtsPreflight(value: Boolean) {

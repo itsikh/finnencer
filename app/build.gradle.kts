@@ -145,6 +145,9 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.kotlinx.coroutines.play.services)
 
+    // Google Identity Services — AuthorizationClient for OAuth Vertex sign-in
+    implementation(libs.play.services.auth)
+
     // ZXing core (QR encode)
     implementation(libs.zxing.core)
 

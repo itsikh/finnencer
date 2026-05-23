@@ -32,6 +32,32 @@ enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
  * mostly in cost, latency, and audio quality. The user picks one in
  * Settings → Podcasts.
  */
+/**
+ * Which Google API surface to call for TTS.
+ *
+ *  - [GENERATIVE_LANGUAGE]: `generativelanguage.googleapis.com` with
+ *    an API key. Easy to set up but quota is attributed to the key's
+ *    project and is rarely lifted on enterprise plans.
+ *  - [VERTEX_AI]: `{region}-aiplatform.googleapis.com` with an OAuth
+ *    token from a service-account JSON. Requires more setup but
+ *    inherits the project's Vertex quota — which is where enterprise
+ *    quota uplifts actually land.
+ *
+ * Default stays [GENERATIVE_LANGUAGE] because Vertex needs the user
+ * to paste a service-account JSON first; flipping the default would
+ * silently break existing users.
+ */
+enum class TtsProvider(val displayName: String, val description: String) {
+    GENERATIVE_LANGUAGE(
+        displayName = "Generative Language API",
+        description = "Uses your Gemini API key. Simple setup, but preview TTS quotas are tight.",
+    ),
+    VERTEX_AI(
+        displayName = "Vertex AI",
+        description = "Uses a service-account JSON. Requires Vertex setup, but enterprise quota uplifts only apply here.",
+    ),
+}
+
 enum class TtsModel(val modelId: String, val displayName: String, val description: String) {
     GEMINI_3_1_FLASH(
         modelId = "gemini-3.1-flash-tts-preview",
@@ -171,15 +197,34 @@ class PodcastPreferences @Inject constructor(
         }
 
     /**
-     * Skip the pre-flight Gemini TTS smoke probe. Default OFF: the probe
-     * catches dead keys / unresponsive models BEFORE Claude burns tokens
-     * writing a 30-page script. Users on flaky / slow networks who want
-     * to bypass the gate entirely (the in-pipeline retry loop is robust)
-     * can flip this in Settings → Podcasts.
+     * Which TTS provider surface to call. See [TtsProvider] for the
+     * trade-offs. Bounded to enum entries on read so a manually-edited
+     * DataStore can't pick an unknown provider.
+     */
+    val ttsProvider: Flow<TtsProvider> =
+        context.podcastPrefsDataStore.data.map { p ->
+            val stored = p[KEY_TTS_PROVIDER]
+            TtsProvider.entries.firstOrNull { it.name == stored } ?: TtsProvider.GENERATIVE_LANGUAGE
+        }
+
+    suspend fun setTtsProvider(value: TtsProvider) {
+        context.podcastPrefsDataStore.edit {
+            it[KEY_TTS_PROVIDER] = value.name
+        }
+    }
+
+    /**
+     * Skip the pre-flight Gemini TTS smoke probe. Default ON as of
+     * v0.0.83: on preview TTS models with tight RPM caps, the probe
+     * itself burns one quota slot per podcast — and the in-pipeline
+     * retry loop already surfaces a dead-key / unresponsive-model
+     * failure within the first chunk. Users who'd rather fail fast
+     * before Claude writes the script can flip this off in
+     * Settings → Podcasts.
      */
     val skipTtsPreflight: Flow<Boolean> =
         context.podcastPrefsDataStore.data.map { p ->
-            p[KEY_SKIP_TTS_PREFLIGHT] ?: false
+            p[KEY_SKIP_TTS_PREFLIGHT] ?: true
         }
 
     suspend fun setSkipTtsPreflight(value: Boolean) {
@@ -209,6 +254,7 @@ class PodcastPreferences @Inject constructor(
         private val KEY_VALIDATION_ENABLED = booleanPreferencesKey("podcast_script_validation_enabled")
         private val KEY_TTS_CHUNK_CHARS = intPreferencesKey("podcast_tts_chunk_chars")
         private val KEY_TTS_MODEL = stringPreferencesKey("podcast_tts_model")
+        private val KEY_TTS_PROVIDER = stringPreferencesKey("podcast_tts_provider")
         private val KEY_SKIP_TTS_PREFLIGHT = booleanPreferencesKey("podcast_skip_tts_preflight")
     }
 }

@@ -20,6 +20,7 @@ workManager = "2.10.0"
 hiltWork = "1.2.0"
 cameraX = "1.4.1"
 mlkitBarcode = "17.3.0"
+playServicesAuth = "21.3.0"
 zxing = "3.5.3"
 retrofit = "2.11.0"
 coil = "2.7.0"
@@ -97,6 +98,9 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 
 # ML Kit barcode (QR decode)
 mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
+
+# Google Identity Services (AuthorizationClient → OAuth access tokens with cloud-platform scope for Vertex AI)
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
 
 # ZXing core (QR encode)

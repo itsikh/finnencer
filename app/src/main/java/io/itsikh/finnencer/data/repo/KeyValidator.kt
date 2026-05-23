@@ -46,6 +46,15 @@ class KeyValidator @Inject constructor(
                 ApiKey.GEMINI -> validateGemini(token)
                 ApiKey.GITHUB_PAT -> validateGitHub(token)
                 ApiKey.EDGAR_UA -> validateEdgar(token)
+                // Config-only entries (no remote endpoint to probe).
+                // The syntactic check in ApiKeysRepository.checkSyntax
+                // is the gate; here we just acknowledge "configured".
+                ApiKey.GEMINI_PROJECT_ID,
+                ApiKey.VERTEX_SA_JSON,
+                ApiKey.VERTEX_PROJECT_ID,
+                ApiKey.VERTEX_REGION,
+                ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID,
+                ApiKey.VERTEX_OAUTH_REFRESH_TOKEN -> KeyTestResult.ChecksSyntax
             }
         } catch (e: Throwable) {
             AppLogger.e(TAG, "${key.name} validate threw ${e.javaClass.simpleName}", e)

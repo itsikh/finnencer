@@ -10,10 +10,13 @@ import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.api.GeminiService
 import io.itsikh.finnencer.data.api.RssService
 import io.itsikh.finnencer.data.api.SecEdgarService
+import io.itsikh.finnencer.data.api.VertexAuthManager
+import io.itsikh.finnencer.data.api.VertexService
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.util.AppSigningInfo
+import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -27,6 +30,7 @@ import javax.inject.Singleton
 @Qualifier annotation class FinnhubRetrofit
 @Qualifier annotation class AnthropicRetrofit
 @Qualifier annotation class GeminiRetrofit
+@Qualifier annotation class VertexRetrofit
 @Qualifier annotation class EdgarRetrofit
 @Qualifier annotation class RssRetrofit
 @Qualifier annotation class YahooRetrofit
@@ -54,7 +58,7 @@ class AuthHeaderInterceptor(
 }
 
 /**
- * Adds the two headers Google checks when a Cloud API key has Android-app
+ * Adds the headers Google checks when a Cloud API key has Android-app
  * restrictions configured in GCP Console:
  *  - `X-Android-Package` = applicationId
  *  - `X-Android-Cert`    = SHA-1 of the APK signing cert, uppercase hex,
@@ -62,14 +66,26 @@ class AuthHeaderInterceptor(
  *
  * Without these headers, a restricted key returns HTTP 403 even with valid
  * auth.
+ *
+ * Also attaches `x-goog-user-project` when the user has configured an
+ * explicit quota project (ApiKey.GEMINI_PROJECT_ID). Without that
+ * header, quota is attributed to whichever project the API key
+ * happens to belong to, which on enterprise keys is often the wrong
+ * project and silently falls into the default (tight) preview-TTS
+ * quota bucket. Setting it explicitly forces attribution to the
+ * project the user named.
  */
 class AndroidAttributionInterceptor(
     private val info: AppSigningInfo,
+    private val repo: ApiKeysRepository,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
         val b = chain.request().newBuilder()
             .header("X-Android-Package", info.packageName)
         info.signingCertSha1Hex?.let { b.header("X-Android-Cert", it) }
+        repo.get(ApiKey.GEMINI_PROJECT_ID)?.let { project ->
+            b.header("x-goog-user-project", project)
+        }
         return chain.proceed(b.build())
     }
 }
@@ -201,7 +217,7 @@ object NetworkModule {
                     "x-goog-api-key" to token
                 }
             )
-            .addInterceptor(AndroidAttributionInterceptor(signingInfo))
+            .addInterceptor(AndroidAttributionInterceptor(signingInfo, repo))
             .addInterceptor(logging())
             .build()
         return Retrofit.Builder()
@@ -214,6 +230,51 @@ object NetworkModule {
     @Provides @Singleton
     fun provideGeminiService(@GeminiRetrofit retrofit: Retrofit): GeminiService =
         retrofit.create(GeminiService::class.java)
+
+    // ───────── Vertex AI ─────────
+    //
+    // Vertex uses `Authorization: Bearer <oauth-token>` instead of an
+    // API key. The token interceptor lazily fetches a cached token from
+    // VertexAuthManager — `runBlocking` here is acceptable because the
+    // token is cached for ~59 minutes between refreshes, so the
+    // suspending call is a no-op on the vast majority of requests.
+    //
+    // The baseUrl is a throwaway — every call uses @Url because the
+    // hostname includes the region.
+
+    @Provides @Singleton @VertexRetrofit
+    fun provideVertexRetrofit(
+        gson: Gson,
+        auth: VertexAuthManager,
+    ): Retrofit {
+        val client = longLivedTimeouts(OkHttpClient.Builder())
+            .addInterceptor { chain ->
+                val token = runCatching { runBlocking { auth.getAccessToken() } }
+                    .getOrElse { err ->
+                        // Surface the auth failure as an HTTP-shaped
+                        // error so callers' existing retry/error paths
+                        // see something familiar.
+                        throw java.io.IOException("Vertex auth failed: ${err.message}", err)
+                    }
+                val req = chain.request().newBuilder()
+                    .header("Authorization", "Bearer $token")
+                    .header("content-type", "application/json")
+                    .build()
+                chain.proceed(req)
+            }
+            .addInterceptor(logging())
+            .build()
+        return Retrofit.Builder()
+            // Required by Retrofit even though every call uses @Url.
+            .baseUrl("https://aiplatform.googleapis.com/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+    }
+
+    @Provides @Singleton
+    fun provideVertexService(@VertexRetrofit retrofit: Retrofit): VertexService =
+        retrofit.create(VertexService::class.java)
 
     // ───────── SEC EDGAR ─────────
 

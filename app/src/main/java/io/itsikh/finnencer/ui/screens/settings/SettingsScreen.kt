@@ -99,6 +99,7 @@ fun SettingsScreen(
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
     val podcastTtsModel by viewModel.podcastTtsModel.collectAsState()
+    val podcastTtsProvider by viewModel.podcastTtsProvider.collectAsState()
     val podcastSkipTtsPreflight by viewModel.podcastSkipTtsPreflight.collectAsState()
     val themeId by viewModel.themeId.collectAsState()
     val podcastConcurrency by viewModel.podcastConcurrency.collectAsState()
@@ -219,6 +220,10 @@ fun SettingsScreen(
                     current = podcastTtsModel,
                     onPick = viewModel::setPodcastTtsModel,
                 )
+                PodcastTtsProviderRow(
+                    current = podcastTtsProvider,
+                    onPick = viewModel::setPodcastTtsProvider,
+                )
                 PodcastTtsChunkRow(
                     current = podcastTtsChunkChars,
                     onChange = viewModel::setPodcastTtsChunkChars,
@@ -238,7 +243,7 @@ fun SettingsScreen(
                 )
                 SettingsRow(
                     title = "TTS preflight smoke test",
-                    subtitle = "Verify Gemini TTS is responsive before generating the podcast script. The pipeline already retries each chunk with a 10-minute call timeout, so this is purely an early-exit signal. Turn OFF if the preflight keeps failing on a key you know is working.",
+                    subtitle = "Verify Gemini TTS is responsive before generating the podcast script. Default OFF — preview TTS models have tight per-minute rate limits and the probe burns one quota slot per podcast. Turn ON to fail fast before Claude writes the script.",
                     icon = Icons.Default.AutoAwesome,
                     iconTint = FinnencerColors.Violet,
                     trailing = {
@@ -766,6 +771,56 @@ private fun PodcastTtsModelRow(
                     label = model.displayName.removePrefix("Gemini "),
                     selected = current == model,
                     onClick = { onPick(model) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PodcastTtsProviderRow(
+    current: io.itsikh.finnencer.data.repo.TtsProvider,
+    onPick: (io.itsikh.finnencer.data.repo.TtsProvider) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.AutoAwesome,
+                contentDescription = null,
+                tint = FinnencerColors.Violet,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Podcast TTS provider",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    current.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            io.itsikh.finnencer.data.repo.TtsProvider.entries.forEach { provider ->
+                EndOfPodcastChip(
+                    label = when (provider) {
+                        io.itsikh.finnencer.data.repo.TtsProvider.GENERATIVE_LANGUAGE -> "Gen Lang API"
+                        io.itsikh.finnencer.data.repo.TtsProvider.VERTEX_AI -> "Vertex AI"
+                    },
+                    selected = current == provider,
+                    onClick = { onPick(provider) },
                     modifier = Modifier.weight(1f),
                 )
             }

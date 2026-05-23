@@ -36,6 +36,66 @@ enum class ApiKey(
         purpose = "Multi-voice podcast generation (Gemini multi-speaker TTS).",
         signupUrl = "https://aistudio.google.com/",
     ),
+    GEMINI_PROJECT_ID(
+        // Sent as the `x-goog-user-project` header on every Generative
+        // Language API call. Without it, quota is attributed to
+        // whichever project the API key happens to belong to — which
+        // on enterprise keys is often a default project with the
+        // standard (tight) preview-TTS limits. Setting this explicitly
+        // forces attribution to the project where the quota uplift
+        // lives.
+        alias = "key_gemini_project_id",
+        displayName = "Gemini Quota Project (optional)",
+        purpose = "Forces Gemini quota attribution to a specific GCP project. Useful when your enterprise quota uplift lives in a project different from the key's default.",
+        signupUrl = "https://console.cloud.google.com/iam-admin/projects",
+    ),
+    VERTEX_SA_JSON(
+        // Service-account JSON used to mint OAuth access tokens for
+        // Vertex AI. Vertex doesn't accept API keys for generateContent,
+        // and enterprise quota uplifts only ever apply to Vertex — so
+        // this is the path that actually gets the elevated TTS limits.
+        alias = "key_vertex_sa_json",
+        displayName = "Vertex AI Service Account (JSON)",
+        purpose = "Pasted service-account JSON for Vertex AI OAuth. Required to route TTS through Vertex.",
+        signupUrl = "https://cloud.google.com/iam/docs/keys-create-delete",
+    ),
+    VERTEX_PROJECT_ID(
+        alias = "key_vertex_project_id",
+        displayName = "Vertex AI Project ID",
+        purpose = "GCP project where Vertex AI generateContent runs (e.g. \"my-org-prod\").",
+        signupUrl = "https://console.cloud.google.com/iam-admin/projects",
+    ),
+    VERTEX_REGION(
+        alias = "key_vertex_region",
+        displayName = "Vertex AI Region",
+        purpose = "Vertex AI region (e.g. \"us-central1\", \"global\"). Default us-central1.",
+        signupUrl = "https://cloud.google.com/vertex-ai/docs/general/locations",
+    ),
+    VERTEX_OAUTH_WEB_CLIENT_ID(
+        // The "Web application" OAuth client ID from GCP Console.
+        // Counter-intuitively needed for Android OAuth with
+        // requestOfflineAccess — the server auth code we exchange for
+        // a refresh token is bound to this client. Even though we never
+        // run a web server, Google's flow requires it. Format:
+        // <numeric-id>-<random>.apps.googleusercontent.com
+        alias = "key_vertex_oauth_web_client_id",
+        displayName = "Vertex OAuth Web Client ID",
+        purpose = "Web application OAuth client ID from GCP Console. Required for the \"Sign in with Google\" path below — not used for the SA-JSON path.",
+        signupUrl = "https://console.cloud.google.com/apis/credentials",
+    ),
+    VERTEX_OAUTH_REFRESH_TOKEN(
+        // Long-lived refresh token written by the app AFTER the user
+        // completes the in-app Sign in with Google flow. Lets the
+        // background WorkManager mint fresh access tokens without
+        // re-prompting the user. Excluded from the QR-bundle export to
+        // prevent accidental cross-device copy (each device should
+        // sign in independently — copying the refresh token bypasses
+        // device-level consent and risks lingering grants).
+        alias = "key_vertex_oauth_refresh_token",
+        displayName = "Vertex OAuth refresh token (managed)",
+        purpose = "Auto-managed. Filled when you tap \"Sign in with Google\" on the Vertex AI Service Account card. Don't paste this manually.",
+        signupUrl = "https://myaccount.google.com/permissions",
+    ),
     GITHUB_PAT(
         // Must match the alias used by GitHubIssuesClient.KEY_GITHUB_TOKEN
         // and AppUpdateManager.KEY_GITHUB_TOKEN. Renaming this string
@@ -142,6 +202,32 @@ class ApiKeysRepository @Inject constructor(
                     "SEC requires a real contact email in the User-Agent. " +
                             "Format: \"finnencer your-email@example.com\"."
                 )
+            ApiKey.GEMINI_PROJECT_ID ->
+                // GCP project IDs: 6-30 chars, lowercase letters / digits / hyphens, must start with a letter.
+                if (Regex("^[a-z][a-z0-9-]{5,29}$").matches(value)) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Expected a GCP project ID (6-30 chars, lowercase letters/digits/hyphens, start with a letter).")
+            ApiKey.VERTEX_PROJECT_ID ->
+                if (Regex("^[a-z][a-z0-9-]{5,29}$").matches(value)) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Expected a GCP project ID (6-30 chars, lowercase letters/digits/hyphens, start with a letter).")
+            ApiKey.VERTEX_REGION ->
+                // Loose check — Google's region catalog changes regularly. Allow "global" or "<area>-<location><digit>".
+                if (value == "global" || Regex("^[a-z]+-[a-z]+\\d+$").matches(value)) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Expected a Vertex region like \"us-central1\", \"europe-west4\", or \"global\".")
+            ApiKey.VERTEX_SA_JSON ->
+                // Cheap structural check — full validation happens when VertexAuthManager parses it.
+                if (value.contains("\"private_key\"") &&
+                    value.contains("\"client_email\"") &&
+                    value.contains("\"token_uri\"")
+                ) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Doesn't look like a service-account JSON. Expected fields \"private_key\", \"client_email\", \"token_uri\".")
+            ApiKey.VERTEX_OAUTH_WEB_CLIENT_ID ->
+                // Format: <project-number>-<random>.apps.googleusercontent.com
+                if (value.endsWith(".apps.googleusercontent.com") && value.length in 40..120) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Expected a Google OAuth client ID ending in .apps.googleusercontent.com.")
+            ApiKey.VERTEX_OAUTH_REFRESH_TOKEN ->
+                // Managed by the sign-in flow; basic length check only.
+                if (value.length in 30..2000) KeyTestResult.Ok
+                else KeyTestResult.BadFormat("Doesn't look like an OAuth refresh token. Use the in-app sign-in instead of pasting.")
         }
     }
 
