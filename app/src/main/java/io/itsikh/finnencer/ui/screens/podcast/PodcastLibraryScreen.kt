@@ -178,7 +178,7 @@ class PodcastLibraryViewModel @Inject constructor(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PodcastLibraryScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenPodcast: (Long) -> Unit,
 ) {
     val vm: PodcastLibraryViewModel = hiltViewModel()
@@ -204,12 +204,14 @@ fun PodcastLibraryScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = FinnencerColors.TextPrimary,
-                        )
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = FinnencerColors.TextPrimary,
+                            )
+                        }
                     }
                 },
                 actions = {

@@ -64,7 +64,7 @@ import java.time.format.DateTimeFormatter
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun EarningsScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenReport: (Long) -> Unit,
 ) {
     val vm: EarningsViewModel = hiltViewModel()
@@ -149,12 +149,14 @@ fun EarningsScreen(
                         )
                     },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = FinnencerColors.TextPrimary,
-                            )
+                        if (onBack != null) {
+                            IconButton(onClick = onBack) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = FinnencerColors.TextPrimary,
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),

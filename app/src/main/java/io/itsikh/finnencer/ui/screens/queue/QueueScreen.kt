@@ -76,7 +76,7 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun QueueScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenArticle: (articleId: String) -> Unit,
     onOpenReport: (reportId: Long) -> Unit,
     onOpenPodcast: (podcastId: Long) -> Unit,
@@ -180,12 +180,14 @@ fun QueueScreen(
                         )
                     },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                "Back",
-                                tint = FinnencerColors.TextPrimary,
-                            )
+                        if (onBack != null) {
+                            IconButton(onClick = onBack) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    "Back",
+                                    tint = FinnencerColors.TextPrimary,
+                                )
+                            }
                         }
                     },
                     actions = {

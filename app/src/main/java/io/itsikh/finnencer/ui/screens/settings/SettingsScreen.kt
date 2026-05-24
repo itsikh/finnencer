@@ -96,7 +96,7 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenBugReport: (ReportMode) -> Unit,
     onOpenKeys: () -> Unit = {},
     onOpenCost: () -> Unit = {},
@@ -163,8 +163,10 @@ fun SettingsScreen(
                     Text("Settings", style = MaterialTheme.typography.headlineMedium, color = FinnencerColors.TextPrimary)
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),

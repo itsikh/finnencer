@@ -18,11 +18,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.EventNote
-import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ButtonDefaults
@@ -54,19 +51,12 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WatchlistScreen(
-    onOpenSettings: () -> Unit,
-    onOpenEarnings: () -> Unit,
-    onOpenPodcasts: () -> Unit,
-    onOpenTasks: () -> Unit,
-    onOpenQueue: () -> Unit,
     onOpenTickerFeed: (symbol: String) -> Unit,
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
     val tickers by vm.tickers.collectAsState()
     val addSheet by vm.addSheet.collectAsState()
     val settingsSheet by vm.settingsSheet.collectAsState()
-    val activeJobs by vm.activeJobCount.collectAsState()
-    val queueCount by vm.queueCount.collectAsState()
     val quotes by vm.quotes.collectAsState()
     val nextEarnings by vm.nextEarningsBySymbol.collectAsState()
     val analystSnapshots by vm.analystSnapshotsBySymbol.collectAsState()
@@ -110,79 +100,6 @@ fun WatchlistScreen(
                             text = if (tickers.isEmpty()) "No tickers yet" else "${tickers.size} tracked",
                             style = MaterialTheme.typography.labelSmall,
                             color = FinnencerColors.TextTertiary,
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onOpenTasks) {
-                        Box {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Assignment,
-                                contentDescription = "Tasks",
-                                tint = if (activeJobs > 0) FinnencerColors.Violet else FinnencerColors.TextSecondary,
-                            )
-                            if (activeJobs > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .clip(CircleShape)
-                                        .background(FinnencerColors.Coral)
-                                        .padding(horizontal = 4.dp),
-                                ) {
-                                    Text(
-                                        activeJobs.toString(),
-                                        color = FinnencerColors.TextOnAccent,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    IconButton(onClick = onOpenQueue) {
-                        Box {
-                            Icon(
-                                Icons.Default.Bookmark,
-                                contentDescription = "Queue",
-                                tint = if (queueCount > 0) FinnencerColors.Violet else FinnencerColors.TextSecondary,
-                            )
-                            if (queueCount > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .clip(CircleShape)
-                                        .background(FinnencerColors.Violet)
-                                        .padding(horizontal = 4.dp),
-                                ) {
-                                    Text(
-                                        queueCount.toString(),
-                                        color = FinnencerColors.TextOnAccent,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    IconButton(onClick = onOpenEarnings) {
-                        Icon(
-                            Icons.Default.EventNote,
-                            contentDescription = "Earnings",
-                            tint = FinnencerColors.TextSecondary,
-                        )
-                    }
-                    IconButton(onClick = onOpenPodcasts) {
-                        Icon(
-                            Icons.Default.Headphones,
-                            contentDescription = "Podcasts",
-                            tint = FinnencerColors.TextSecondary,
-                        )
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = FinnencerColors.TextSecondary,
                         )
                     }
                 },

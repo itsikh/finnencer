@@ -105,7 +105,7 @@ class TasksViewModel @Inject constructor(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TasksScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenPodcast: (Long) -> Unit,
     onOpenReader: () -> Unit,
     onOpenReport: (Long) -> Unit,
@@ -152,8 +152,10 @@ fun TasksScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FinnencerColors.TextPrimary)
+                        }
                     }
                 },
                 actions = {

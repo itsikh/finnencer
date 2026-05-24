@@ -18,25 +18,18 @@ import io.itsikh.finnencer.ui.components.DebugOverlayViewModel
 import io.itsikh.finnencer.ui.components.FloatingBugButton
 import io.itsikh.finnencer.ui.screens.bugreport.BugReportScreen
 import io.itsikh.finnencer.ui.screens.bugreport.ReportMode
-import io.itsikh.finnencer.ui.screens.home.HomeScreen
 import io.itsikh.finnencer.ui.screens.keys.ApiKeysScreen
 import io.itsikh.finnencer.ui.screens.keys.QrScanScreen
 import io.itsikh.finnencer.ui.screens.keys.QrShareScreen
 import io.itsikh.finnencer.ui.screens.article.ArticleDetailScreen
 import io.itsikh.finnencer.ui.screens.cost.CostMeterScreen
-import io.itsikh.finnencer.ui.screens.earnings.EarningsScreen
 import io.itsikh.finnencer.ui.screens.earnings.ReportViewerScreen
 import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastFromReportScreen
-import io.itsikh.finnencer.ui.screens.podcast.PodcastLibraryScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
-import io.itsikh.finnencer.ui.screens.queue.QueueScreen
 import io.itsikh.finnencer.ui.screens.reader.ReaderScreen
 import io.itsikh.finnencer.ui.screens.snapshot.TickerSnapshotScreen
 import io.itsikh.finnencer.ui.screens.tasks.TaskDetailScreen
-import io.itsikh.finnencer.ui.screens.tasks.TasksScreen
-import io.itsikh.finnencer.ui.screens.watchlist.WatchlistScreen
-import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
 
 /**
  * Root navigation graph for the app.
@@ -47,8 +40,8 @@ import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
  * ## Routes
  * | Route | Screen | Notes |
  * |-------|--------|-------|
- * | `home` | [HomeScreen] | Start destination — replace with your main screen |
- * | `settings` | [SettingsScreen] | App settings, debug tools, backup/restore |
+ * | `main` | [MainTabsScaffold] | Start destination — hosts the six primary tabs |
+ * | `report/{reportId}` etc. | detail screens | Pushed above the tab bar |
  * | `bug_report/{mode}` | [BugReportScreen] | Bug or feedback form; `mode` is a [ReportMode] name |
  *
  * ## Floating bug button
@@ -75,40 +68,13 @@ fun AppNavHost(
     val showBugButton by overlayVm.showBugButton.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        NavHost(navController = navController, startDestination = "watchlist") {
-            composable("watchlist") {
-                WatchlistScreen(
-                    onOpenSettings = { navController.navigate("settings") },
-                    onOpenEarnings = { navController.navigate("earnings") },
-                    onOpenPodcasts = { navController.navigate("podcasts") },
-                    onOpenTasks = { navController.navigate("tasks") },
-                    onOpenQueue = { navController.navigate("queue") },
-                    onOpenTickerFeed = { symbol ->
-                        navController.navigate("ticker/$symbol")
-                    },
-                )
-            }
-            composable("queue") {
-                QueueScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenArticle = { id -> navController.navigate("article/$id") },
-                    onOpenReport = { id -> navController.navigate("report/$id") },
-                    // Tag this launch with from=queue so the player VM
-                    // overrides a global STOP setting to CONTINUE for
-                    // this listening session — the user implicitly
-                    // wants to play through the queue.
-                    onOpenPodcast = { id -> navController.navigate("podcast/$id?from=queue") },
-                    onOpenTasks = { navController.navigate("tasks") },
-                )
-            }
-            composable("tasks") {
-                TasksScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenPodcast = { id -> navController.navigate("podcast/$id") },
-                    onOpenReader = { navController.navigate("reader") },
-                    onOpenReport = { id -> navController.navigate("report/$id") },
-                    onOpenTaskDetail = { jobId -> navController.navigate("task/$jobId") },
-                )
+        NavHost(navController = navController, startDestination = "main") {
+            // The six primary destinations (Watchlist, Tasks,
+            // Earnings, Library, Queue, Settings) live inside the
+            // tab scaffold's own NavHost. Everything below is a
+            // detail screen that pushes over the tab bar.
+            composable("main") {
+                MainTabsScaffold(outerNavController = navController)
             }
             composable("task/{jobId}") {
                 TaskDetailScreen(
@@ -127,12 +93,6 @@ fun AppNavHost(
             }
             composable("cost") {
                 CostMeterScreen(onBack = { navController.popBackStack() })
-            }
-            composable("earnings") {
-                EarningsScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenReport = { id -> navController.navigate("report/$id") },
-                )
             }
             composable("report/{reportId}") {
                 ReportViewerScreen(
@@ -184,12 +144,6 @@ fun AppNavHost(
                     onOpenReader = { navController.navigate("reader") },
                 )
             }
-            composable("podcasts") {
-                PodcastLibraryScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenPodcast = { id -> navController.navigate("podcast/$id?from=library") },
-                )
-            }
             composable("ticker/{symbol}") {
                 TickerFeedScreen(
                     onBack = { navController.popBackStack() },
@@ -220,11 +174,11 @@ fun AppNavHost(
                     onBack = {
                         // popBackStack() is a no-op when the back stack
                         // is empty (deep-link cold start). Fall back to
-                        // the watchlist so the user always has a way
+                        // the tab scaffold so the user always has a way
                         // out of the article screen.
                         if (!navController.popBackStack()) {
-                            navController.navigate("watchlist") {
-                                popUpTo("watchlist") { inclusive = true }
+                            navController.navigate("main") {
+                                popUpTo("main") { inclusive = true }
                             }
                         }
                     },
@@ -233,25 +187,6 @@ fun AppNavHost(
             }
             composable("reader") {
                 ReaderScreen(onBack = { navController.popBackStack() })
-            }
-            composable("home") {
-                HomeScreen(
-                    onOpenSettings = { navController.navigate("settings") },
-                    onOpenKeys = { navController.navigate("keys") },
-                )
-            }
-            composable("settings") {
-                SettingsScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenBugReport = { mode ->
-                        navController.navigate("bug_report/${mode.name}")
-                    },
-                    onOpenKeys = { navController.navigate("keys") },
-                    onOpenCost = { navController.navigate("cost") },
-                    onOpenAiPrefs = { navController.navigate("ai_prefs") },
-                    onOpenAiPrompts = { navController.navigate("ai_prompts") },
-                    onOpenReleaseNotes = { navController.navigate("release_notes") },
-                )
             }
             composable("ai_prefs") {
                 io.itsikh.finnencer.ui.screens.settings.AiPrefsScreen(
