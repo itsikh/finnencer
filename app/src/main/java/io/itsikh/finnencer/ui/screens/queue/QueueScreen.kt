@@ -84,7 +84,8 @@ fun QueueScreen(
 ) {
     val vm: QueueViewModel = hiltViewModel()
     val tab by vm.tab.collectAsState()
-    val todo by vm.todoItems.collectAsState()
+    val articlesTodo by vm.articlesTodoItems.collectAsState()
+    val podcastsTodo by vm.podcastsTodoItems.collectAsState()
     val done by vm.doneItems.collectAsState()
     val selected by vm.selectedIds.collectAsState()
     val isSelecting by vm.isSelecting.collectAsState()
@@ -96,7 +97,12 @@ fun QueueScreen(
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     val listState = rememberLazyListState()
-    val renderItems = if (tab == QueueTab.TODO) todo else done
+    val renderItems = when (tab) {
+        QueueTab.ARTICLES -> articlesTodo
+        QueueTab.PODCASTS -> podcastsTodo
+        QueueTab.DONE -> done
+    }
+    val isTodoTab = tab == QueueTab.ARTICLES || tab == QueueTab.PODCASTS
 
     var deleteSelectedConfirm by remember { mutableStateOf(false) }
     var clearDoneConfirm by remember { mutableStateOf(false) }
@@ -120,7 +126,7 @@ fun QueueScreen(
                         }
                     },
                     actions = {
-                        if (tab == QueueTab.TODO) {
+                        if (isTodoTab) {
                             IconButton(onClick = { vm.markSelectedDone() }) {
                                 Icon(
                                     Icons.Default.Check,
@@ -209,37 +215,32 @@ fun QueueScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             TabRow(
-                selectedTabIndex = if (tab == QueueTab.TODO) 0 else 1,
+                selectedTabIndex = when (tab) {
+                    QueueTab.ARTICLES -> 0
+                    QueueTab.PODCASTS -> 1
+                    QueueTab.DONE -> 2
+                },
                 containerColor = Color.Transparent,
                 contentColor = FinnencerColors.TextPrimary,
             ) {
-                Tab(
-                    selected = tab == QueueTab.TODO,
-                    onClick = { vm.setTab(QueueTab.TODO) },
-                    text = {
-                        Text(
-                            "To do · ${todo.size}",
-                            color = if (tab == QueueTab.TODO) FinnencerColors.TextPrimary
-                                    else FinnencerColors.TextSecondary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    },
+                QueueTabLabel(
+                    label = "Articles · ${articlesTodo.size}",
+                    selected = tab == QueueTab.ARTICLES,
+                    onClick = { vm.setTab(QueueTab.ARTICLES) },
                 )
-                Tab(
+                QueueTabLabel(
+                    label = "Podcasts · ${podcastsTodo.size}",
+                    selected = tab == QueueTab.PODCASTS,
+                    onClick = { vm.setTab(QueueTab.PODCASTS) },
+                )
+                QueueTabLabel(
+                    label = "Done · ${done.size}",
                     selected = tab == QueueTab.DONE,
                     onClick = { vm.setTab(QueueTab.DONE) },
-                    text = {
-                        Text(
-                            "Done · ${done.size}",
-                            color = if (tab == QueueTab.DONE) FinnencerColors.TextPrimary
-                                    else FinnencerColors.TextSecondary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    },
                 )
             }
             if (renderItems.isEmpty()) {
-                EmptyQueue(tab = tab, onOpenTasks = onOpenTasks)
+                EmptyQueue(tab = tab)
             } else {
                 // Shared row-builder so the flat and grouped paths
                 // produce identical QueueRow instances (same tap /
@@ -280,14 +281,14 @@ fun QueueScreen(
                         },
                         onLongPress = { vm.toggleSelection(item.id) },
                         onComplete = {
-                            if (tab == QueueTab.TODO) vm.markDone(item.id)
+                            if (isTodoTab) vm.markDone(item.id)
                             else vm.markUndone(item.id)
                         },
                         onPrimaryAction = {
                             if (isPodcast) {
                                 item.refId.toLongOrNull()?.let(onOpenPodcast)
                                     ?: vm.markDone(item.id)
-                            } else if (tab == QueueTab.TODO) {
+                            } else if (isTodoTab) {
                                 vm.markDone(item.id)
                             } else {
                                 vm.markUndone(item.id)
@@ -304,7 +305,7 @@ fun QueueScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (tab == QueueTab.TODO && !grouped) {
+                    if (isTodoTab && !grouped) {
                         item {
                             Text(
                                 "Tap ↑ / ↓ to reorder. Long-press a row to multi-select.",
@@ -354,7 +355,7 @@ fun QueueScreen(
                                 item,
                                 index == 0,
                                 index == renderItems.lastIndex,
-                                tab == QueueTab.TODO && !isSelecting,
+                                isTodoTab && !isSelecting,
                             )
                         }
                     }
@@ -589,7 +590,40 @@ private fun iconForKind(kind: String): Pair<ImageVector, Color> = when (kind) {
 }
 
 @Composable
-private fun EmptyQueue(tab: QueueTab, onOpenTasks: () -> Unit) {
+private fun QueueTabLabel(label: String, selected: Boolean, onClick: () -> Unit) {
+    Tab(
+        selected = selected,
+        onClick = onClick,
+        text = {
+            Text(
+                label,
+                color = if (selected) FinnencerColors.TextPrimary
+                        else FinnencerColors.TextSecondary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+    )
+}
+
+@Composable
+private fun EmptyQueue(tab: QueueTab) {
+    val (headline, body, icon) = when (tab) {
+        QueueTab.ARTICLES -> Triple(
+            "No articles queued",
+            "Save news articles, AI summaries, batch summaries and earnings reports from anywhere in the app — they show up here so you can come back to them later.",
+            Icons.Default.Article,
+        )
+        QueueTab.PODCASTS -> Triple(
+            "No podcasts queued",
+            "Save podcasts from the library or task detail screen — they show up here so you can listen later.",
+            Icons.Default.Headphones,
+        )
+        QueueTab.DONE -> Triple(
+            "Nothing finished yet",
+            "Tap ✓ on a queued article or podcast to mark it done. Completed items live here so you can look back at what you've gotten through.",
+            Icons.Default.Check,
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -605,7 +639,7 @@ private fun EmptyQueue(tab: QueueTab, onOpenTasks: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Default.Bookmark,
+                icon,
                 contentDescription = null,
                 tint = FinnencerColors.Violet,
                 modifier = Modifier.size(40.dp),
@@ -613,18 +647,14 @@ private fun EmptyQueue(tab: QueueTab, onOpenTasks: () -> Unit) {
         }
         Spacer(Modifier.height(20.dp))
         Text(
-            if (tab == QueueTab.TODO) "Your queue is empty"
-            else "Nothing finished yet",
+            headline,
             style = MaterialTheme.typography.titleLarge,
             color = FinnencerColors.TextPrimary,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            if (tab == QueueTab.TODO)
-                "Save articles, AI summaries, earnings reports and podcasts from anywhere in the app — they show up here so you can come back to them later."
-            else
-                "Tap ✓ on a queued item to mark it done. Completed items live here so you can look back at what you've gotten through.",
+            body,
             style = MaterialTheme.typography.bodyMedium,
             color = FinnencerColors.TextSecondary,
         )
