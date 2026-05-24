@@ -14,6 +14,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,9 +32,49 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.view.drawToBitmap
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import io.itsikh.finnencer.data.repo.BugButtonPreferences
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import javax.inject.Inject
+
+/**
+ * Tri-state position model so the composable can tell apart "DataStore
+ * hasn't emitted yet" (Loading) from "the user has never dragged the
+ * button" (Unset) from "we have a saved spot" (At). Loading suppresses
+ * the button for the first ~frame to avoid painting at the default
+ * spot then jumping to the persisted one.
+ */
+sealed interface BugButtonPos {
+    object Loading : BugButtonPos
+    object Unset : BugButtonPos
+    data class At(val x: Float, val y: Float) : BugButtonPos
+}
+
+@HiltViewModel
+class BugButtonPositionViewModel @Inject constructor(
+    private val prefs: BugButtonPreferences,
+) : ViewModel() {
+
+    val position: StateFlow<BugButtonPos> = prefs.position
+        .map<Pair<Float, Float>?, BugButtonPos> { p ->
+            if (p == null) BugButtonPos.Unset else BugButtonPos.At(p.first, p.second)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, BugButtonPos.Loading)
+
+    fun save(x: Float, y: Float) {
+        viewModelScope.launch { prefs.setPosition(x, y) }
+    }
+}
 
 /**
  * A floating, draggable bug-report button rendered as an overlay on all screens.
@@ -42,7 +83,10 @@ import kotlin.math.roundToInt
  * the "Bug Report Button" toggle is on in Settings → Debug).
  *
  * ## Interaction
- * - **Drag** — repositions the button anywhere on screen.
+ * - **Drag** — repositions the button anywhere on screen. The new
+ *   location is persisted via [BugButtonPreferences] when the gesture
+ *   ends, so the button reappears in the same spot across recompositions
+ *   and app restarts.
  * - **Tap** (total drag distance < 20 px) — hides the button for one frame, captures
  *   a screenshot of the current screen via [View.drawToBitmap], then calls
  *   [onScreenshotCaptured] with the resulting [Bitmap].
@@ -60,14 +104,42 @@ fun FloatingBugButton(
 ) {
     if (!visible) return
 
-    // Default starting position: 16dp from the left edge, ~80% down
-    // the screen so the button sits in the lower area instead of
-    // covering header / search content. Still freely draggable
-    // anywhere; this is just where it spawns on first show.
+    val vm: BugButtonPositionViewModel = hiltViewModel()
+    val positionState by vm.position.collectAsState()
+
+    // Default spawn position: 16dp from the left edge, ~80% down the
+    // screen. Used only when the user has never dragged the button.
     val density = LocalDensity.current
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
-    val initialOffsetX = with(density) { 16.dp.toPx() }
-    val initialOffsetY = with(density) { (screenHeightDp * 0.80f).dp.toPx() }
+    val defaultOffsetX = with(density) { 16.dp.toPx() }
+    val defaultOffsetY = with(density) { (screenHeightDp * 0.80f).dp.toPx() }
+
+    // Until DataStore emits, keep the button off-screen to avoid a
+    // visible jump from "default" → "persisted" on app start.
+    when (val s = positionState) {
+        BugButtonPos.Loading -> return
+        else -> {
+            val initial = when (s) {
+                is BugButtonPos.At -> s.x to s.y
+                else -> defaultOffsetX to defaultOffsetY
+            }
+            DraggableBugButton(
+                initialOffsetX = initial.first,
+                initialOffsetY = initial.second,
+                onDragEnd = vm::save,
+                onScreenshotCaptured = onScreenshotCaptured,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DraggableBugButton(
+    initialOffsetX: Float,
+    initialOffsetY: Float,
+    onDragEnd: (Float, Float) -> Unit,
+    onScreenshotCaptured: (Bitmap) -> Unit,
+) {
     var offsetX by remember { mutableFloatStateOf(initialOffsetX) }
     var offsetY by remember { mutableFloatStateOf(initialOffsetY) }
     var capturing by remember { mutableStateOf(false) }
@@ -108,7 +180,11 @@ fun FloatingBugButton(
                                 offsetY += delta.y
                             }
                         } while (event.changes.any { it.pressed })
-                        if (!isDragging) {
+                        if (isDragging) {
+                            // Persist on gesture-end so we hit DataStore
+                            // once per drag instead of on every delta.
+                            onDragEnd(offsetX, offsetY)
+                        } else {
                             capturing = true
                         }
                     }

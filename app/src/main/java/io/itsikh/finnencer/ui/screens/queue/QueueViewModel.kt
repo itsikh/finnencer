@@ -60,7 +60,9 @@ class QueueViewModel @Inject constructor(
         repo.observeCompleted()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _tab = MutableStateFlow(QueueTab.ARTICLES)
+    // Podcasts is the default tab — that's the lane the user usually
+    // returns to (queued listening) rather than article read-later.
+    private val _tab = MutableStateFlow(QueueTab.PODCASTS)
     val tab: StateFlow<QueueTab> = _tab.asStateFlow()
 
     private val _selectedIds = MutableStateFlow<Set<Long>>(emptySet())
