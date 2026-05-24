@@ -12,6 +12,7 @@ import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.MoveExplanationDao
 import io.itsikh.finnencer.data.dao.NewsDao
+import io.itsikh.finnencer.data.dao.TickerAnalystSnapshotDao
 import io.itsikh.finnencer.data.dao.TickerMetricsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
@@ -45,4 +46,5 @@ object DatabaseModule {
     @Provides fun provideQueueItemDao(db: FinnencerDatabase): QueueItemDao = db.queueItemDao()
     @Provides fun provideMoveExplanationDao(db: FinnencerDatabase): MoveExplanationDao = db.moveExplanationDao()
     @Provides fun provideTickerMetricsDao(db: FinnencerDatabase): TickerMetricsDao = db.tickerMetricsDao()
+    @Provides fun provideTickerAnalystSnapshotDao(db: FinnencerDatabase): TickerAnalystSnapshotDao = db.tickerAnalystSnapshotDao()
 }

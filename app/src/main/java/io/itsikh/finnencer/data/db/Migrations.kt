@@ -160,6 +160,29 @@ val MIGRATION_10_11 = object : Migration(10, 11) {
     }
 }
 
+/**
+ * v11 → v12: introduces `ticker_analyst_snapshot` — a daily-refreshed
+ * cache of Finnhub price-target + recommendation-trends per ticker. Lets
+ * ReportGenerator skip a re-fetch on regenerate and unlocks the
+ * watchlist "analyst PT vs current quote" pill without extra calls.
+ */
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ticker_analyst_snapshot` (" +
+                "`ticker` TEXT NOT NULL, " +
+                "`fetched_at_millis` INTEGER NOT NULL, " +
+                "`target_high` REAL, " +
+                "`target_low` REAL, " +
+                "`target_mean` REAL, " +
+                "`target_median` REAL, " +
+                "`last_updated` TEXT, " +
+                "`recommendation_trends_json` TEXT NOT NULL, " +
+                "PRIMARY KEY(`ticker`))"
+        )
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
@@ -169,4 +192,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_8_9,
     MIGRATION_9_10,
     MIGRATION_10_11,
+    MIGRATION_11_12,
 )

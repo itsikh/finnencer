@@ -2,12 +2,15 @@ package io.itsikh.finnencer.data.ai
 
 import io.itsikh.finnencer.logging.AppLogger as Log
 import com.google.gson.Gson
+import io.itsikh.finnencer.data.api.FinnhubRecommendation
 import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
+import io.itsikh.finnencer.data.dao.TickerAnalystSnapshotDao
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.TickerAnalystSnapshot
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,10 +35,11 @@ class ReportGenerator @Inject constructor(
     private val tickerDao: TickerDao,
     private val newsDao: NewsDao,
     private val earningsDao: EarningsDao,
+    private val analystSnapshotDao: TickerAnalystSnapshotDao,
     private val promptPrefs: PromptPreferences,
     private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
     private val cikLookup: io.itsikh.finnencer.data.providers.EdgarCikLookup,
-    @Suppress("unused") private val gson: Gson,
+    private val gson: Gson,
 ) {
 
     suspend fun generate(eventId: Long, tier: ReportTier): Long {
@@ -129,11 +133,16 @@ class ReportGenerator @Inject constructor(
             }
         }
 
-        // Analyst layer
-        val pt = runCatching { finnhub.priceTarget(ticker.symbol) }.getOrNull()
-        val recs = runCatching { finnhub.recommendationTrends(ticker.symbol) }.getOrNull().orEmpty()
+        // Analyst layer — read from the daily-cached snapshot so a
+        // regenerate (or running 3 tiers back-to-back) doesn't burn 6
+        // Finnhub calls on data that changes once a day at most.
+        val snap = analystSnapshot(ticker.symbol)
         bundle.append("\n## Analyst price target\n")
-        bundle.append(" - mean ${fmt(pt?.targetMean)} high ${fmt(pt?.targetHigh)} low ${fmt(pt?.targetLow)} (as of ${pt?.lastUpdated ?: "?"})\n")
+        bundle.append(
+            " - mean ${fmt(snap?.targetMean)} high ${fmt(snap?.targetHigh)} low ${fmt(snap?.targetLow)} " +
+                "(as of ${snap?.lastUpdated ?: "?"})\n"
+        )
+        val recs = parseRecommendationTrends(snap?.recommendationTrendsJson)
         if (recs.isNotEmpty()) {
             bundle.append("\n## Recommendation trends (latest first)\n")
             val take = when (tier) { ReportTier.BRIEF -> 1; ReportTier.STANDARD -> 3; ReportTier.DEEP -> 6 }
@@ -160,6 +169,11 @@ class ReportGenerator @Inject constructor(
             userMessage = bundle.toString(),
             maxTokens = maxTokens,
             temperature = 0.4,
+            // PERSONA + per-tier prompt + user "extras" are large and
+            // stable across every report at this tier. Cache the system
+            // block so a same-day batch (e.g. earnings week) pays cache-
+            // read rates on the shared prefix.
+            cacheSystem = true,
         )
         val text = completion.text
 
@@ -181,6 +195,59 @@ class ReportGenerator @Inject constructor(
         return id
     }
 
+    /**
+     * Return a (cache_age <= 24h) analyst snapshot, refreshing from
+     * Finnhub if missing or stale. Falls back to the stale cached row
+     * if the refresh fails (a stale price target is still useful
+     * grounding for an LLM report). Returns null only when there's
+     * no cached row AND the API call fails — same shape as the
+     * previous inline `runCatching` flow.
+     */
+    private suspend fun analystSnapshot(symbol: String): TickerAnalystSnapshot? {
+        val now = System.currentTimeMillis()
+        val cached = analystSnapshotDao.get(symbol)
+        if (cached != null && (now - cached.fetchedAtMillis) < ANALYST_TTL_MS) {
+            return cached
+        }
+        val pt = runCatching { finnhub.priceTarget(symbol) }
+            .onFailure { Log.w(TAG, "priceTarget refresh failed for $symbol: ${it.message}") }
+            .getOrNull()
+        val recs = runCatching { finnhub.recommendationTrends(symbol) }
+            .onFailure { Log.w(TAG, "recommendationTrends refresh failed for $symbol: ${it.message}") }
+            .getOrNull().orEmpty()
+        if (pt == null && recs.isEmpty()) {
+            // Refresh failed end-to-end. Return whatever we had cached
+            // (even stale) so the report still has something to ground
+            // on; the next regenerate will try again.
+            return cached
+        }
+        val snap = TickerAnalystSnapshot(
+            ticker = symbol,
+            fetchedAtMillis = now,
+            targetHigh = pt?.targetHigh,
+            targetLow = pt?.targetLow,
+            targetMean = pt?.targetMean,
+            targetMedian = pt?.targetMedian,
+            lastUpdated = pt?.lastUpdated,
+            recommendationTrendsJson = gson.toJson(recs),
+        )
+        analystSnapshotDao.upsert(snap)
+        return snap
+    }
+
+    private fun parseRecommendationTrends(json: String?): List<FinnhubRecommendation> {
+        if (json.isNullOrBlank() || json == "null") return emptyList()
+        return runCatching {
+            gson.fromJson(
+                json,
+                Array<FinnhubRecommendation>::class.java,
+            )?.toList().orEmpty()
+        }.getOrElse {
+            Log.w(TAG, "recommendation_trends_json parse failed: ${it.message}")
+            emptyList()
+        }
+    }
+
     private fun fmt(d: Double?): String = if (d == null) "—" else "%.4f".format(d).trimEnd('0').trimEnd('.')
 
     /** Format a large dollar amount as "39.33B" / "1.245B" / "456.7M" so
@@ -194,6 +261,10 @@ class ReportGenerator @Inject constructor(
 
     private companion object {
         const val TAG = "ReportGenerator"
+        /** How long the analyst snapshot is considered fresh. Daily
+         *  refresh is plenty — Finnhub's price-target field updates at
+         *  most a few times per week per ticker. */
+        const val ANALYST_TTL_MS = 24L * 60 * 60 * 1000
 
         /**
          * Common persona/reader framing shared by all three earnings-report

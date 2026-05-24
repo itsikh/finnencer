@@ -10,6 +10,7 @@ import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.NotificationDao
 import io.itsikh.finnencer.data.dao.PodcastDao
 import io.itsikh.finnencer.data.dao.QueueItemDao
+import io.itsikh.finnencer.data.dao.TickerAnalystSnapshotDao
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.dao.TickerMetricsDao
 import io.itsikh.finnencer.data.entity.AiJob
@@ -26,6 +27,7 @@ import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.QueueItem
 import io.itsikh.finnencer.data.entity.SummaryVersion
 import io.itsikh.finnencer.data.entity.Ticker
+import io.itsikh.finnencer.data.entity.TickerAnalystSnapshot
 import io.itsikh.finnencer.data.entity.TickerMetrics
 import io.itsikh.finnencer.data.entity.TickerMetricsAnalysis
 
@@ -47,8 +49,9 @@ import io.itsikh.finnencer.data.entity.TickerMetricsAnalysis
         MoveExplanation::class,
         TickerMetrics::class,
         TickerMetricsAnalysis::class,
+        TickerAnalystSnapshot::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {
@@ -62,6 +65,7 @@ abstract class FinnencerDatabase : RoomDatabase() {
     abstract fun queueItemDao(): QueueItemDao
     abstract fun moveExplanationDao(): MoveExplanationDao
     abstract fun tickerMetricsDao(): TickerMetricsDao
+    abstract fun tickerAnalystSnapshotDao(): TickerAnalystSnapshotDao
 
     companion object {
         const val NAME = "finnencer.db"
