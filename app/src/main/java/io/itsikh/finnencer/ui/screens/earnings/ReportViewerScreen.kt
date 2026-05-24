@@ -66,6 +66,13 @@ fun ReportViewerScreen(
     val action by vm.action.collectAsState()
     val isStale by vm.isStale.collectAsState()
     var podcastPickerOpen by remember { mutableStateOf(false) }
+    // Confirmation gate for the Listen button — generating a podcast
+    // typically costs ~$0.50-$1.50 (Opus script + Gemini TTS), so we
+    // show the estimate and require an explicit tap before kicking off
+    // a multi-minute paid job.
+    var listenConfirmFor by remember { mutableStateOf<Long?>(null) }
+    val costHints: TierCostHintsViewModel = hiltViewModel()
+    val podcastCostHint by costHints.podcastHint.collectAsState()
 
     // Navigate to the newly-produced report when a regenerate/upgrade
     // completes, so the user lands on the fresh version automatically.
@@ -104,7 +111,7 @@ fun ReportViewerScreen(
                             title = r.title,
                             subtitle = "${r.tier} · ${io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model) ?: r.model}",
                         )
-                        IconButton(onClick = { onListen(r.id) }) {
+                        IconButton(onClick = { listenConfirmFor = r.id }) {
                             Icon(
                                 Icons.Default.Headphones,
                                 contentDescription = "Listen now",
@@ -260,6 +267,39 @@ fun ReportViewerScreen(
             title = { Text("Something went wrong") },
             text = { Text(msg, color = FinnencerColors.TextSecondary) },
             confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } },
+        )
+    }
+
+    listenConfirmFor?.let { reportId ->
+        AlertDialog(
+            onDismissRequest = { listenConfirmFor = null },
+            title = { Text("Generate podcast?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This kicks off a multi-step paid job: Claude writes a two-voice dialogue script, an optional validator pass checks it, then Gemini TTS renders the audio.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FinnencerColors.TextSecondary,
+                    )
+                    Text(
+                        "Estimated cost: $podcastCostHint (script + validator + TTS allowance). Final cost shows on the Cost meter.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onListen(reportId)
+                    listenConfirmFor = null
+                }) {
+                    Text("Generate", color = FinnencerColors.Violet, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { listenConfirmFor = null }) { Text("Cancel") }
+            },
         )
     }
 }

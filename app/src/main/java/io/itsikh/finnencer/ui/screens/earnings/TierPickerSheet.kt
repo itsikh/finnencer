@@ -3,6 +3,7 @@ package io.itsikh.finnencer.ui.screens.earnings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +19,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,10 +107,15 @@ fun TierPickerSheetCore(
                     )
                 }
             } else {
+                val costHints: TierCostHintsViewModel = hiltViewModel()
+                val briefCost by costHints.briefHint.collectAsState()
+                val standardCost by costHints.standardHint.collectAsState()
+                val deepCost by costHints.deepHint.collectAsState()
                 TierOption(
                     title = "BRIEF",
                     subtitle = "~2 pages · Sonnet · executive read",
                     detail = "Headline, numbers vs consensus, what matters, next catalyst.",
+                    costHint = briefCost,
                     accent = FinnencerColors.Mint,
                     enabled = !generating,
                     onClick = { onPick(ReportTier.BRIEF) },
@@ -115,6 +124,7 @@ fun TierPickerSheetCore(
                     title = "STANDARD",
                     subtitle = "~5 pages · Sonnet · standard read",
                     detail = "BRIEF + guidance commentary + segment detail + analyst reaction + risks.",
+                    costHint = standardCost,
                     accent = FinnencerColors.Violet,
                     enabled = !generating,
                     onClick = { onPick(ReportTier.STANDARD) },
@@ -123,6 +133,7 @@ fun TierPickerSheetCore(
                     title = "DEEP",
                     subtitle = "~10 pages · Opus 4.7 (1M ctx) · deep dive",
                     detail = "STANDARD + explicit bull/bear, risk factors, comparables, next-quarter watchlist.",
+                    costHint = deepCost,
                     accent = FinnencerColors.Amber,
                     enabled = !generating,
                     onClick = { onPick(ReportTier.DEEP) },
@@ -142,6 +153,7 @@ private fun TierOption(
     title: String,
     subtitle: String,
     detail: String,
+    costHint: String,
     accent: androidx.compose.ui.graphics.Color,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -167,7 +179,28 @@ private fun TierOption(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.size(10.dp))
-            Text(subtitle, style = MaterialTheme.typography.labelMedium, color = FinnencerColors.TextSecondary)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = FinnencerColors.TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            // Cost hint pill at the right edge — same accent as the
+            // tier title so it reads as "this is the cost of THIS tap".
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(accent.copy(alpha = 0.15f))
+                    .border(1.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    costHint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
         Text(detail, style = MaterialTheme.typography.bodySmall, color = FinnencerColors.TextSecondary)
     }
