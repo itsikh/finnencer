@@ -127,6 +127,8 @@ fun SettingsScreen(
     val restoreState by viewModel.restoreState.collectAsState()
     val configuredMap by keysRepo.configured.collectAsState()
     val keysConfigured = configuredMap.count { it.value }
+    val newsRetentionDays by viewModel.newsRetentionDays.collectAsState()
+    val apiUsageRetentionDays by viewModel.apiUsageRetentionDays.collectAsState()
 
     // Backup password flow. The user types a password first, then we
     // launch the file picker; the password is kept in this state across
@@ -342,6 +344,29 @@ fun SettingsScreen(
                     subtitle = "How many summary / report jobs run in parallel. 1 = strict queue.",
                     value = summaryConcurrency,
                     onChange = viewModel::setSummaryConcurrency,
+                )
+            }
+
+            // ───── Storage ─────
+            SettingsSection(
+                title = "Storage",
+                icon = Icons.Default.Storage,
+                iconTint = FinnencerColors.Violet,
+                summary = "News $newsRetentionDays d · usage $apiUsageRetentionDays d",
+            ) {
+                RetentionPickerRow(
+                    title = "Cached news retention",
+                    subtitle = "How long ingested news articles stay in the local DB. Older rows are pruned at the end of each sync cycle. Articles already in your reading list, summaries, reports and podcasts are NOT affected.",
+                    current = newsRetentionDays,
+                    presets = io.itsikh.finnencer.data.repo.RetentionPreferences.NEWS_PRESETS,
+                    onPick = viewModel::setNewsRetentionDays,
+                )
+                RetentionPickerRow(
+                    title = "API usage history retention",
+                    subtitle = "How long the cost-meter keeps per-call token rows. Older calls drop off so the meter shows recent spend, not all-time.",
+                    current = apiUsageRetentionDays,
+                    presets = io.itsikh.finnencer.data.repo.RetentionPreferences.USAGE_PRESETS,
+                    onPick = viewModel::setApiUsageRetentionDays,
                 )
             }
 
@@ -1216,6 +1241,72 @@ private fun PodcastTtsChunkRow(
                 enabled = current < max,
                 onClick = { onChange((current + step).coerceAtMost(max)) },
             )
+        }
+    }
+}
+
+/**
+ * Picker row for a days-based retention setting. Renders one row of
+ * preset chips (e.g. 14 / 30 / 60 / 90 / 180 / 365) so the user picks
+ * a window without a free-form text field — same UX as the
+ * end-of-podcast / TTS provider rows. The custom value the user might
+ * have saved earlier is shown in the readout above the chips.
+ */
+@Composable
+private fun RetentionPickerRow(
+    title: String,
+    subtitle: String,
+    current: Int,
+    presets: List<Int>,
+    onPick: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+            }
+            Spacer(Modifier.size(10.dp))
+            Box(
+                modifier = Modifier
+                    .size(width = 72.dp, height = 36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FinnencerColors.Violet.copy(alpha = 0.20f))
+                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "$current d",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            presets.forEach { days ->
+                EndOfPodcastChip(
+                    label = "$days d",
+                    selected = days == current,
+                    onClick = { onPick(days) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

@@ -67,6 +67,7 @@ class SettingsViewModel @Inject constructor(
     private val jobConcurrencyPrefs: io.itsikh.finnencer.data.repo.JobConcurrencyPreferences,
     private val geminiTts: io.itsikh.finnencer.data.ai.GeminiTts,
     private val backupManager: io.itsikh.finnencer.backup.FinnencerBackupManager,
+    private val retentionPrefs: io.itsikh.finnencer.data.repo.RetentionPreferences,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -165,6 +166,22 @@ class SettingsViewModel @Inject constructor(
     val summaryConcurrency: StateFlow<Int> = jobConcurrencyPrefs.summaryConcurrency
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
 
+    /** Days of cached news to keep before [core.work.SyncWorker] prunes. */
+    val newsRetentionDays: StateFlow<Int> = retentionPrefs.newsRetentionDays
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            io.itsikh.finnencer.data.repo.RetentionPreferences.DEFAULT_NEWS_DAYS,
+        )
+
+    /** Days of API-usage rows to keep before [core.work.SyncWorker] prunes. */
+    val apiUsageRetentionDays: StateFlow<Int> = retentionPrefs.apiUsageRetentionDays
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            io.itsikh.finnencer.data.repo.RetentionPreferences.DEFAULT_USAGE_DAYS,
+        )
+
     // ── GitHub token ──────────────────────────────────────────────────────────
 
     /** `true` if a GitHub PAT is currently stored in [SecureKeyManager]. */
@@ -211,6 +228,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setShowDiagnoseButtons(show: Boolean) {
         viewModelScope.launch { debugSettings.setShowDiagnoseButtons(show) }
+    }
+
+    fun setNewsRetentionDays(days: Int) {
+        viewModelScope.launch { retentionPrefs.setNewsRetentionDays(days) }
+    }
+
+    fun setApiUsageRetentionDays(days: Int) {
+        viewModelScope.launch { retentionPrefs.setApiUsageRetentionDays(days) }
     }
 
     fun setEndOfPodcastAction(value: EndOfPodcastAction) {

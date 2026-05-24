@@ -9,8 +9,11 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import io.itsikh.finnencer.core.notifications.AlertNotifier
 import io.itsikh.finnencer.data.ai.ImportanceScorer
+import io.itsikh.finnencer.data.dao.ApiUsageDao
+import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.data.repo.RetentionPreferences
 import io.itsikh.finnencer.data.sync.EarningsCalendarSync
 import io.itsikh.finnencer.data.sync.EarningsNumericSync
 import io.itsikh.finnencer.data.sync.NewsSyncEngine
@@ -32,6 +35,9 @@ class SyncWorker @AssistedInject constructor(
     private val scorer: ImportanceScorer,
     private val notifier: AlertNotifier,
     private val apiKeys: ApiKeysRepository,
+    private val newsDao: NewsDao,
+    private val apiUsageDao: ApiUsageDao,
+    private val retentionPrefs: RetentionPreferences,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = try {
@@ -75,6 +81,27 @@ class SyncWorker @AssistedInject constructor(
         // pass per-ticker threshold + quiet hours + dedup gates.
         val fanout = notifier.fanout(scorerStats.newScores)
         Log.i(TAG, "fanout: $fanout")
+
+        // Stage 4 — retention sweep. Trim cached news + API-usage rows
+        // older than the user-configured retention windows so the DB
+        // stays bounded under every-15-min syncs.
+        runCatching { pruneStale() }
+            .onFailure { Log.e(TAG, "retention prune failed (non-fatal)", it) }
+    }
+
+    private suspend fun pruneStale() {
+        val now = System.currentTimeMillis()
+        val day = 24L * 60 * 60 * 1000
+
+        val newsDays = retentionPrefs.getNewsRetentionDays()
+        val newsCutoff = now - newsDays * day
+        val newsPruned = newsDao.pruneOlderThan(newsCutoff)
+
+        val usageDays = retentionPrefs.getApiUsageRetentionDays()
+        val usageCutoff = now - usageDays * day
+        val usagePruned = apiUsageDao.pruneOlderThan(usageCutoff)
+
+        Log.i(TAG, "prune: news=$newsPruned (>${newsDays}d) api_usage=$usagePruned (>${usageDays}d)")
     }
 
     private companion object {
