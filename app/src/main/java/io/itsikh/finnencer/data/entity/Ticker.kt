@@ -25,7 +25,7 @@ data class Ticker(
     @ColumnInfo(name = "cik") val cik: String? = null,
     @ColumnInfo(name = "logo_url") val logoUrl: String? = null,
     @ColumnInfo(name = "watchlist_order") val watchlistOrder: Int,
-    @ColumnInfo(name = "notification_threshold") val notificationThreshold: Int = 7,
+    @ColumnInfo(name = "notification_threshold") val notificationThreshold: Int = 8,
     @ColumnInfo(name = "daily_notification_cap") val dailyNotificationCap: Int = 5,
     @ColumnInfo(name = "muted_until_millis") val mutedUntilMillis: Long? = null,
     @ColumnInfo(name = "quiet_hours_start_minute") val quietHoursStartMinute: Int = 23 * 60,

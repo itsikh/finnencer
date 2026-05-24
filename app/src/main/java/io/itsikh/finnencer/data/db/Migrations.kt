@@ -147,6 +147,19 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
     }
 }
 
+/**
+ * v10 → v11: raises the default notification threshold floor from 7 to
+ * 8 for every existing ticker. The default in [Ticker] also moves to 8
+ * so newly added tickers start at the new floor. Users who explicitly
+ * picked 9 or 10 keep their setting; users on the old default of 7 (or
+ * any value below 8) are pulled up to 8.
+ */
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("UPDATE tickers SET notification_threshold = 8 WHERE notification_threshold < 8")
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
@@ -155,4 +168,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_7_8,
     MIGRATION_8_9,
     MIGRATION_9_10,
+    MIGRATION_10_11,
 )

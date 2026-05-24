@@ -48,7 +48,7 @@ import io.itsikh.finnencer.data.entity.TickerMetricsAnalysis
         TickerMetrics::class,
         TickerMetricsAnalysis::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class FinnencerDatabase : RoomDatabase() {

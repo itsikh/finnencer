@@ -1,5 +1,6 @@
 package io.itsikh.finnencer
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.rememberNavController
 import io.itsikh.finnencer.bugreport.CrashAutoReporter
 import io.itsikh.finnencer.ui.navigation.AppNavHost
 import io.itsikh.finnencer.ui.theme.FinnencerTheme
@@ -60,6 +63,13 @@ class MainActivity : FragmentActivity() {
 
     @Inject lateinit var crashAutoReporter: CrashAutoReporter
 
+    // Hoisted out of AppNavHost so onNewIntent can forward warm-start
+    // deep-link intents (notification taps while the app is already
+    // running) into the NavController via handleDeepLink. Cold-start
+    // deep links are already handled by the NavHost itself when it
+    // reads the activity's initial intent.
+    private var navController: NavHostController? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -68,8 +78,10 @@ class MainActivity : FragmentActivity() {
             val themeId by mainViewModel.themeId.collectAsState()
             FinnencerTheme(themeId = themeId) {
                 val updatePrompt by mainViewModel.updatePrompt.collectAsState()
+                val nav = rememberNavController()
+                navController = nav
 
-                AppNavHost()
+                AppNavHost(navController = nav)
 
                 when (val prompt = updatePrompt) {
                     is MainViewModel.UpdatePromptState.Available -> {
@@ -110,5 +122,16 @@ class MainActivity : FragmentActivity() {
             }
         }
         lifecycleScope.launch { crashAutoReporter.checkAndReport() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Activity is launchMode=singleTop, so a notification tap while
+        // the app is already running re-enters via onNewIntent rather
+        // than onCreate. Forward the intent to the NavController so its
+        // navDeepLink on `article/{articleId}` resolves and routes to
+        // ArticleDetailScreen.
+        setIntent(intent)
+        navController?.handleDeepLink(intent)
     }
 }

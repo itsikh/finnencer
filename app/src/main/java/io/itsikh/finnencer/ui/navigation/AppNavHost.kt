@@ -7,9 +7,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.navDeepLink
 import io.itsikh.finnencer.bugreport.ScreenshotHolder
 import io.itsikh.finnencer.ui.components.DebugOverlayViewModel
 import io.itsikh.finnencer.ui.components.FloatingBugButton
@@ -65,8 +68,9 @@ import io.itsikh.finnencer.ui.screens.settings.SettingsScreen
  * [NavHost] argument DSL or typed navigation with the `navigation-compose` serialization APIs.
  */
 @Composable
-fun AppNavHost() {
-    val navController = rememberNavController()
+fun AppNavHost(
+    navController: androidx.navigation.NavHostController = rememberNavController(),
+) {
     val overlayVm: DebugOverlayViewModel = hiltViewModel()
     val showBugButton by overlayVm.showBugButton.collectAsState()
 
@@ -199,9 +203,31 @@ fun AppNavHost() {
             composable("snapshot/{symbol}") {
                 TickerSnapshotScreen(onBack = { navController.popBackStack() })
             }
-            composable("article/{articleId}") {
+            composable(
+                route = "article/{articleId}",
+                arguments = listOf(
+                    navArgument("articleId") { type = NavType.StringType },
+                ),
+                // Notification taps land here via finnencer://article/{id}.
+                // The activity is launchMode=singleTop, so MainActivity
+                // forwards onNewIntent into the NavController, which
+                // resolves this deep link to the ArticleDetailScreen.
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "finnencer://article/{articleId}" },
+                ),
+            ) {
                 ArticleDetailScreen(
-                    onBack = { navController.popBackStack() },
+                    onBack = {
+                        // popBackStack() is a no-op when the back stack
+                        // is empty (deep-link cold start). Fall back to
+                        // the watchlist so the user always has a way
+                        // out of the article screen.
+                        if (!navController.popBackStack()) {
+                            navController.navigate("watchlist") {
+                                popUpTo("watchlist") { inclusive = true }
+                            }
+                        }
+                    },
                     onOpenReader = { navController.navigate("reader") },
                 )
             }

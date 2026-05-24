@@ -32,10 +32,25 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.finnencer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+                Deep link for notification taps. AlertNotifier posts
+                `finnencer://article/{articleId}` and AppNavHost has a
+                matching navDeepLink on the `article/{articleId}` route,
+                so the tap lands directly on ArticleDetailScreen where
+                the user can read, bookmark to the reading list, or
+                generate a summary.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="finnencer" android:host="article" />
             </intent-filter>
         </activity>
 

@@ -151,8 +151,17 @@ class AlertNotifier @Inject constructor(
     }
 
     private fun postNotification(ticker: Ticker, article: NewsArticle, score: ArticleScore) {
-        val tapIntent = Intent(context, MainActivity::class.java).apply {
-            data = Uri.parse("finnencer://ticker/${ticker.symbol}?article=${article.id}")
+        // Deep-link straight to the article detail screen so the tap is a
+        // one-step path to read / bookmark / generate a summary. The
+        // matching navDeepLink is registered in AppNavHost on the
+        // `article/{articleId}` route; MainActivity has launchMode
+        // singleTop + an intent-filter for this scheme in the manifest.
+        val tapIntent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("finnencer://article/${article.id}"),
+            context,
+            MainActivity::class.java,
+        ).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pending = PendingIntent.getActivity(
