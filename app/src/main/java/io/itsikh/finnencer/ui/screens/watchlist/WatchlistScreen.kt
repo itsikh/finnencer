@@ -19,26 +19,42 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,11 +71,16 @@ fun WatchlistScreen(
 ) {
     val vm: WatchlistViewModel = hiltViewModel()
     val tickers by vm.tickers.collectAsState()
+    val visibleTickers by vm.visibleTickers.collectAsState()
     val addSheet by vm.addSheet.collectAsState()
     val settingsSheet by vm.settingsSheet.collectAsState()
     val quotes by vm.quotes.collectAsState()
     val nextEarnings by vm.nextEarningsBySymbol.collectAsState()
     val analystSnapshots by vm.analystSnapshotsBySymbol.collectAsState()
+    val sortOption by vm.sortOption.collectAsState()
+    val sortDescending by vm.sortDescending.collectAsState()
+    val searchQuery by vm.searchQuery.collectAsState()
+    val searchActive by vm.searchActive.collectAsState()
 
     // Foreground-only quote polling — start on screen resume, stop on
     // pause, restart any time the watched-ticker list changes (e.g.
@@ -85,25 +106,30 @@ fun WatchlistScreen(
         }
     }
 
+    var sortMenuOpen by remember { mutableStateOf(false) }
+
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "finnencer",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = FinnencerColors.TextPrimary,
-                        )
-                        Text(
-                            text = if (tickers.isEmpty()) "No tickers yet" else "${tickers.size} tracked",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FinnencerColors.TextTertiary,
-                        )
-                    }
+            WatchlistTopBar(
+                tickerCount = tickers.size,
+                visibleCount = visibleTickers.size,
+                searchActive = searchActive,
+                searchQuery = searchQuery,
+                onSearchClick = vm::openSearch,
+                onSearchClose = vm::closeSearch,
+                onSearchChange = vm::setSearchQuery,
+                sortMenuOpen = sortMenuOpen,
+                onSortToggle = { sortMenuOpen = !sortMenuOpen },
+                onSortDismiss = { sortMenuOpen = false },
+                sortOption = sortOption,
+                sortDescending = sortDescending,
+                onSortPick = { opt ->
+                    vm.setSortOption(opt)
+                    // Keep menu open on direction-flip taps; close
+                    // only when the user picks a different option.
+                    if (opt != sortOption) sortMenuOpen = false
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
         },
         floatingActionButton = {
@@ -119,6 +145,11 @@ fun WatchlistScreen(
     ) { padding ->
         if (tickers.isEmpty()) {
             EmptyWatchlist(modifier = Modifier.padding(padding), onAdd = vm::openAddSheet)
+        } else if (visibleTickers.isEmpty() && searchQuery.isNotBlank()) {
+            EmptySearchResult(
+                modifier = Modifier.padding(padding),
+                query = searchQuery,
+            )
         } else {
             LazyColumn(
                 modifier = Modifier
@@ -127,7 +158,7 @@ fun WatchlistScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(tickers, key = { it.symbol }) { ticker ->
+                items(visibleTickers, key = { it.symbol }) { ticker ->
                     TickerCard(
                         ticker = ticker,
                         quote = quotes[ticker.symbol.uppercase()],
@@ -392,6 +423,228 @@ private fun ThresholdPill(threshold: Int) {
             style = MaterialTheme.typography.labelSmall,
             color = color,
             fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+/**
+ * Top app bar with two modes:
+ *  - **Default**: app title + "X tracked" sub, with Search and Sort
+ *    icon actions on the right.
+ *  - **Search**: title region is replaced by an [OutlinedTextField]
+ *    that drives the live filter. A close (×) navigationIcon dismisses
+ *    search mode and clears the query.
+ *
+ * The sort dropdown anchors off the sort icon; tapping a row that is
+ * already selected flips direction, tapping any other row picks it
+ * (with that option's preferred default direction).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WatchlistTopBar(
+    tickerCount: Int,
+    visibleCount: Int,
+    searchActive: Boolean,
+    searchQuery: String,
+    onSearchClick: () -> Unit,
+    onSearchClose: () -> Unit,
+    onSearchChange: (String) -> Unit,
+    sortMenuOpen: Boolean,
+    onSortToggle: () -> Unit,
+    onSortDismiss: () -> Unit,
+    sortOption: SortOption,
+    sortDescending: Boolean,
+    onSortPick: (SortOption) -> Unit,
+) {
+    TopAppBar(
+        navigationIcon = {
+            if (searchActive) {
+                IconButton(onClick = onSearchClose) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close search",
+                        tint = FinnencerColors.TextPrimary,
+                    )
+                }
+            }
+        },
+        title = {
+            if (searchActive) {
+                SearchField(query = searchQuery, onQueryChange = onSearchChange)
+            } else {
+                Column {
+                    Text(
+                        "finnencer",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = FinnencerColors.TextPrimary,
+                    )
+                    val subline = when {
+                        tickerCount == 0 -> "No tickers yet"
+                        sortOption != SortOption.DEFAULT ->
+                            "$tickerCount tracked · sorted by ${sortOption.label.lowercase()}"
+                        else -> "$tickerCount tracked"
+                    }
+                    Text(
+                        text = subline,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
+                }
+            }
+        },
+        actions = {
+            if (!searchActive) {
+                IconButton(onClick = onSearchClick) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = FinnencerColors.TextSecondary,
+                    )
+                }
+                Box {
+                    IconButton(onClick = onSortToggle) {
+                        Icon(
+                            Icons.Default.SwapVert,
+                            contentDescription = "Sort",
+                            tint = if (sortOption != SortOption.DEFAULT)
+                                FinnencerColors.Violet
+                            else FinnencerColors.TextSecondary,
+                        )
+                    }
+                    SortMenu(
+                        expanded = sortMenuOpen,
+                        current = sortOption,
+                        descending = sortDescending,
+                        onPick = onSortPick,
+                        onDismiss = onSortDismiss,
+                    )
+                }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+    )
+}
+
+@Composable
+private fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = {
+            Text(
+                "Search by symbol or name…",
+                color = FinnencerColors.TextTertiary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        singleLine = true,
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focus),
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Clear",
+                        tint = FinnencerColors.TextSecondary,
+                    )
+                }
+            }
+        },
+        colors = TextFieldDefaults.colors(
+            focusedTextColor = FinnencerColors.TextPrimary,
+            unfocusedTextColor = FinnencerColors.TextPrimary,
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            focusedIndicatorColor = FinnencerColors.Violet,
+            unfocusedIndicatorColor = FinnencerColors.SurfaceBorder,
+            cursorColor = FinnencerColors.Violet,
+        ),
+    )
+}
+
+@Composable
+private fun SortMenu(
+    expanded: Boolean,
+    current: SortOption,
+    descending: Boolean,
+    onPick: (SortOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        SortOption.entries.forEach { opt ->
+            val selected = opt == current
+            DropdownMenuItem(
+                onClick = { onPick(opt) },
+                leadingIcon = {
+                    if (selected) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = FinnencerColors.Violet,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    } else {
+                        Spacer(Modifier.size(18.dp))
+                    }
+                },
+                trailingIcon = {
+                    if (selected) {
+                        Icon(
+                            if (descending) Icons.Default.ArrowDownward
+                            else Icons.Default.ArrowUpward,
+                            contentDescription = if (descending) "Descending" else "Ascending",
+                            tint = FinnencerColors.Violet,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        opt.label,
+                        color = if (selected) FinnencerColors.TextPrimary
+                        else FinnencerColors.TextSecondary,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptySearchResult(modifier: Modifier = Modifier, query: String) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Default.Search,
+            contentDescription = null,
+            tint = FinnencerColors.TextTertiary,
+            modifier = Modifier.size(48.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "No tickers match \"$query\"",
+            style = MaterialTheme.typography.titleMedium,
+            color = FinnencerColors.TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Try a different symbol or part of the company name.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = FinnencerColors.TextSecondary,
         )
     }
 }
