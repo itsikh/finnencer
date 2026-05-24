@@ -148,10 +148,18 @@ class ImportanceScorer @Inject constructor(
                 extra = promptPrefs.get(AiUsage.SCORING),
             ),
             userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
-            maxTokens = 1200,
+            // 1200 was tight: ~80-120 output tokens per item × 10 items
+            // plus the JSON envelope topped out the cap on chatty days,
+            // causing Haiku to truncate mid-array and the parser to drop
+            // the whole batch. 2400 leaves comfortable headroom; Haiku
+            // output tokens are cheap so the cost difference is noise.
+            maxTokens = 2400,
             temperature = 0.0,
         )
         val raw = completion.text
+        if (completion.stopReason == "max_tokens") {
+            Log.w(TAG, "scoreBatch hit max_tokens at 2400 — consider shrinking batch size or raising again")
+        }
         val json = router.extractJson(raw) ?: return emptyList()
         val parsed = runCatching { gson.fromJson(json, JsonObject::class.java) }
             .getOrNull() ?: return emptyList()
