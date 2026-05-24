@@ -68,6 +68,8 @@ fun WatchlistScreen(
     val activeJobs by vm.activeJobCount.collectAsState()
     val queueCount by vm.queueCount.collectAsState()
     val quotes by vm.quotes.collectAsState()
+    val nextEarnings by vm.nextEarningsBySymbol.collectAsState()
+    val analystSnapshots by vm.analystSnapshotsBySymbol.collectAsState()
 
     // Foreground-only quote polling — start on screen resume, stop on
     // pause, restart any time the watched-ticker list changes (e.g.
@@ -212,6 +214,8 @@ fun WatchlistScreen(
                     TickerCard(
                         ticker = ticker,
                         quote = quotes[ticker.symbol.uppercase()],
+                        nextEarnings = nextEarnings[ticker.symbol],
+                        analystSnapshot = analystSnapshots[ticker.symbol],
                         onTap = { onOpenTickerFeed(ticker.symbol) },
                         onLongPress = { vm.openSettings(ticker) },
                     )
@@ -246,6 +250,8 @@ fun WatchlistScreen(
 private fun TickerCard(
     ticker: Ticker,
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
+    nextEarnings: io.itsikh.finnencer.data.entity.EarningsEvent?,
+    analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -274,12 +280,23 @@ private fun TickerCard(
             }
             Spacer(Modifier.size(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = ticker.symbol,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = ticker.symbol,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    // "Earnings in 3d" pill — only when the next event
+                    // is within the soon-window (otherwise the watchlist
+                    // would carry an "Earnings in 87d" pill that adds
+                    // no urgency signal).
+                    val earningsDays = daysUntilEarnings(nextEarnings)
+                    if (earningsDays != null && earningsDays in 0..EARNINGS_SOON_DAYS) {
+                        Spacer(Modifier.size(8.dp))
+                        EarningsPill(daysUntil = earningsDays)
+                    }
+                }
                 Text(
                     text = ticker.name,
                     style = MaterialTheme.typography.bodySmall,
@@ -288,7 +305,7 @@ private fun TickerCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            QuoteColumn(quote)
+            QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
             Spacer(Modifier.size(8.dp))
             ThresholdPill(ticker.notificationThreshold)
             Spacer(Modifier.size(8.dp))
@@ -312,13 +329,69 @@ private fun TickerCard(
     }
 }
 
+private const val EARNINGS_SOON_DAYS = 14
+
+/** Whole days until [event]'s scheduled time. Null if no event. */
+private fun daysUntilEarnings(event: io.itsikh.finnencer.data.entity.EarningsEvent?): Int? {
+    val ms = event?.scheduledAtMillis ?: return null
+    val deltaMs = ms - System.currentTimeMillis()
+    val days = (deltaMs / (24L * 60 * 60 * 1000)).toInt()
+    return days
+}
+
+@Composable
+private fun EarningsPill(daysUntil: Int) {
+    val label = when (daysUntil) {
+        0 -> "Earnings today"
+        1 -> "Earnings tomorrow"
+        else -> "Earnings in ${daysUntil}d"
+    }
+    val color = when {
+        daysUntil <= 1 -> FinnencerColors.Coral
+        daysUntil <= 7 -> FinnencerColors.Amber
+        else -> FinnencerColors.Violet
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.16f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.EventNote,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.size(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
 /**
- * Right-aligned price + percent change column. Renders an em-dash
- * placeholder when we don't yet have a Yahoo quote for this row. PCT
- * is colored mint for up, coral for down, and tertiary text for flat.
+ * Right-aligned price + percent-change + (optional) analyst PT delta
+ * column. Renders an em-dash placeholder when we don't yet have a
+ * Yahoo quote for this row. PCT is colored mint for up, coral for
+ * down, and tertiary text for flat.
+ *
+ * When both a live quote AND an analyst snapshot are available, a
+ * third line shows the consensus price target vs the current price as
+ * a percentage delta (e.g. "PT +12%" if the mean target is 12% above
+ * spot). This is the watchlist's "do the pros agree the stock has
+ * upside?" signal at a glance.
  */
 @Composable
-private fun QuoteColumn(quote: io.itsikh.finnencer.data.repo.TickerQuote?) {
+private fun QuoteWithAnalystColumn(
+    quote: io.itsikh.finnencer.data.repo.TickerQuote?,
+    analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
+) {
     Column(horizontalAlignment = Alignment.End) {
         if (quote == null) {
             Text(
@@ -354,6 +427,31 @@ private fun QuoteColumn(quote: io.itsikh.finnencer.data.repo.TickerQuote?) {
                 color = pctColor,
                 fontWeight = FontWeight.SemiBold,
             )
+            val target = analystSnapshot?.targetMean
+            if (target != null && target > 0.0 && quote.price > 0.0) {
+                val targetDelta = ((target - quote.price) / quote.price) * 100.0
+                val targetColor = when {
+                    targetDelta > 0.0 -> FinnencerColors.Mint
+                    targetDelta < 0.0 -> FinnencerColors.Coral
+                    else -> FinnencerColors.TextTertiary
+                }
+                val arrow = when {
+                    targetDelta > 0.0 -> "▲"
+                    targetDelta < 0.0 -> "▼"
+                    else -> "·"
+                }
+                Text(
+                    text = String.format(
+                        java.util.Locale.US,
+                        "PT %s%.0f%%",
+                        arrow,
+                        kotlin.math.abs(targetDelta),
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = targetColor,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }

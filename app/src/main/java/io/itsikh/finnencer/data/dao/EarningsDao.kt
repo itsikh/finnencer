@@ -97,6 +97,27 @@ interface EarningsDao {
     )
     fun observePastForTicker(symbol: String, nowMillis: Long, limit: Int = 2): Flow<List<EarningsEvent>>
 
+    /**
+     * Next upcoming earnings event per symbol across the supplied
+     * watchlist. Uses a correlated subquery so each ticker contributes
+     * at most one row — its closest future event from [nowMillis].
+     * Drives the "Earnings in Nd" pill on the watchlist.
+     */
+    @Query(
+        """
+        SELECT e.* FROM earnings_events e
+        WHERE e.ticker_symbol IN (:symbols)
+          AND e.scheduled_at_millis >= :nowMillis
+          AND e.scheduled_at_millis = (
+              SELECT MIN(e2.scheduled_at_millis)
+              FROM earnings_events e2
+              WHERE e2.ticker_symbol = e.ticker_symbol
+                AND e2.scheduled_at_millis >= :nowMillis
+          )
+        """
+    )
+    fun observeNextEventForSymbols(symbols: List<String>, nowMillis: Long): Flow<List<EarningsEvent>>
+
     // ───────── reports ─────────
 
     @Insert

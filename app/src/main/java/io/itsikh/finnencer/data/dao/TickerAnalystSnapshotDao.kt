@@ -21,4 +21,7 @@ interface TickerAnalystSnapshotDao {
 
     @Query("SELECT * FROM ticker_analyst_snapshot WHERE ticker IN (:tickers)")
     suspend fun getMany(tickers: List<String>): List<TickerAnalystSnapshot>
+
+    @Query("SELECT * FROM ticker_analyst_snapshot WHERE ticker IN (:tickers)")
+    fun observeMany(tickers: List<String>): Flow<List<TickerAnalystSnapshot>>
 }
