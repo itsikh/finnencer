@@ -30,6 +30,9 @@ class GeminiTextClient @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
+        // Caching is currently Anthropic-only; Gemini accepts the
+        // parameter for interface symmetry and ignores it.
+        cacheSystem: Boolean,
     ): AiTextClient.TextResult {
         val merged = buildString {
             if (!system.isNullOrBlank()) {

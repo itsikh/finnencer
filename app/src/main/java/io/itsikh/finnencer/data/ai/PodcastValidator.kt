@@ -58,6 +58,10 @@ class PodcastValidator @Inject constructor(
             userMessage = user,
             maxTokens = maxTokens,
             temperature = 0.2,
+            // The validator system prompt is the same on every podcast;
+            // cache it so a batch of generations during one sync window
+            // pays cache-read rates on the shared prefix.
+            cacheSystem = true,
         )
         return parse(completion.text, modelId = completion.modelUsed.id, fallback = script)
     }

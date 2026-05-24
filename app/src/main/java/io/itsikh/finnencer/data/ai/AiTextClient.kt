@@ -10,6 +10,12 @@ interface AiTextClient {
      * @param userMessage the user content
      * @param maxTokens upper bound on tokens emitted
      * @param temperature 0.0 - 1.0
+     * @param cacheSystem when `true` and the provider supports it
+     *        ([AiProvider.ANTHROPIC] only), mark the system prompt as
+     *        cacheable so subsequent calls with the same prefix read
+     *        from a warm cache at ~10% of input-token cost. No-op for
+     *        Gemini and for system prompts below the per-model cache
+     *        threshold.
      */
     suspend fun complete(
         model: String,
@@ -17,6 +23,7 @@ interface AiTextClient {
         userMessage: String,
         maxTokens: Int,
         temperature: Double? = null,
+        cacheSystem: Boolean = false,
     ): TextResult
 
     /**

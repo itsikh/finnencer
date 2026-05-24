@@ -25,9 +25,10 @@ class AiRouter @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double? = null,
+        cacheSystem: Boolean = false,
     ): AiCompletion {
         val ranked = prefs.getRanked(usage)
-        return runRanked(usage, ranked, system, userMessage, maxTokens, temperature)
+        return runRanked(usage, ranked, system, userMessage, maxTokens, temperature, cacheSystem)
     }
 
     /** Direct model override (used when a feature needs a specific tier regardless of prefs). */
@@ -37,7 +38,8 @@ class AiRouter @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double? = null,
-    ): AiCompletion = runOne(AiModelOption.Builtin(model), system, userMessage, maxTokens, temperature)
+        cacheSystem: Boolean = false,
+    ): AiCompletion = runOne(AiModelOption.Builtin(model), system, userMessage, maxTokens, temperature, cacheSystem)
 
     private suspend fun runRanked(
         usage: AiUsage,
@@ -46,11 +48,12 @@ class AiRouter @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
+        cacheSystem: Boolean,
     ): AiCompletion {
         var lastError: Throwable? = null
         ranked.forEachIndexed { index, option ->
             try {
-                return runOne(option, system, userMessage, maxTokens, temperature)
+                return runOne(option, system, userMessage, maxTokens, temperature, cacheSystem)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -80,6 +83,7 @@ class AiRouter @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
+        cacheSystem: Boolean,
     ): AiCompletion {
         val client: AiTextClient = when (option.provider) {
             AiProvider.ANTHROPIC -> anthropic
@@ -91,6 +95,7 @@ class AiRouter @Inject constructor(
             userMessage = userMessage,
             maxTokens = maxTokens,
             temperature = temperature,
+            cacheSystem = cacheSystem,
         )
         return AiCompletion(text = result.text, stopReason = result.stopReason, modelUsed = option)
     }

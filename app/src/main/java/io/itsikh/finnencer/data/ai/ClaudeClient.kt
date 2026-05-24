@@ -1,10 +1,12 @@
 package io.itsikh.finnencer.data.ai
 
 import com.google.gson.Gson
+import io.itsikh.finnencer.data.api.AnthropicCacheControl
 import io.itsikh.finnencer.data.api.AnthropicMessage
 import io.itsikh.finnencer.data.api.AnthropicRequest
 import io.itsikh.finnencer.data.api.AnthropicResponse
 import io.itsikh.finnencer.data.api.AnthropicService
+import io.itsikh.finnencer.data.api.AnthropicSystemBlock
 import io.itsikh.finnencer.data.dao.ApiUsageDao
 import io.itsikh.finnencer.data.entity.ApiUsage
 import javax.inject.Inject
@@ -44,16 +46,30 @@ class ClaudeClient @Inject constructor(
         userMessage: String,
         maxTokens: Int,
         temperature: Double?,
+        cacheSystem: Boolean,
     ): AiTextClient.TextResult {
         val entry = AiModel.byId(model)
         // Strip temperature for models that no longer accept it (Opus 4.x).
         // Unknown ids default to "supports it" so we don't silently change
         // behaviour for newly-discovered Gemini models.
         val effectiveTemperature = if (entry?.supportsTemperature == false) null else temperature
+        // When the caller asks for caching AND there's an actual system
+        // prompt, send the system as a single text block with
+        // cache_control:ephemeral. Below the per-model cache threshold
+        // Anthropic silently treats it as a non-cached block, so this
+        // is safe to set even when we can't be sure the prompt is long
+        // enough — there's no error, just no cache hit.
+        val systemField: Any? = when {
+            system.isNullOrBlank() -> null
+            cacheSystem -> listOf(
+                AnthropicSystemBlock(text = system, cacheControl = AnthropicCacheControl()),
+            )
+            else -> system
+        }
         val request = AnthropicRequest(
             model = model,
             maxTokens = maxTokens,
-            system = system,
+            system = systemField,
             messages = listOf(AnthropicMessage(role = "user", content = userMessage)),
             temperature = effectiveTemperature,
         )
@@ -127,15 +143,28 @@ class ClaudeClient @Inject constructor(
         error: String?,
     ) {
         val usage = response?.usage
-        val inputTokens = usage?.inputTokens ?: 0
+        val freshInputTokens = usage?.inputTokens ?: 0
+        val cacheCreate = usage?.cacheCreationInputTokens ?: 0
+        val cacheRead = usage?.cacheReadInputTokens ?: 0
         val outputTokens = usage?.outputTokens ?: 0
+        // Total input for the ApiUsage row sums fresh + cache I/O so
+        // the user sees the real token count on the cost meter. The
+        // per-bucket cost math lives below and is what actually drives
+        // the millicent estimate.
+        val totalInput = freshInputTokens + cacheCreate + cacheRead
         apiUsageDao.insert(
             ApiUsage(
                 provider = "Anthropic",
                 endpoint = "v1/messages [$model]",
-                inputTokens = inputTokens,
+                inputTokens = totalInput,
                 outputTokens = outputTokens,
-                costMillicents = estimateCostMillicents(model, inputTokens, outputTokens),
+                costMillicents = estimateCostMillicents(
+                    model = model,
+                    freshInputTokens = freshInputTokens,
+                    cacheCreationInputTokens = cacheCreate,
+                    cacheReadInputTokens = cacheRead,
+                    outputTokens = outputTokens,
+                ),
                 requestedAtMillis = startedAtMillis,
                 ok = ok,
                 errorMessage = error,
@@ -147,17 +176,30 @@ class ClaudeClient @Inject constructor(
      * Rough cost estimate in millicents (USD). Prices are best-effort
      * approximations of Anthropic's published rates at time of writing; if
      * they shift, the cost meter will drift but actual billing is unchanged.
+     *
+     * Prompt-caching pricing on the 5-minute (ephemeral) tier:
+     *  - cache writes cost ~1.25× the base input rate
+     *  - cache reads cost ~0.10× the base input rate
+     * The fresh-input bucket is billed at the standard rate.
      */
-    private fun estimateCostMillicents(model: String, inputTokens: Int, outputTokens: Int): Long {
+    private fun estimateCostMillicents(
+        model: String,
+        freshInputTokens: Int,
+        cacheCreationInputTokens: Int,
+        cacheReadInputTokens: Int,
+        outputTokens: Int,
+    ): Long {
         // Per million tokens: (input_usd, output_usd)
         val (inPerM, outPerM) = when {
             model.contains("haiku") -> 1.0 to 5.0
             model.contains("opus") -> 15.0 to 75.0
             else /* sonnet */ -> 3.0 to 15.0
         }
-        val cents = (inputTokens / 1_000_000.0) * inPerM * 100 +
-                (outputTokens / 1_000_000.0) * outPerM * 100
-        val millicents = (cents * 1000).toLong()
-        return millicents
+        val freshCost = (freshInputTokens / 1_000_000.0) * inPerM
+        val createCost = (cacheCreationInputTokens / 1_000_000.0) * inPerM * 1.25
+        val readCost = (cacheReadInputTokens / 1_000_000.0) * inPerM * 0.10
+        val outputCost = (outputTokens / 1_000_000.0) * outPerM
+        val cents = (freshCost + createCost + readCost + outputCost) * 100
+        return (cents * 1000).toLong()
     }
 }

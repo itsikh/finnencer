@@ -93,6 +93,10 @@ class ArticleSummarizer @Inject constructor(
             userMessage = prompt,
             maxTokens = maxTokens,
             temperature = 0.2,
+            // SYSTEM_PROMPT + any user "extras" are stable across every
+            // summary call; flag for Anthropic prompt caching so back-to-back
+            // summaries pay ~10% of input cost on the shared prefix.
+            cacheSystem = true,
         )
         val text = completion.text.trim()
 
