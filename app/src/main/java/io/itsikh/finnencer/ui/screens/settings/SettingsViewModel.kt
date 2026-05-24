@@ -66,6 +66,7 @@ class SettingsViewModel @Inject constructor(
     private val themePrefs: ThemePreferences,
     private val jobConcurrencyPrefs: io.itsikh.finnencer.data.repo.JobConcurrencyPreferences,
     private val geminiTts: io.itsikh.finnencer.data.ai.GeminiTts,
+    private val backupManager: io.itsikh.finnencer.backup.FinnencerBackupManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -383,23 +384,17 @@ class SettingsViewModel @Inject constructor(
     val exportState: StateFlow<ExportState> = _exportState
 
     /**
-     * Exports app data to the SAF [uri] chosen by the user via [CreateDocument].
-     *
-     * The [uri] works transparently with any storage provider — local filesystem, Google Drive,
-     * Dropbox, USB, etc. — without any extra SDK integration.
-     *
-     * **TODO**: Inject your [backup.BaseBackupManager] subclass and call `backupManager.exportToUri(uri)`.
-     * Replace the placeholder body below with your actual backup logic.
+     * Exports the user's API keys + watchlist to the SAF [uri] chosen
+     * via [CreateDocument], encrypted with [password]. Articles,
+     * podcasts, news and other rebuildable content are intentionally
+     * excluded. See [io.itsikh.finnencer.backup.FinnencerBackupManager].
      */
-    fun exportBackupToUri(uri: Uri) {
+    fun exportBackupToUri(uri: Uri, password: String) {
         viewModelScope.launch {
             _exportState.value = ExportState.Exporting
             try {
-                // TODO: Replace with your BackupManager call:
-                //   backupManager.exportToUri(uri)
-                // The base class handles ZIP creation and writing to the URI.
-                AppLogger.w(TAG, "exportBackupToUri: No BackupManager wired up yet. See TODO in SettingsViewModel.")
-                _exportState.value = ExportState.Done(itemCount = 0)
+                backupManager.exportSettingsToUri(uri, password)
+                _exportState.value = ExportState.Done(itemCount = backupManager.lastCounts.total)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Export failed", e)
                 _exportState.value = ExportState.Error(e.message ?: "Export failed")
@@ -428,20 +423,20 @@ class SettingsViewModel @Inject constructor(
     val restoreState: StateFlow<RestoreState> = _restoreState
 
     /**
-     * Restores app data from the backup ZIP at the SAF [uri] chosen by the user via [OpenDocument].
-     *
-     * **TODO**: Inject your [backup.BaseBackupManager] subclass and call `backupManager.importFromUri(uri)`.
-     * Replace the placeholder body below with your actual restore logic.
+     * Restores API keys + watchlist from the encrypted backup at the
+     * SAF [uri], decrypted with [password]. Wrong password surfaces as
+     * a recognizable error in [RestoreState.Error] so the UI can prompt
+     * the user to re-enter it.
      */
-    fun restoreFromBackup(uri: Uri) {
+    fun restoreFromBackup(uri: Uri, password: String) {
         viewModelScope.launch {
             _restoreState.value = RestoreState.Restoring
             try {
-                // TODO: Replace with your BackupManager call:
-                //   backupManager.importFromUri(uri)
-                // The base class handles ZIP extraction, JSON parsing, and data insertion.
-                AppLogger.w(TAG, "restoreFromBackup: No BackupManager wired up yet. See TODO in SettingsViewModel.")
-                _restoreState.value = RestoreState.Done(itemCount = 0)
+                backupManager.importSettingsFromUri(uri, password)
+                _restoreState.value = RestoreState.Done(itemCount = backupManager.lastCounts.total)
+            } catch (e: javax.crypto.AEADBadTagException) {
+                AppLogger.w(TAG, "Restore failed — wrong password or tampered file")
+                _restoreState.value = RestoreState.Error("Wrong password, or the backup file is damaged.")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Restore failed", e)
                 _restoreState.value = RestoreState.Error(e.message ?: "Restore failed")

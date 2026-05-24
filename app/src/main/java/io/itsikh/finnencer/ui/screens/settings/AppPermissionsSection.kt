@@ -84,7 +84,12 @@ fun AppPermissionsSection() {
     // We re-read grant state inside the composable on each `revision` bump.
     @Suppress("UNUSED_EXPRESSION") revision
 
-    SettingsSection(title = "App permissions") {
+    SettingsSection(
+        title = "Permissions",
+        icon = Icons.Default.Lock,
+        iconTint = FinnencerColors.Violet,
+        summary = "Notifications · camera · install · biometrics",
+    ) {
         // ── Runtime: POST_NOTIFICATIONS (Android 13+) ──
         val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             isGranted(Manifest.permission.POST_NOTIFICATIONS)

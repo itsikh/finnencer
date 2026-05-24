@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachMoney
@@ -29,13 +30,28 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestoreFromTrash
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -92,7 +108,6 @@ fun SettingsScreen(
     val keysRepo: ApiKeysRepository = hiltViewModel<ApiKeysHolderViewModel>().repo
 
     val autoUpdate by viewModel.autoUpdateEnabled.collectAsState()
-    val autoBackup by viewModel.autoBackupEnabled.collectAsState()
     val showBugButton by viewModel.showBugButton.collectAsState()
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
@@ -113,13 +128,30 @@ fun SettingsScreen(
     val configuredMap by keysRepo.configured.collectAsState()
     val keysConfigured = configuredMap.count { it.value }
 
+    // Backup password flow. The user types a password first, then we
+    // launch the file picker; the password is kept in this state across
+    // the SAF round-trip so the actual export call has it ready. For
+    // restore we go the other way — pick the file first, then prompt
+    // for the password to decrypt it.
+    var exportPasswordOpen by remember { mutableStateOf(false) }
+    var pendingExportPassword by remember { mutableStateOf("") }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/zip"),
-    ) { uri: Uri? -> if (uri != null) viewModel.exportBackupToUri(uri) }
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri: Uri? ->
+        val password = pendingExportPassword
+        pendingExportPassword = ""
+        if (uri != null && password.isNotEmpty()) {
+            viewModel.exportBackupToUri(uri, password)
+        }
+    }
 
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
-    ) { uri: Uri? -> if (uri != null) viewModel.restoreFromBackup(uri) }
+    ) { uri: Uri? ->
+        if (uri != null) pendingRestoreUri = uri
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -143,74 +175,52 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
 
-            // ───────── Credentials ─────────
-            SettingsSection(title = "Credentials") {
+            // ───── Account & keys ─────
+            SettingsSection(
+                title = "Account & keys",
+                icon = Icons.Default.VpnKey,
+                iconTint = FinnencerColors.Violet,
+                summary = "$keysConfigured of ${ApiKey.entries.size} configured",
+            ) {
                 SettingsRow(
-                    title = "API Keys",
-                    subtitle = "$keysConfigured of ${ApiKey.entries.size} configured · Claude · Finnhub · Gemini · GitHub · EDGAR",
+                    title = "API keys",
+                    subtitle = "Claude · Finnhub · Gemini · GitHub · EDGAR · Vertex",
                     icon = Icons.Default.VpnKey,
                     onClick = onOpenKeys,
                 )
             }
 
-            // ───────── AI ─────────
-            SettingsSection(title = "AI") {
+            // ───── AI ─────
+            SettingsSection(
+                title = "AI",
+                icon = Icons.Default.AutoAwesome,
+                iconTint = FinnencerColors.Violet,
+                summary = "Model picks · prompts",
+            ) {
                 SettingsRow(
                     title = "Model preferences",
                     subtitle = "Pick which model runs each workload (scoring, summary, reports, podcast script)",
                     icon = Icons.Default.AutoAwesome,
-                    iconTint = FinnencerColors.Violet,
                     onClick = onOpenAiPrefs,
                 )
                 SettingsRow(
                     title = "Prompts",
-                    subtitle = "Add persistent instructions to each AI workload — page counts, podcast length, tone, etc.",
+                    subtitle = "Persistent instructions per workload — page counts, podcast length, tone, etc.",
                     icon = Icons.Default.AutoAwesome,
-                    iconTint = FinnencerColors.Violet,
                     onClick = onOpenAiPrompts,
                 )
             }
 
-            // ───────── App ─────────
-            SettingsSection(title = "App") {
-                AutoUpdateRow(
-                    enabled = autoUpdate,
-                    updateState = updateState,
-                    onToggle = viewModel::setAutoUpdateEnabled,
-                    onCheckNow = viewModel::checkForUpdate,
-                    onInstall = viewModel::downloadAndInstall,
-                    onReset = viewModel::resetUpdateState,
-                )
-                SettingsRow(
-                    title = "What's new",
-                    subtitle = "Release notes for v${io.itsikh.finnencer.BuildConfig.VERSION_NAME} (and any newer version available)",
-                    icon = Icons.Default.NewReleases,
-                    iconTint = FinnencerColors.Violet,
-                    onClick = onOpenReleaseNotes,
-                )
-                SettingsRow(
-                    title = "Cost meter",
-                    subtitle = "Per-provider API spend (Anthropic / Gemini)",
-                    icon = Icons.Default.AttachMoney,
-                    iconTint = FinnencerColors.Mint,
-                    onClick = onOpenCost,
-                )
-                SettingsRow(
-                    title = "Show diagnose buttons",
-                    subtitle = "Surface XBRL diagnostic buttons in per-ticker earnings — useful when troubleshooting EDGAR, off by default.",
-                    icon = Icons.Default.Engineering,
-                    iconTint = FinnencerColors.Amber,
-                    trailing = {
-                        Switch(
-                            checked = showDiagnoseButtons,
-                            onCheckedChange = viewModel::setShowDiagnoseButtons,
-                            colors = switchColors(),
-                        )
-                    },
-                )
+            // ───── Podcasts ─────
+            SettingsSection(
+                title = "Podcasts",
+                icon = Icons.Default.Headphones,
+                iconTint = FinnencerColors.Coral,
+                summary = "TTS · script length · auto-play",
+            ) {
                 EndOfPodcastRow(
                     current = endOfPodcastAction,
                     onPick = viewModel::setEndOfPodcastAction,
@@ -237,10 +247,9 @@ fun SettingsScreen(
                     onChange = viewModel::setPodcastTtsChunkChars,
                 )
                 SettingsRow(
-                    title = "Podcast script validation",
-                    subtitle = "Optional. After the script is written, run a second AI to catch mid-script re-intros, malformed lines, and fabricated facts before paying for audio. Off by default because it occasionally false-flags a fine script; turn on if you want the extra safety check.",
+                    title = "Script validation",
+                    subtitle = "Run a second AI on the script to catch mid-script re-intros, malformed lines and fabricated facts before paying for audio. Off by default.",
                     icon = Icons.Default.AutoAwesome,
-                    iconTint = FinnencerColors.Violet,
                     trailing = {
                         Switch(
                             checked = podcastValidationEnabled,
@@ -251,9 +260,8 @@ fun SettingsScreen(
                 )
                 SettingsRow(
                     title = "TTS preflight smoke test",
-                    subtitle = "Verify Gemini TTS is responsive before generating the podcast script. Default OFF — preview TTS models have tight per-minute rate limits and the probe burns one quota slot per podcast. Turn ON to fail fast before Claude writes the script.",
+                    subtitle = "Verify Gemini TTS is responsive before writing the script. Default OFF — preview-TTS models have tight per-minute rate limits.",
                     icon = Icons.Default.AutoAwesome,
-                    iconTint = FinnencerColors.Violet,
                     trailing = {
                         Switch(
                             checked = !podcastSkipTtsPreflight,
@@ -264,16 +272,65 @@ fun SettingsScreen(
                 )
             }
 
-            // ───────── Appearance ─────────
-            SettingsSection(title = "Appearance") {
+            // ───── Updates ─────
+            SettingsSection(
+                title = "Updates",
+                icon = Icons.Default.SystemUpdate,
+                iconTint = FinnencerColors.Mint,
+                summary = updateSummary(updateState, autoUpdate),
+            ) {
+                AutoUpdateRow(
+                    enabled = autoUpdate,
+                    updateState = updateState,
+                    onToggle = viewModel::setAutoUpdateEnabled,
+                    onCheckNow = viewModel::checkForUpdate,
+                    onInstall = viewModel::downloadAndInstall,
+                    onReset = viewModel::resetUpdateState,
+                )
+                SettingsRow(
+                    title = "What's new",
+                    subtitle = "Release notes for v${BuildConfig.VERSION_NAME} (and any newer version available)",
+                    icon = Icons.Default.NewReleases,
+                    onClick = onOpenReleaseNotes,
+                )
+            }
+
+            // ───── Costs ─────
+            SettingsSection(
+                title = "Costs",
+                icon = Icons.Default.AttachMoney,
+                iconTint = FinnencerColors.Mint,
+                summary = "Per-provider API spend",
+            ) {
+                SettingsRow(
+                    title = "Cost meter",
+                    subtitle = "Anthropic · Gemini · per-day breakdown",
+                    icon = Icons.Default.AttachMoney,
+                    iconTint = FinnencerColors.Mint,
+                    onClick = onOpenCost,
+                )
+            }
+
+            // ───── Appearance ─────
+            SettingsSection(
+                title = "Appearance",
+                icon = Icons.Default.Palette,
+                iconTint = FinnencerColors.Violet,
+                summary = themeSummary(themeId),
+            ) {
                 ThemePickerRow(
                     current = themeId,
                     onPick = viewModel::setThemeId,
                 )
             }
 
-            // ───────── Background jobs ─────────
-            SettingsSection(title = "Background jobs") {
+            // ───── Background jobs ─────
+            SettingsSection(
+                title = "Background jobs",
+                icon = Icons.Default.Speed,
+                iconTint = FinnencerColors.Violet,
+                summary = "Podcasts $podcastConcurrency · summaries $summaryConcurrency",
+            ) {
                 ConcurrencyStepperRow(
                     title = "Podcasts at a time",
                     subtitle = "How many podcast generation jobs run in parallel. 1 = strict queue, 10 = max parallelism. Higher values risk Anthropic rate limits and memory pressure.",
@@ -288,42 +345,45 @@ fun SettingsScreen(
                 )
             }
 
-            // ───────── App permissions ─────────
+            // ───── Permissions ─────
             AppPermissionsSection()
 
-            // ───────── Backup & Restore ─────────
-            SettingsSection(title = "Backup & Restore") {
+            // ───── Backup & Restore ─────
+            SettingsSection(
+                title = "Backup & Restore",
+                icon = Icons.Default.Storage,
+                iconTint = FinnencerColors.Amber,
+                summary = "Encrypted · keys + watchlist",
+            ) {
                 SettingsRow(
-                    title = "Auto-backup",
-                    subtitle = "Back up the local DB after every sync cycle",
-                    icon = Icons.Default.Storage,
+                    title = "What's backed up",
+                    subtitle = "Your API keys (encrypted) and your watchlist. News articles, summaries and podcasts are NOT backed up — they're rebuilt from a fresh sync.",
+                    icon = Icons.Default.Security,
                     iconTint = FinnencerColors.Violet,
-                    trailing = {
-                        Switch(
-                            checked = autoBackup,
-                            onCheckedChange = viewModel::setAutoBackupEnabled,
-                            colors = switchColors(),
-                        )
-                    },
                 )
                 SettingsRow(
-                    title = "Export backup…",
+                    title = "Export encrypted backup…",
                     subtitle = backupSubtitle(exportState, restoreState, isExport = true),
                     icon = Icons.Default.CloudUpload,
                     iconTint = FinnencerColors.Mint,
-                    onClick = { exportLauncher.launch("finnencer-backup.zip") },
+                    onClick = { exportPasswordOpen = true },
                 )
                 SettingsRow(
                     title = "Restore from backup…",
                     subtitle = backupSubtitle(exportState, restoreState, isExport = false),
                     icon = Icons.Default.RestoreFromTrash,
                     iconTint = FinnencerColors.Amber,
-                    onClick = { restoreLauncher.launch("application/zip") },
+                    onClick = { restoreLauncher.launch("*/*") },
                 )
             }
 
-            // ───────── Diagnostics ─────────
-            SettingsSection(title = "Diagnostics") {
+            // ───── Diagnostics ─────
+            SettingsSection(
+                title = "Diagnostics",
+                icon = Icons.Default.BugReport,
+                iconTint = FinnencerColors.Coral,
+                summary = if (adminMode) "Admin mode ON" else "Bug reports · feedback",
+            ) {
                 SettingsRow(
                     title = "Report a bug",
                     subtitle = "Files a GitHub issue with device + log info",
@@ -336,6 +396,19 @@ fun SettingsScreen(
                     subtitle = "Suggestion or feature request",
                     icon = Icons.Default.Info,
                     onClick = { onOpenBugReport(ReportMode.USER_FEEDBACK) },
+                )
+                SettingsRow(
+                    title = "Show diagnose buttons",
+                    subtitle = "Surface XBRL diagnostic buttons in per-ticker earnings — useful when troubleshooting EDGAR.",
+                    icon = Icons.Default.Engineering,
+                    iconTint = FinnencerColors.Amber,
+                    trailing = {
+                        Switch(
+                            checked = showDiagnoseButtons,
+                            onCheckedChange = viewModel::setShowDiagnoseButtons,
+                            colors = switchColors(),
+                        )
+                    },
                 )
                 if (adminMode) {
                     SettingsRow(
@@ -359,13 +432,171 @@ fun SettingsScreen(
                 }
             }
 
-            // ───────── About ─────────
+            // ───── About ─────
             AboutSection(adminMode = adminMode, onTapVersion = { viewModel.setAdminMode(!adminMode) })
 
             Spacer(Modifier.height(40.dp))
         }
     }
+
+    // Password dialogs sit outside the Scaffold's content so they
+    // overlay the whole screen.
+    if (exportPasswordOpen) {
+        BackupPasswordDialog(
+            title = "Encrypt this backup",
+            description = "Pick a password (8+ characters). You'll need it again to restore — store it somewhere safe.",
+            confirmLabel = "Choose file location",
+            requireConfirm = true,
+            onCancel = { exportPasswordOpen = false },
+            onConfirm = { pw ->
+                pendingExportPassword = pw
+                exportPasswordOpen = false
+                exportLauncher.launch("finnencer-backup.${AppConfig.APP_NAME}_settings")
+            },
+        )
+    }
+
+    pendingRestoreUri?.let { uri ->
+        BackupPasswordDialog(
+            title = "Decrypt this backup",
+            description = "Enter the password you used when this backup was created.",
+            confirmLabel = "Restore",
+            requireConfirm = false,
+            onCancel = { pendingRestoreUri = null },
+            onConfirm = { pw ->
+                viewModel.restoreFromBackup(uri, pw)
+                pendingRestoreUri = null
+            },
+        )
+    }
 }
+
+/**
+ * Simple password prompt used by both Export and Restore. The "require
+ * confirm" mode shows a second field that must match — useful for
+ * Export where a typo means the user permanently locks themselves out
+ * of the file. Restore skips it (typo just means a retry).
+ */
+@Composable
+private fun BackupPasswordDialog(
+    title: String,
+    description: String,
+    confirmLabel: String,
+    requireConfirm: Boolean,
+    onCancel: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var pw by remember { mutableStateOf("") }
+    var pw2 by remember { mutableStateOf("") }
+    var visible by remember { mutableStateOf(false) }
+
+    val mismatch = requireConfirm && pw2.isNotEmpty() && pw != pw2
+    val tooShort = pw.length < 8
+    val canSubmit = !tooShort && (!requireConfirm || pw == pw2)
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FinnencerColors.TextSecondary,
+                )
+                OutlinedTextField(
+                    value = pw,
+                    onValueChange = { pw = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { visible = !visible }) {
+                            Icon(
+                                if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (visible) "Hide" else "Show",
+                                tint = FinnencerColors.TextTertiary,
+                            )
+                        }
+                    },
+                    isError = tooShort && pw.isNotEmpty(),
+                    supportingText = {
+                        if (tooShort && pw.isNotEmpty()) {
+                            Text("At least 8 characters", color = FinnencerColors.Coral)
+                        }
+                    },
+                    colors = passwordFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (requireConfirm) {
+                    OutlinedTextField(
+                        value = pw2,
+                        onValueChange = { pw2 = it },
+                        label = { Text("Confirm password") },
+                        singleLine = true,
+                        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        isError = mismatch,
+                        supportingText = {
+                            if (mismatch) {
+                                Text("Doesn't match", color = FinnencerColors.Coral)
+                            }
+                        },
+                        colors = passwordFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            FilledTonalButton(
+                onClick = { if (canSubmit) onConfirm(pw) },
+                enabled = canSubmit,
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = FinnencerColors.Violet,
+                    contentColor = FinnencerColors.TextOnAccent,
+                ),
+            ) {
+                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(confirmLabel, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun passwordFieldColors() = TextFieldDefaults.colors(
+    focusedTextColor = FinnencerColors.TextPrimary,
+    unfocusedTextColor = FinnencerColors.TextPrimary,
+    focusedContainerColor = Color.Transparent,
+    unfocusedContainerColor = Color.Transparent,
+    focusedLabelColor = FinnencerColors.Violet,
+    unfocusedLabelColor = FinnencerColors.TextTertiary,
+    focusedIndicatorColor = FinnencerColors.Violet,
+    unfocusedIndicatorColor = FinnencerColors.SurfaceBorder,
+    cursorColor = FinnencerColors.Violet,
+)
+
+private fun updateSummary(state: SettingsViewModel.UpdateState, autoOn: Boolean): String {
+    val auto = if (autoOn) "Auto-check ON" else "Auto-check OFF"
+    val detail = when (state) {
+        is SettingsViewModel.UpdateState.UpdateAvailable -> "v${state.info.version} available"
+        is SettingsViewModel.UpdateState.UpToDate -> "Up to date"
+        is SettingsViewModel.UpdateState.Downloading -> "Downloading…"
+        is SettingsViewModel.UpdateState.ReadyToInstall -> "Ready to install"
+        is SettingsViewModel.UpdateState.Error -> "Last check failed"
+        else -> "v${BuildConfig.VERSION_NAME}"
+    }
+    return "$auto · $detail"
+}
+
+private fun themeSummary(id: io.itsikh.finnencer.ui.theme.ThemeId): String =
+    io.itsikh.finnencer.ui.theme.Palettes.all.firstOrNull { it.id == id }?.displayName ?: "Default"
 
 @Composable
 private fun AutoUpdateRow(
