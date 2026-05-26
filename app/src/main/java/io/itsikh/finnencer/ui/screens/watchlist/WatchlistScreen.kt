@@ -428,12 +428,30 @@ private fun daysUntilEarnings(event: io.itsikh.finnencer.data.entity.EarningsEve
     return days
 }
 
+/**
+ * Compact "earnings is near" pill on the watchlist row.
+ *
+ * Rendered as `<calendar-icon> Nd` (e.g. "📅 3d"). The calendar icon
+ * carries the "earnings" context so the label can drop the "Earnings
+ * in" prefix entirely — saves ~70dp horizontally compared to the
+ * old wording, which was wrapping to multiple lines on narrow rows
+ * (#66 — Galaxy S23 with ORCL).
+ *
+ * Special-cased so 0/1-day labels still read well:
+ *   - 0d → "Today"
+ *   - 1d → "Tmrw"
+ *   - else → "${N}d"
+ *
+ * `maxLines = 1` belt-and-braces — even if the column gets squeezed
+ * again in a future row redesign, the pill ellipses instead of
+ * wrapping.
+ */
 @Composable
 private fun EarningsPill(daysUntil: Int) {
     val label = when (daysUntil) {
-        0 -> "Earnings today"
-        1 -> "Earnings tomorrow"
-        else -> "Earnings in ${daysUntil}d"
+        0 -> "Today"
+        1 -> "Tmrw"
+        else -> "${daysUntil}d"
     }
     val color = when {
         daysUntil <= 1 -> FinnencerColors.Coral
@@ -445,21 +463,23 @@ private fun EarningsPill(daysUntil: Int) {
             .clip(RoundedCornerShape(6.dp))
             .background(color.copy(alpha = 0.16f))
             .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(horizontal = 5.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             Icons.Default.EventNote,
-            contentDescription = null,
+            contentDescription = "Earnings in $daysUntil days",
             tint = color,
-            modifier = Modifier.size(12.dp),
+            modifier = Modifier.size(11.dp),
         )
-        Spacer(Modifier.size(4.dp))
+        Spacer(Modifier.size(3.dp))
         Text(
             label,
             style = MaterialTheme.typography.labelSmall,
             color = color,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
