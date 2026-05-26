@@ -262,11 +262,21 @@ private fun TickerCard(
             Spacer(Modifier.size(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Symbol Text must NEVER wrap to a second line
+                    // (#65). weight(1f, fill = false) lets it claim
+                    // remaining row space without stretching past its
+                    // intrinsic width, so an "Earnings in 3d" pill on
+                    // the right still gets to sit beside it. maxLines
+                    // + Ellipsis is the safety net for pathological
+                    // long tickers / very narrow screens.
                     Text(
                         text = ticker.symbol,
                         style = MaterialTheme.typography.titleLarge,
                         color = FinnencerColors.TextPrimary,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     val earningsDays = daysUntilEarnings(nextEarnings)
                     if (earningsDays != null && earningsDays in 0..EARNINGS_SOON_DAYS) {
@@ -291,15 +301,14 @@ private fun TickerCard(
                 )
             }
             // Sparkline column — drawn between the name block and the
-            // quote column. Width is fixed so column geometry is
-            // identical across rows whether or not we have closes yet
-            // (the composable renders a placeholder hairline below 2
-            // data points).
+            // quote column. Sized tight (40×20dp) so it doesn't crowd
+            // the name column on narrow phones (#65 — name+symbol got
+            // squeezed onto two lines on a Galaxy S23).
             Sparkline(
                 closes = quote?.intradayCloses.orEmpty(),
                 modifier = Modifier
-                    .padding(horizontal = 6.dp)
-                    .size(width = 56.dp, height = 22.dp),
+                    .padding(horizontal = 4.dp)
+                    .size(width = 40.dp, height = 20.dp),
             )
             QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
             Spacer(Modifier.size(8.dp))
