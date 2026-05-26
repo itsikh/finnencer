@@ -12,6 +12,12 @@ import io.itsikh.finnencer.data.entity.NewsArticle
 import io.itsikh.finnencer.data.entity.SummaryVersion
 import kotlinx.coroutines.flow.Flow
 
+/** Projection for [NewsDao.observeHighScoreCounts]: ticker_symbol → count. */
+data class TickerCountRow(
+    val symbol: String,
+    val count: Int,
+)
+
 /**
  * Aggregate row used by feed UIs: an article joined with its score (if any)
  * for a specific ticker.
@@ -177,6 +183,30 @@ interface NewsDao {
 
     @Query("DELETE FROM news_articles WHERE fetched_at_millis < :beforeMillis")
     suspend fun pruneOlderThan(beforeMillis: Long): Int
+
+    /**
+     * Per-ticker count of high-importance article clusters published in
+     * the last [sinceMillis]. Counts distinct cluster_keys (not raw
+     * articles) so the watchlist's "🔥 N" pill doesn't double-count
+     * when three wires carry the same story. Uses COALESCE so the
+     * user's manual override score is honored.
+     */
+    @Query(
+        """
+        SELECT s.ticker_symbol AS symbol, COUNT(DISTINCT a.cluster_key) AS count
+        FROM article_scores s
+        INNER JOIN news_articles a ON a.id = s.article_id
+        WHERE s.ticker_symbol IN (:symbols)
+          AND COALESCE(s.user_override, s.score) >= :minScore
+          AND a.published_at_millis > :sinceMillis
+        GROUP BY s.ticker_symbol
+        """
+    )
+    fun observeHighScoreCounts(
+        symbols: List<String>,
+        minScore: Int,
+        sinceMillis: Long,
+    ): Flow<List<TickerCountRow>>
 
     @Query(
         """

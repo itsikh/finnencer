@@ -40,6 +40,17 @@ data class TickerQuote(
     val extendedPrice: Double? = null,
     val extendedChangePercent: Double? = null,
     val extendedSession: ExtendedSession? = null,
+    /** 52-week high, or null if Yahoo didn't include it. */
+    val fiftyTwoWeekHigh: Double? = null,
+    /** 52-week low, or null if Yahoo didn't include it. */
+    val fiftyTwoWeekLow: Double? = null,
+    /** Today's volume / 3-month average. Null when either is missing.
+     *  Used for the "Vol 2.4×" pill when significantly above average. */
+    val volumeRatio: Double? = null,
+    /** Intraday 15m closes (regular session only — extended bars are
+     *  filtered out so the sparkline reads as "today's regular move").
+     *  Empty when Yahoo returned no candles. */
+    val intradayCloses: List<Double> = emptyList(),
 )
 
 /** Which extended-trading window an [TickerQuote.extendedPrice] came from. */
@@ -172,6 +183,13 @@ class QuotePoller @Inject constructor(
         val change = if (prev != null) price - prev else 0.0
         val pct = if (prev != null && prev != 0.0) (price - prev) / prev * 100.0 else 0.0
         val extended = extractExtendedHours(result, regularPrice = price)
+        // Volume ratio: prefer 3-month average; fall back to 10-day if
+        // that's the only one Yahoo populated. Null when we can't
+        // compute a meaningful ratio.
+        val avgVol = meta.averageDailyVolume3Month ?: meta.averageDailyVolume10Day
+        val volRatio = if (avgVol != null && avgVol > 0 && meta.regularMarketVolume != null) {
+            meta.regularMarketVolume.toDouble() / avgVol.toDouble()
+        } else null
         return TickerQuote(
             symbol = meta.symbol.uppercase(),
             price = price,
@@ -180,7 +198,34 @@ class QuotePoller @Inject constructor(
             extendedPrice = extended?.price,
             extendedChangePercent = extended?.percent,
             extendedSession = extended?.session,
+            fiftyTwoWeekHigh = meta.fiftyTwoWeekHigh,
+            fiftyTwoWeekLow = meta.fiftyTwoWeekLow,
+            volumeRatio = volRatio,
+            intradayCloses = regularSessionCloses(result),
         )
+    }
+
+    /**
+     * Sub-sample of the candle close series that falls inside today's
+     * regular trading window. Used as the data source for the
+     * watchlist sparkline. Pre/post bars are dropped so the line reads
+     * as today's regular-session move rather than a jagged
+     * extended-hours overlay.
+     */
+    private fun regularSessionCloses(result: YahooChartResult): List<Double> {
+        val regular = result.meta.currentTradingPeriod?.regular ?: return emptyList()
+        val timestamps = result.timestamp ?: return emptyList()
+        val closes = result.indicators?.quote?.firstOrNull()?.close ?: return emptyList()
+        if (timestamps.size != closes.size) return emptyList()
+        val out = ArrayList<Double>(timestamps.size)
+        for (i in timestamps.indices) {
+            val ts = timestamps[i]
+            if (ts in regular.start..regular.end) {
+                val c = closes[i] ?: continue
+                out.add(c)
+            }
+        }
+        return out
     }
 
     private data class ExtendedHours(

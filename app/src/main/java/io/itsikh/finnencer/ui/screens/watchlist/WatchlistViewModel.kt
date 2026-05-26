@@ -77,6 +77,7 @@ class WatchlistViewModel @Inject constructor(
     private val quotePoller: io.itsikh.finnencer.data.repo.QuotePoller,
     private val analystSnapshots: AnalystSnapshotRepository,
     private val earningsDao: EarningsDao,
+    private val newsDao: io.itsikh.finnencer.data.dao.NewsDao,
     private val viewPrefs: WatchlistPreferences,
 ) : ViewModel() {
 
@@ -123,6 +124,28 @@ class WatchlistViewModel @Inject constructor(
     /** Live price + percent-change snapshot per watched ticker. Empty
      *  until the first [startQuotePolling] tick lands. */
     val quotes: StateFlow<Map<String, io.itsikh.finnencer.data.repo.TickerQuote>> = quotePoller.latest
+
+    /**
+     * Per-ticker count of high-importance ( ≥7 ) news clusters published
+     * in the last 24h. Drives the "🔥 N" pill on the watchlist row.
+     * Re-evaluates on a 15-minute boundary to pick up newly-scored
+     * articles without spamming the DB.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val highScoreNewsCounts: StateFlow<Map<String, Int>> =
+        tickers
+            .map { it.map(Ticker::symbol) }
+            .distinctUntilChanged()
+            .flatMapLatest { symbols ->
+                if (symbols.isEmpty()) flowOf(emptyList())
+                else newsDao.observeHighScoreCounts(
+                    symbols = symbols,
+                    minScore = HIGH_SCORE_THRESHOLD,
+                    sinceMillis = System.currentTimeMillis() - HIGH_SCORE_WINDOW_MS,
+                )
+            }
+            .map { rows -> rows.associate { it.symbol to it.count } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     // ─── sort + search ───
 
@@ -327,6 +350,11 @@ class WatchlistViewModel @Inject constructor(
     fun removeTicker(symbol: String) {
         viewModelScope.launch { repo.remove(symbol) }
         closeSettings()
+    }
+
+    private companion object {
+        const val HIGH_SCORE_THRESHOLD = 7
+        const val HIGH_SCORE_WINDOW_MS = 24L * 60 * 60 * 1000
     }
 }
 

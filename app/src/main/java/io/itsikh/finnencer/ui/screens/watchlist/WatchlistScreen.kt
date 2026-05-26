@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.ui.components.GlassCard
+import io.itsikh.finnencer.ui.components.Sparkline
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,6 +79,7 @@ fun WatchlistScreen(
     val quotes by vm.quotes.collectAsState()
     val nextEarnings by vm.nextEarningsBySymbol.collectAsState()
     val analystSnapshots by vm.analystSnapshotsBySymbol.collectAsState()
+    val highScoreNewsCounts by vm.highScoreNewsCounts.collectAsState()
     val sortOption by vm.sortOption.collectAsState()
     val sortDescending by vm.sortDescending.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
@@ -164,6 +167,7 @@ fun WatchlistScreen(
                         quote = quotes[ticker.symbol.uppercase()],
                         nextEarnings = nextEarnings[ticker.symbol],
                         analystSnapshot = analystSnapshots[ticker.symbol],
+                        highScoreNewsCount = highScoreNewsCounts[ticker.symbol] ?: 0,
                         onTap = { onOpenTickerFeed(ticker.symbol) },
                         onLongPress = { vm.openSettings(ticker) },
                     )
@@ -200,6 +204,7 @@ private fun TickerCard(
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     nextEarnings: io.itsikh.finnencer.data.entity.EarningsEvent?,
     analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
+    highScoreNewsCount: Int,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -235,10 +240,6 @@ private fun TickerCard(
                         color = FinnencerColors.TextPrimary,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    // "Earnings in 3d" pill — only when the next event
-                    // is within the soon-window (otherwise the watchlist
-                    // would carry an "Earnings in 87d" pill that adds
-                    // no urgency signal).
                     val earningsDays = daysUntilEarnings(nextEarnings)
                     if (earningsDays != null && earningsDays in 0..EARNINGS_SOON_DAYS) {
                         Spacer(Modifier.size(8.dp))
@@ -252,7 +253,26 @@ private fun TickerCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // Signal pill row — collapses to nothing when no signal
+                // is active so the card height is stable across rows
+                // with and without hot news / 52w / vol spike.
+                SignalPillRow(
+                    quote = quote,
+                    sector = ticker.sector,
+                    highScoreNewsCount = highScoreNewsCount,
+                )
             }
+            // Sparkline column — drawn between the name block and the
+            // quote column. Width is fixed so column geometry is
+            // identical across rows whether or not we have closes yet
+            // (the composable renders a placeholder hairline below 2
+            // data points).
+            Sparkline(
+                closes = quote?.intradayCloses.orEmpty(),
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .size(width = 56.dp, height = 22.dp),
+            )
             QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
             Spacer(Modifier.size(8.dp))
             ThresholdPill(ticker.notificationThreshold)
@@ -274,6 +294,90 @@ private fun TickerCard(
                 )
             }
         }
+    }
+}
+
+private const val FIFTY_TWO_WEEK_NEAR_THRESHOLD = 0.02
+private const val VOLUME_SPIKE_THRESHOLD = 2.0
+
+/**
+ * Compact row of "signal pills" rendered below the company name.
+ *
+ * Only renders pills that actually carry a signal — the row collapses
+ * to nothing when none are active so quiet tickers stay quiet on the
+ * watchlist (no permanent visual noise).
+ *
+ * Order: sector chip → 52w hi/lo badge → volume spike → high-importance news.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SignalPillRow(
+    quote: io.itsikh.finnencer.data.repo.TickerQuote?,
+    sector: String?,
+    highScoreNewsCount: Int,
+) {
+    val price = quote?.price
+    val nearHigh = price != null && quote.fiftyTwoWeekHigh != null &&
+        quote.fiftyTwoWeekHigh > 0.0 &&
+        (quote.fiftyTwoWeekHigh - price) / quote.fiftyTwoWeekHigh <= FIFTY_TWO_WEEK_NEAR_THRESHOLD &&
+        price <= quote.fiftyTwoWeekHigh * 1.005
+    val nearLow = price != null && quote.fiftyTwoWeekLow != null &&
+        quote.fiftyTwoWeekLow > 0.0 &&
+        (price - quote.fiftyTwoWeekLow) / quote.fiftyTwoWeekLow <= FIFTY_TWO_WEEK_NEAR_THRESHOLD &&
+        price >= quote.fiftyTwoWeekLow * 0.995
+    val volRatio = quote?.volumeRatio
+    val volSpike = volRatio != null && volRatio >= VOLUME_SPIKE_THRESHOLD
+
+    val hasAny = !sector.isNullOrBlank() || nearHigh || nearLow || volSpike || highScoreNewsCount > 0
+    if (!hasAny) return
+
+    Spacer(Modifier.height(4.dp))
+    androidx.compose.foundation.layout.FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (!sector.isNullOrBlank()) {
+            FaintChip(label = sector, color = FinnencerColors.TextTertiary)
+        }
+        if (nearHigh) {
+            FaintChip(label = "52w high", color = FinnencerColors.Mint)
+        } else if (nearLow) {
+            FaintChip(label = "52w low", color = FinnencerColors.Coral)
+        }
+        if (volSpike) {
+            FaintChip(
+                label = String.format(java.util.Locale.US, "Vol %.1f×", volRatio),
+                color = FinnencerColors.Amber,
+            )
+        }
+        if (highScoreNewsCount > 0) {
+            FaintChip(
+                label = "🔥 $highScoreNewsCount",
+                color = FinnencerColors.Coral,
+            )
+        }
+    }
+}
+
+/** Tiny rounded chip used by [SignalPillRow]. Same visual language
+ *  as [EarningsPill] but without an icon — labels are short enough
+ *  on their own. */
+@Composable
+private fun FaintChip(label: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.32f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

@@ -90,6 +90,16 @@ data class YahooChartMeta(
     @SerializedName("postMarketTime") val postMarketTime: Long? = null,
     @SerializedName("postMarketChangePercent") val postMarketChangePercent: Double? = null,
     @SerializedName("currentTradingPeriod") val currentTradingPeriod: YahooTradingPeriods? = null,
+    // 52-week band — used for the "🎯 52w hi/lo" pill on the watchlist
+    // when the spot price is within 2% of either extreme.
+    @SerializedName("fiftyTwoWeekHigh") val fiftyTwoWeekHigh: Double? = null,
+    @SerializedName("fiftyTwoWeekLow") val fiftyTwoWeekLow: Double? = null,
+    // Volume — `regularMarketVolume` is today's volume so far,
+    // `averageDailyVolume3Month` is the rolling 3-month average. Ratio
+    // > 2 → volume-spike pill.
+    @SerializedName("regularMarketVolume") val regularMarketVolume: Long? = null,
+    @SerializedName("averageDailyVolume3Month") val averageDailyVolume3Month: Long? = null,
+    @SerializedName("averageDailyVolume10Day") val averageDailyVolume10Day: Long? = null,
 )
 
 /** Today's pre / regular / post session boundaries, as Yahoo reports them. */
