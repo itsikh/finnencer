@@ -70,6 +70,12 @@ class SettingsViewModel @Inject constructor(
     private val retentionPrefs: io.itsikh.finnencer.data.repo.RetentionPreferences,
     private val morningBriefPrefs: io.itsikh.finnencer.data.repo.MorningBriefPreferences,
     private val morningBriefScheduler: io.itsikh.finnencer.core.work.MorningBriefScheduler,
+    private val preEarningsPrefs: io.itsikh.finnencer.data.repo.PreEarningsPreferences,
+    private val preEarningsScheduler: io.itsikh.finnencer.core.work.PreEarningsBriefingScheduler,
+    private val insiderAlertPrefs: io.itsikh.finnencer.data.repo.InsiderAlertPreferences,
+    private val insiderAlertScheduler: io.itsikh.finnencer.core.work.InsiderAlertScheduler,
+    private val secFilingAlertPrefs: io.itsikh.finnencer.data.repo.SecFilingAlertPreferences,
+    private val secFilingAlertScheduler: io.itsikh.finnencer.core.work.SecFilingAlertScheduler,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -120,6 +126,36 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             morningBriefPrefs.setEnabled(value)
             morningBriefScheduler.rescheduleNext()
+        }
+    }
+
+    val preEarningsEnabled: StateFlow<Boolean> = preEarningsPrefs.enabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setPreEarningsEnabled(value: Boolean) {
+        viewModelScope.launch {
+            preEarningsPrefs.setEnabled(value)
+            preEarningsScheduler.ensureScheduled()
+        }
+    }
+
+    val insiderAlertEnabled: StateFlow<Boolean> = insiderAlertPrefs.enabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setInsiderAlertEnabled(value: Boolean) {
+        viewModelScope.launch {
+            insiderAlertPrefs.setEnabled(value)
+            insiderAlertScheduler.ensureScheduled()
+        }
+    }
+
+    val secFilingAlertEnabled: StateFlow<Boolean> = secFilingAlertPrefs.enabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setSecFilingAlertEnabled(value: Boolean) {
+        viewModelScope.launch {
+            secFilingAlertPrefs.setEnabled(value)
+            secFilingAlertScheduler.ensureScheduled()
         }
     }
 

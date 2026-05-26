@@ -113,6 +113,9 @@ fun SettingsScreen(
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
     val morningBriefEnabled by viewModel.morningBriefEnabled.collectAsState()
+    val preEarningsEnabled by viewModel.preEarningsEnabled.collectAsState()
+    val insiderAlertEnabled by viewModel.insiderAlertEnabled.collectAsState()
+    val secFilingAlertEnabled by viewModel.secFilingAlertEnabled.collectAsState()
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
@@ -216,6 +219,55 @@ fun SettingsScreen(
                     subtitle = "Persistent instructions per workload — page counts, podcast length, tone, etc.",
                     icon = Icons.Default.AutoAwesome,
                     onClick = onOpenAiPrompts,
+                )
+            }
+
+            // ───── Smart signals ─────
+            // Three background watchers that push notifications when
+            // something on the watchlist crosses a meaningful threshold.
+            // Each one is opt-in (off by default) and uses the standard
+            // alerts channel so users can silence everything in one tap.
+            SettingsSection(
+                title = "Smart signals",
+                icon = Icons.Default.AutoAwesome,
+                iconTint = FinnencerColors.Violet,
+                summary = "Background watchers for insider buys, 8-K filings, pre-earnings briefings",
+            ) {
+                SettingsRow(
+                    title = "Pre-earnings briefing",
+                    subtitle = "Auto-generate a BRIEF earnings report ~24h before any watchlist ticker reports. Lands in Tasks for review; no manual tier picking required.",
+                    icon = Icons.Default.AutoAwesome,
+                    trailing = {
+                        Switch(
+                            checked = preEarningsEnabled,
+                            onCheckedChange = viewModel::setPreEarningsEnabled,
+                            colors = switchColors(),
+                        )
+                    },
+                )
+                SettingsRow(
+                    title = "Insider buy alerts (Form 4)",
+                    subtitle = "Notify when an insider buys ≥\$50k of stock on the open market (Code P). Open-market buys are the strongest insider signal — sales are noisy because they can be for taxes / diversification.",
+                    icon = Icons.Default.AutoAwesome,
+                    trailing = {
+                        Switch(
+                            checked = insiderAlertEnabled,
+                            onCheckedChange = viewModel::setInsiderAlertEnabled,
+                            colors = switchColors(),
+                        )
+                    },
+                )
+                SettingsRow(
+                    title = "8-K filing alerts",
+                    subtitle = "Notify when a watchlist company files an 8-K (material events: officer departures, debt issuance, M&A, ratings actions). Skips routine earnings 8-Ks since you already get those on the Earnings tab.",
+                    icon = Icons.Default.AutoAwesome,
+                    trailing = {
+                        Switch(
+                            checked = secFilingAlertEnabled,
+                            onCheckedChange = viewModel::setSecFilingAlertEnabled,
+                            colors = switchColors(),
+                        )
+                    },
                 )
             }
 

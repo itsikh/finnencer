@@ -6,8 +6,11 @@ import android.app.NotificationManager
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import io.itsikh.finnencer.core.notifications.NotificationChannels
+import io.itsikh.finnencer.core.work.InsiderAlertScheduler
 import io.itsikh.finnencer.core.work.JobConcurrencyGate
 import io.itsikh.finnencer.core.work.MorningBriefScheduler
+import io.itsikh.finnencer.core.work.PreEarningsBriefingScheduler
+import io.itsikh.finnencer.core.work.SecFilingAlertScheduler
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.repo.JobConcurrencyPreferences
 import io.itsikh.finnencer.data.repo.QueueItemRepair
@@ -51,6 +54,9 @@ class TemplateApplication : Application(), Configuration.Provider {
     @Inject lateinit var jobConcurrencyPrefs: JobConcurrencyPreferences
     @Inject lateinit var queueItemRepair: QueueItemRepair
     @Inject lateinit var morningBriefScheduler: MorningBriefScheduler
+    @Inject lateinit var preEarningsScheduler: PreEarningsBriefingScheduler
+    @Inject lateinit var insiderAlertScheduler: InsiderAlertScheduler
+    @Inject lateinit var secFilingAlertScheduler: SecFilingAlertScheduler
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -89,6 +95,22 @@ class TemplateApplication : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { morningBriefScheduler.rescheduleNext() }
                 .onFailure { AppLogger.e("App", "Morning brief reschedule failed", it) }
+        }
+        // Same idempotent ensure-or-cancel pattern for the three new
+        // Phase 3 background workers. Each scheduler reads its own
+        // enabled flag and cancels itself if the user has turned it
+        // off, so it's safe to call unconditionally on every boot.
+        appScope.launch {
+            runCatching { preEarningsScheduler.ensureScheduled() }
+                .onFailure { AppLogger.e("App", "Pre-earnings schedule failed", it) }
+        }
+        appScope.launch {
+            runCatching { insiderAlertScheduler.ensureScheduled() }
+                .onFailure { AppLogger.e("App", "Insider alert schedule failed", it) }
+        }
+        appScope.launch {
+            runCatching { secFilingAlertScheduler.ensureScheduled() }
+                .onFailure { AppLogger.e("App", "SEC filing alert schedule failed", it) }
         }
         // Keep the in-memory concurrency gate in sync with the user's
         // Settings → Background jobs preferences. Defaults to 1/1 so a

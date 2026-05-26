@@ -43,6 +43,14 @@ interface FinnhubService {
         @Query("symbol") symbol: String,
         @Query("metric") metric: String = "all",
     ): FinnhubMetricResponse
+
+    /** Insider transactions (Form 4 filings) for [symbol] in [fromIso] to [toIso]. */
+    @GET("stock/insider-transactions")
+    suspend fun insiderTransactions(
+        @Query("symbol") symbol: String,
+        @Query("from") fromIso: String,
+        @Query("to") toIso: String,
+    ): FinnhubInsiderTransactionsResponse
 }
 
 data class FinnhubSearchResponse(
@@ -141,6 +149,31 @@ data class FinnhubMetricResponse(
  * intermixes camelCase with leading-digit identifiers (e.g. `52WeekHigh`)
  * which Kotlin can't represent directly; those get @SerializedName.
  */
+/**
+ * Wrapper for Finnhub's /stock/insider-transactions endpoint. Each
+ * "data" entry corresponds to one Form 4 line item. The actual filing
+ * itself usually contains several lines (different transaction types
+ * within the same Form 4).
+ */
+data class FinnhubInsiderTransactionsResponse(
+    val symbol: String? = null,
+    val data: List<FinnhubInsiderTransaction> = emptyList(),
+)
+
+data class FinnhubInsiderTransaction(
+    val name: String? = null,
+    val share: Long? = null,
+    val change: Long? = null,
+    val filingDate: String? = null,         // YYYY-MM-DD
+    val transactionDate: String? = null,    // YYYY-MM-DD
+    val transactionCode: String? = null,    // P (buy), S (sell), A, M, F, ...
+    val transactionPrice: Double? = null,
+    val source: String? = null,
+    val symbol: String? = null,
+    val isDerivative: Boolean? = null,
+    val currency: String? = null,
+)
+
 data class FinnhubMetrics(
     @SerializedName("52WeekHigh") val fiftyTwoWeekHigh: Double?,
     @SerializedName("52WeekLow") val fiftyTwoWeekLow: Double?,
