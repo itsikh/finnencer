@@ -261,29 +261,17 @@ private fun TickerCard(
             }
             Spacer(Modifier.size(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Symbol Text must NEVER wrap to a second line
-                    // (#65). weight(1f, fill = false) lets it claim
-                    // remaining row space without stretching past its
-                    // intrinsic width, so an "Earnings in 3d" pill on
-                    // the right still gets to sit beside it. maxLines
-                    // + Ellipsis is the safety net for pathological
-                    // long tickers / very narrow screens.
-                    Text(
-                        text = ticker.symbol,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = FinnencerColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    val earningsDays = daysUntilEarnings(nextEarnings)
-                    if (earningsDays != null && earningsDays in 0..EARNINGS_SOON_DAYS) {
-                        Spacer(Modifier.size(8.dp))
-                        EarningsPill(daysUntil = earningsDays)
-                    }
-                }
+                // Symbol on its own line — no inline pills competing
+                // for horizontal space anymore (#67). Single line
+                // guaranteed via maxLines + ellipsis.
+                Text(
+                    text = ticker.symbol,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     text = ticker.name,
                     style = MaterialTheme.typography.bodySmall,
@@ -291,13 +279,16 @@ private fun TickerCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // Signal pill row — collapses to nothing when no signal
-                // is active so the card height is stable across rows
-                // with and without hot news / 52w / vol spike.
+                // Signal pill row carries every "what's notable about
+                // this ticker right now" chip, including the earnings
+                // proximity pill. FlowRow wraps to multiple lines when
+                // the column is narrow, so chips never overlap names
+                // or each other.
                 SignalPillRow(
                     quote = quote,
                     sector = ticker.sector,
                     highScoreNewsCount = highScoreNewsCount,
+                    daysUntilEarnings = daysUntilEarnings(nextEarnings),
                 )
             }
             // Sparkline column — drawn between the name block and the
@@ -344,7 +335,13 @@ private const val VOLUME_SPIKE_THRESHOLD = 2.0
  * to nothing when none are active so quiet tickers stay quiet on the
  * watchlist (no permanent visual noise).
  *
- * Order: sector chip → 52w hi/lo badge → volume spike → high-importance news.
+ * Order: earnings (most urgent) → sector → 52w hi/lo → volume spike →
+ * high-importance news.
+ *
+ * Earnings pill used to sit inline with the symbol; #67 moved it here
+ * because on tickers with short names + earnings within the window,
+ * the pill was crowding the symbol Text down to a single "." ellipsis.
+ * The FlowRow gracefully wraps chips to a second line when needed.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -352,6 +349,7 @@ private fun SignalPillRow(
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     sector: String?,
     highScoreNewsCount: Int,
+    daysUntilEarnings: Int?,
 ) {
     val price = quote?.price
     val nearHigh = price != null && quote.fiftyTwoWeekHigh != null &&
@@ -364,8 +362,10 @@ private fun SignalPillRow(
         price >= quote.fiftyTwoWeekLow * 0.995
     val volRatio = quote?.volumeRatio
     val volSpike = volRatio != null && volRatio >= VOLUME_SPIKE_THRESHOLD
+    val earningsSoon = daysUntilEarnings != null && daysUntilEarnings in 0..EARNINGS_SOON_DAYS
 
-    val hasAny = !sector.isNullOrBlank() || nearHigh || nearLow || volSpike || highScoreNewsCount > 0
+    val hasAny = earningsSoon || !sector.isNullOrBlank() || nearHigh || nearLow ||
+        volSpike || highScoreNewsCount > 0
     if (!hasAny) return
 
     Spacer(Modifier.height(4.dp))
@@ -374,6 +374,9 @@ private fun SignalPillRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        if (earningsSoon) {
+            EarningsPill(daysUntil = daysUntilEarnings!!)
+        }
         if (!sector.isNullOrBlank()) {
             FaintChip(label = sector, color = FinnencerColors.TextTertiary)
         }
