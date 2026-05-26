@@ -26,18 +26,20 @@ import retrofit2.http.Url
  */
 interface YahooQuoteService {
 
-    /** Fetch one symbol's chart meta. We don't consume the candle
-     *  series, only the `meta` block, but `range=1d&interval=1d`
-     *  keeps the payload tiny. `includePrePost=true` ensures
-     *  `regularMarketPrice` reflects the latest extended-hours trade
-     *  when one is available. The percent-change calc uses
-     *  `meta.previousClose` (canonical "prior day's close"); range=1d
-     *  also makes `chartPreviousClose` equal to yesterday's close so
-     *  the fallback baseline is correct. */
+    /** Fetch one symbol's chart for today.
+     *
+     *  We use `interval=15m&range=1d&includePrePost=true` so the response
+     *  carries the intraday candle series including pre-market and
+     *  post-market buckets. `meta.regularMarketPrice` freezes at 4pm ET,
+     *  so to surface after-hours moves on the watchlist we walk the
+     *  candle array for trades that fall outside the regular trading
+     *  window (see `QuotePoller.extractExtendedHours`). 15-minute
+     *  granularity keeps the payload ~10-15KB per symbol — small enough
+     *  to fan out across a typical watchlist on a 60s poll cadence. */
     @GET("v8/finance/chart/{symbol}")
     suspend fun chart(
         @Path("symbol") symbol: String,
-        @Query("interval") interval: String = "1d",
+        @Query("interval") interval: String = "15m",
         @Query("range") range: String = "1d",
         @Query("includePrePost") includePrePost: Boolean = true,
     ): YahooChartResponse
@@ -59,12 +61,20 @@ data class YahooChartEnvelope(
 
 data class YahooChartResult(
     @SerializedName("meta") val meta: YahooChartMeta,
+    /** Epoch-second timestamp for each candle. Same length as
+     *  [YahooQuoteSeries.close] when both are present. */
+    @SerializedName("timestamp") val timestamp: List<Long>? = null,
+    @SerializedName("indicators") val indicators: YahooChartIndicators? = null,
 )
 
 /**
  * Subset of the Yahoo chart meta payload that we actually consume.
- * Yahoo returns several dozen fields; we deserialize only the price +
- * previous-close pair the watchlist needs.
+ *
+ * Includes the canonical price + previous-close fields plus optional
+ * extended-hours fields. The pre/post-market fields are only sometimes
+ * populated on the v8 chart endpoint — when they're missing the poller
+ * falls back to walking [YahooChartResult.timestamp] +
+ * [YahooQuoteSeries.close] to find the latest extended-session trade.
  */
 data class YahooChartMeta(
     @SerializedName("symbol") val symbol: String,
@@ -72,4 +82,35 @@ data class YahooChartMeta(
     @SerializedName("chartPreviousClose") val chartPreviousClose: Double? = null,
     @SerializedName("previousClose") val previousClose: Double? = null,
     @SerializedName("currency") val currency: String? = null,
+    @SerializedName("regularMarketTime") val regularMarketTime: Long? = null,
+    @SerializedName("preMarketPrice") val preMarketPrice: Double? = null,
+    @SerializedName("preMarketTime") val preMarketTime: Long? = null,
+    @SerializedName("preMarketChangePercent") val preMarketChangePercent: Double? = null,
+    @SerializedName("postMarketPrice") val postMarketPrice: Double? = null,
+    @SerializedName("postMarketTime") val postMarketTime: Long? = null,
+    @SerializedName("postMarketChangePercent") val postMarketChangePercent: Double? = null,
+    @SerializedName("currentTradingPeriod") val currentTradingPeriod: YahooTradingPeriods? = null,
+)
+
+/** Today's pre / regular / post session boundaries, as Yahoo reports them. */
+data class YahooTradingPeriods(
+    @SerializedName("pre") val pre: YahooTradingPeriod? = null,
+    @SerializedName("regular") val regular: YahooTradingPeriod? = null,
+    @SerializedName("post") val post: YahooTradingPeriod? = null,
+)
+
+data class YahooTradingPeriod(
+    @SerializedName("start") val start: Long,
+    @SerializedName("end") val end: Long,
+    @SerializedName("timezone") val timezone: String? = null,
+    @SerializedName("gmtoffset") val gmtOffset: Long? = null,
+)
+
+data class YahooChartIndicators(
+    @SerializedName("quote") val quote: List<YahooQuoteSeries>? = null,
+)
+
+/** One per indicators.quote entry. We only need the close array. */
+data class YahooQuoteSeries(
+    @SerializedName("close") val close: List<Double?>? = null,
 )

@@ -1,6 +1,6 @@
 package io.itsikh.finnencer.data.repo
 
-import io.itsikh.finnencer.data.api.YahooChartMeta
+import io.itsikh.finnencer.data.api.YahooChartResult
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
@@ -19,16 +19,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Live last-trade snapshot for one ticker, with the deltas we need to
- * render the watchlist row. Change/percent are derived from the v8
- * chart endpoint's `regularMarketPrice` vs `previousClose` (falling
- * back to `chartPreviousClose` if Yahoo didn't populate the canonical
- * field).
+ * Live last-trade snapshot for one ticker.
  *
- * The v8 chart endpoint doesn't expose explicit pre/post-market prices,
- * but it *does* update `regularMarketPrice` during extended hours when
- * a trade prints. That means PRE/POST tagging is no longer reliable —
- * we deliberately don't try to label the session here.
+ * [price] / [change] / [changePercent] reflect the **regular session**
+ * close vs. the previous trading day's close — `regularMarketPrice`
+ * freezes at 4pm ET, so this is "today's regular-hours move".
+ *
+ * [extendedPrice] / [extendedChangePercent] / [extendedSession] are
+ * populated when Yahoo's chart series shows a trade outside the
+ * regular trading window. They're meant for a secondary "After
+ * +0.45%" / "Pre −0.30%" sub-line on the watchlist card; the regular
+ * `changePercent` is unaffected.
  */
 data class TickerQuote(
     val symbol: String,
@@ -36,7 +37,13 @@ data class TickerQuote(
     val change: Double,
     val changePercent: Double,
     val asOfMillis: Long = System.currentTimeMillis(),
+    val extendedPrice: Double? = null,
+    val extendedChangePercent: Double? = null,
+    val extendedSession: ExtendedSession? = null,
 )
+
+/** Which extended-trading window an [TickerQuote.extendedPrice] came from. */
+enum class ExtendedSession { PRE, POST }
 
 /**
  * Polls Yahoo Finance's public chart endpoint for the user's watched
@@ -136,43 +143,119 @@ class QuotePoller @Inject constructor(
      * usable price.
      */
     private suspend fun fetchOneSymbol(symbol: String): TickerQuote? {
-        val meta = runCatching { service.chart(symbol).chart.result?.firstOrNull()?.meta }
+        val result = runCatching { service.chart(symbol).chart.result?.firstOrNull() }
             .getOrElse { primaryErr ->
                 AppLogger.w(TAG, "query1 chart failed for $symbol (${primaryErr.message}); trying query2")
                 runCatching {
                     service.chartAt(
                         "https://query2.finance.yahoo.com/v8/finance/chart/" +
-                            "$symbol?interval=1d&range=1d&includePrePost=true",
-                    ).chart.result?.firstOrNull()?.meta
+                            "$symbol?interval=15m&range=1d&includePrePost=true",
+                    ).chart.result?.firstOrNull()
                 }.getOrElse { fallbackErr ->
                     AppLogger.w(TAG, "query2 chart also failed for $symbol: ${fallbackErr.message}")
                     null
                 }
             }
-        return meta?.let { toQuote(it) }
+        return result?.let { toQuote(it) }
     }
 
     /**
-     * Build a [TickerQuote] from Yahoo's chart meta. Percent change is
-     * derived from `regularMarketPrice` vs the previous trading day's
-     * close. We prefer `meta.previousClose` (canonical "prior day's
-     * close") over `meta.chartPreviousClose` (which shifts with the
-     * requested chart range) for defense-in-depth: even if a future
-     * change to the chart query bumps the range, the % stays correct
-     * as long as Yahoo populates `previousClose`. Returns null if Yahoo
-     * didn't include a usable current price.
+     * Build a [TickerQuote] from Yahoo's chart payload. Regular-session
+     * fields come from the meta block; extended-hours fields come from
+     * [extractExtendedHours], which inspects the candle series.
+     * Returns null if Yahoo didn't include a usable current price.
      */
-    private fun toQuote(meta: YahooChartMeta): TickerQuote? {
+    private fun toQuote(result: YahooChartResult): TickerQuote? {
+        val meta = result.meta
         val price = meta.regularMarketPrice ?: return null
         val prev = meta.previousClose ?: meta.chartPreviousClose
         val change = if (prev != null) price - prev else 0.0
         val pct = if (prev != null && prev != 0.0) (price - prev) / prev * 100.0 else 0.0
+        val extended = extractExtendedHours(result, regularPrice = price)
         return TickerQuote(
             symbol = meta.symbol.uppercase(),
             price = price,
             change = change,
             changePercent = pct,
+            extendedPrice = extended?.price,
+            extendedChangePercent = extended?.percent,
+            extendedSession = extended?.session,
         )
+    }
+
+    private data class ExtendedHours(
+        val price: Double,
+        val percent: Double,
+        val session: ExtendedSession,
+    )
+
+    /**
+     * Latest trade outside the regular session, if any.
+     *
+     * Strategy:
+     *  1. **Cheap path** — if Yahoo populated `meta.postMarketPrice` or
+     *     `meta.preMarketPrice` (rare on v8 chart, common on v7 quote),
+     *     trust those directly.
+     *  2. **Candle path** — walk the 15-minute candle series from the
+     *     end backwards. The first non-null close whose timestamp falls
+     *     OUTSIDE `currentTradingPeriod.regular` is the latest extended
+     *     trade; classify it as POST if it's after `regular.end` or PRE
+     *     if it's before `regular.start`.
+     *
+     * Percentage is computed vs. the regular-session price the caller
+     * passed in — that's the meaningful baseline ("how far has the
+     * stock moved since the 4pm close?").
+     */
+    private fun extractExtendedHours(
+        result: YahooChartResult,
+        regularPrice: Double,
+    ): ExtendedHours? {
+        val meta = result.meta
+        val regular = meta.currentTradingPeriod?.regular
+
+        // Cheap path: meta-level extended fields
+        meta.postMarketPrice?.let { pp ->
+            val regEnd = regular?.end ?: 0L
+            val pt = meta.postMarketTime ?: 0L
+            if (pt > regEnd) {
+                val pct = meta.postMarketChangePercent
+                    ?: ((pp - regularPrice) / regularPrice * 100.0)
+                return ExtendedHours(pp, pct, ExtendedSession.POST)
+            }
+        }
+        meta.preMarketPrice?.let { pp ->
+            val regStart = regular?.start ?: Long.MAX_VALUE
+            val pt = meta.preMarketTime ?: 0L
+            if (pt in 1 until regStart) {
+                val pct = meta.preMarketChangePercent
+                    ?: ((pp - regularPrice) / regularPrice * 100.0)
+                return ExtendedHours(pp, pct, ExtendedSession.PRE)
+            }
+        }
+
+        // Candle fallback
+        if (regular == null) return null
+        val timestamps = result.timestamp ?: return null
+        val closes = result.indicators?.quote?.firstOrNull()?.close ?: return null
+        if (timestamps.size != closes.size) return null
+
+        for (i in timestamps.indices.reversed()) {
+            val close = closes[i] ?: continue
+            val ts = timestamps[i]
+            return when {
+                ts > regular.end -> {
+                    val pct = (close - regularPrice) / regularPrice * 100.0
+                    ExtendedHours(close, pct, ExtendedSession.POST)
+                }
+                ts < regular.start -> {
+                    val pct = (close - regularPrice) / regularPrice * 100.0
+                    ExtendedHours(close, pct, ExtendedSession.PRE)
+                }
+                // Latest candle is in the regular window → no extended trade
+                else -> null
+            }
+        }
+        return null
     }
 
     private companion object {

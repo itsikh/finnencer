@@ -375,6 +375,36 @@ private fun QuoteWithAnalystColumn(
                 color = pctColor,
                 fontWeight = FontWeight.SemiBold,
             )
+            // Extended-hours line — only when Yahoo's chart series
+            // shows a trade outside today's regular session. We don't
+            // fold this into the day % because conflating regular and
+            // extended moves would confuse the sort + threshold logic.
+            val extPct = quote.extendedChangePercent
+            val extSession = quote.extendedSession
+            if (extPct != null && extSession != null) {
+                val extColor = when {
+                    extPct > 0.0 -> FinnencerColors.Mint
+                    extPct < 0.0 -> FinnencerColors.Coral
+                    else -> FinnencerColors.TextTertiary
+                }
+                val extSign = if (extPct > 0.0) "+" else if (extPct < 0.0) "−" else ""
+                val sessionLabel = when (extSession) {
+                    io.itsikh.finnencer.data.repo.ExtendedSession.PRE -> "Pre"
+                    io.itsikh.finnencer.data.repo.ExtendedSession.POST -> "After"
+                }
+                Text(
+                    text = String.format(
+                        java.util.Locale.US,
+                        "%s %s%.2f%%",
+                        sessionLabel,
+                        extSign,
+                        kotlin.math.abs(extPct),
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = extColor,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             val target = analystSnapshot?.targetMean
             if (target != null && target > 0.0 && quote.price > 0.0) {
                 val targetDelta = ((target - quote.price) / quote.price) * 100.0
