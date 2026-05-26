@@ -68,6 +68,8 @@ class SettingsViewModel @Inject constructor(
     private val geminiTts: io.itsikh.finnencer.data.ai.GeminiTts,
     private val backupManager: io.itsikh.finnencer.backup.FinnencerBackupManager,
     private val retentionPrefs: io.itsikh.finnencer.data.repo.RetentionPreferences,
+    private val morningBriefPrefs: io.itsikh.finnencer.data.repo.MorningBriefPreferences,
+    private val morningBriefScheduler: io.itsikh.finnencer.core.work.MorningBriefScheduler,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -110,6 +112,16 @@ class SettingsViewModel @Inject constructor(
 
     val endOfPodcastAction: StateFlow<EndOfPodcastAction> = podcastPrefs.endOfPodcastAction
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), EndOfPodcastAction.STOP)
+
+    val morningBriefEnabled: StateFlow<Boolean> = morningBriefPrefs.enabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setMorningBriefEnabled(value: Boolean) {
+        viewModelScope.launch {
+            morningBriefPrefs.setEnabled(value)
+            morningBriefScheduler.rescheduleNext()
+        }
+    }
 
     /** Per-minute character budget used when generating podcast scripts.
      *  Wired to [PodcastPreferences.charsPerMinute]; the settings screen

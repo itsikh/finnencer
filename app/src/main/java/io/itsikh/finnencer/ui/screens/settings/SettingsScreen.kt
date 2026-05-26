@@ -112,6 +112,7 @@ fun SettingsScreen(
     val adminMode by viewModel.adminMode.collectAsState()
     val showDiagnoseButtons by viewModel.showDiagnoseButtons.collectAsState()
     val endOfPodcastAction by viewModel.endOfPodcastAction.collectAsState()
+    val morningBriefEnabled by viewModel.morningBriefEnabled.collectAsState()
     val podcastCharsPerMin by viewModel.podcastCharsPerMinute.collectAsState()
     val podcastValidationEnabled by viewModel.podcastScriptValidationEnabled.collectAsState()
     val podcastTtsChunkChars by viewModel.podcastTtsChunkChars.collectAsState()
@@ -225,6 +226,18 @@ fun SettingsScreen(
                 iconTint = FinnencerColors.Coral,
                 summary = "TTS · script length · auto-play",
             ) {
+                SettingsRow(
+                    title = "Morning brief",
+                    subtitle = "Generate a 5-minute personalized podcast at 8:30am on weekdays — what moved overnight, earnings today, top scored news.",
+                    icon = Icons.Default.AutoAwesome,
+                    trailing = {
+                        Switch(
+                            checked = morningBriefEnabled,
+                            onCheckedChange = viewModel::setMorningBriefEnabled,
+                            colors = switchColors(),
+                        )
+                    },
+                )
                 EndOfPodcastRow(
                     current = endOfPodcastAction,
                     onPick = viewModel::setEndOfPodcastAction,

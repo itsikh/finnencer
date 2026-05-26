@@ -7,6 +7,7 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.core.work.JobConcurrencyGate
+import io.itsikh.finnencer.core.work.MorningBriefScheduler
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.repo.JobConcurrencyPreferences
 import io.itsikh.finnencer.data.repo.QueueItemRepair
@@ -49,6 +50,7 @@ class TemplateApplication : Application(), Configuration.Provider {
     @Inject lateinit var jobConcurrencyGate: JobConcurrencyGate
     @Inject lateinit var jobConcurrencyPrefs: JobConcurrencyPreferences
     @Inject lateinit var queueItemRepair: QueueItemRepair
+    @Inject lateinit var morningBriefScheduler: MorningBriefScheduler
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -80,6 +82,13 @@ class TemplateApplication : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { queueItemRepair.repairIfNeeded() }
                 .onFailure { AppLogger.e("App", "Queue-item repair failed", it) }
+        }
+        // Ensure the morning-brief chain is alive (idempotent — when
+        // disabled, this cancels any leftover scheduling; when enabled
+        // it (re)schedules the next run based on current prefs).
+        appScope.launch {
+            runCatching { morningBriefScheduler.rescheduleNext() }
+                .onFailure { AppLogger.e("App", "Morning brief reschedule failed", it) }
         }
         // Keep the in-memory concurrency gate in sync with the user's
         // Settings → Background jobs preferences. Defaults to 1/1 so a

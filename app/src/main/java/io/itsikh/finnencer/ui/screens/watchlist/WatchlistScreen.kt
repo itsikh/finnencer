@@ -80,6 +80,7 @@ fun WatchlistScreen(
     val nextEarnings by vm.nextEarningsBySymbol.collectAsState()
     val analystSnapshots by vm.analystSnapshotsBySymbol.collectAsState()
     val highScoreNewsCounts by vm.highScoreNewsCounts.collectAsState()
+    val whyMovingState by vm.whyMoving.collectAsState()
     val sortOption by vm.sortOption.collectAsState()
     val sortDescending by vm.sortDescending.collectAsState()
     val searchQuery by vm.searchQuery.collectAsState()
@@ -169,7 +170,8 @@ fun WatchlistScreen(
                         analystSnapshot = analystSnapshots[ticker.symbol],
                         highScoreNewsCount = highScoreNewsCounts[ticker.symbol] ?: 0,
                         onTap = { onOpenTickerFeed(ticker.symbol) },
-                        onLongPress = { vm.openSettings(ticker) },
+                        onLongPress = { vm.openWhyMoving(ticker.symbol) },
+                        onSettingsTap = { vm.openSettings(ticker) },
                     )
                 }
                 item { Spacer(Modifier.height(80.dp)) } // FAB clearance
@@ -196,6 +198,31 @@ fun WatchlistScreen(
             onRemove = { vm.removeTicker(it.symbol) },
         )
     }
+
+    // Why-is-this-moving sheet — opens on long-press of any watchlist
+    // row. Pulls quote / analyst snapshot / earnings from the same
+    // maps the card uses so its header signals stay in sync with what
+    // the user just long-pressed.
+    val whySymbol = when (val s = whyMovingState) {
+        is WhyMovingState.Loading -> s.symbol
+        is WhyMovingState.Ready -> s.symbol
+        is WhyMovingState.NoNews -> s.symbol
+        is WhyMovingState.Error -> s.symbol
+        else -> null
+    }
+    if (whySymbol != null) {
+        WhyMovingSheet(
+            state = whyMovingState,
+            quote = quotes[whySymbol.uppercase()],
+            analystSnapshot = analystSnapshots[whySymbol],
+            daysUntilEarnings = nextEarnings[whySymbol]?.let { ev ->
+                val days = (ev.scheduledAtMillis - System.currentTimeMillis()) /
+                    (24L * 60 * 60 * 1000)
+                days.toInt()
+            },
+            onDismiss = vm::closeWhyMoving,
+        )
+    }
 }
 
 @Composable
@@ -207,8 +234,9 @@ private fun TickerCard(
     highScoreNewsCount: Int,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    onSettingsTap: () -> Unit,
 ) {
-    GlassCard(onClick = onTap) {
+    GlassCard(onClick = onTap, onLongClick = onLongPress) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -285,7 +313,7 @@ private fun TickerCard(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            IconButton(onClick = onLongPress) {
+            IconButton(onClick = onSettingsTap) {
                 Icon(
                     Icons.Default.Settings,
                     contentDescription = "Ticker settings",

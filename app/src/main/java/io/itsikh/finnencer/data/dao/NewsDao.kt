@@ -208,6 +208,35 @@ interface NewsDao {
         sinceMillis: Long,
     ): Flow<List<TickerCountRow>>
 
+    /**
+     * Top-scored article IDs across a set of watchlist tickers in a
+     * time window. Used by the morning-brief worker to assemble the
+     * podcast corpus. Cluster collapse via GROUP BY cluster_key so the
+     * same story carried by three wires only contributes one article.
+     * Sort: highest score first (descending), then most-recent first.
+     */
+    @Query(
+        """
+        SELECT a.id FROM news_articles a
+        INNER JOIN article_ticker_xref x ON x.article_id = a.id
+        INNER JOIN article_scores s
+            ON s.article_id = a.id AND s.ticker_symbol = x.ticker_symbol
+        WHERE x.ticker_symbol IN (:symbols)
+          AND COALESCE(s.user_override, s.score) >= :minScore
+          AND a.published_at_millis > :sinceMillis
+        GROUP BY a.cluster_key
+        ORDER BY MAX(COALESCE(s.user_override, s.score)) DESC,
+                 a.published_at_millis DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun topArticleIdsAcrossSymbols(
+        symbols: List<String>,
+        minScore: Int,
+        sinceMillis: Long,
+        limit: Int,
+    ): List<String>
+
     @Query(
         """
         SELECT a.* FROM news_articles a

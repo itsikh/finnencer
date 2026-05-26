@@ -7,6 +7,8 @@ import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.data.entity.TickerAnalystSnapshot
+import io.itsikh.finnencer.data.ai.MoveExplainer
+import io.itsikh.finnencer.data.entity.MoveExplanation
 import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.data.repo.AnalystSnapshotRepository
 import io.itsikh.finnencer.data.repo.QueueRepository
@@ -69,6 +71,26 @@ data class TickerSettingsSheetState(
     val draftMuted: Boolean = false,
 )
 
+/**
+ * "Why is this moving?" sheet — opens on long-press of a watchlist row.
+ *
+ * Lifecycle:
+ *  - **Idle** when the sheet is closed.
+ *  - **Loading** while the explainer is calling Claude (cache miss).
+ *  - **Ready** when an explanation is available (cached or fresh).
+ *  - **NoNews** when there are no recent articles to anchor an
+ *    explanation off — the sheet still shows the day's move + analyst
+ *    PT + earnings proximity, just without an AI synthesis.
+ *  - **Error** when the explainer threw (network down etc.).
+ */
+sealed class WhyMovingState {
+    data object Idle : WhyMovingState()
+    data class Loading(val symbol: String) : WhyMovingState()
+    data class Ready(val symbol: String, val explanation: MoveExplanation) : WhyMovingState()
+    data class NoNews(val symbol: String, val pctChange: Double) : WhyMovingState()
+    data class Error(val symbol: String, val message: String) : WhyMovingState()
+}
+
 @HiltViewModel
 class WatchlistViewModel @Inject constructor(
     private val repo: WatchlistRepository,
@@ -79,6 +101,7 @@ class WatchlistViewModel @Inject constructor(
     private val earningsDao: EarningsDao,
     private val newsDao: io.itsikh.finnencer.data.dao.NewsDao,
     private val viewPrefs: WatchlistPreferences,
+    private val moveExplainer: MoveExplainer,
 ) : ViewModel() {
 
     val tickers: StateFlow<List<Ticker>> =
@@ -351,6 +374,46 @@ class WatchlistViewModel @Inject constructor(
         viewModelScope.launch { repo.remove(symbol) }
         closeSettings()
     }
+
+    // ─── why is it moving sheet ───
+
+    private val _whyMoving = MutableStateFlow<WhyMovingState>(WhyMovingState.Idle)
+    val whyMoving: StateFlow<WhyMovingState> = _whyMoving.asStateFlow()
+
+    /**
+     * Open the "Why is it moving?" sheet for [symbol].
+     *
+     * - If [MoveExplainer] already has a cached row for today, show it
+     *   instantly (we never block the UI on a network call when we
+     *   don't have to).
+     * - Otherwise jump to Loading and fire the explainer in the
+     *   background. The Claude call typically returns in 1-3 seconds.
+     */
+    fun openWhyMoving(symbol: String) {
+        val upper = symbol.uppercase()
+        viewModelScope.launch {
+            val cached = runCatching { moveExplainer.cached(upper) }.getOrNull()
+            if (cached != null) {
+                _whyMoving.value = WhyMovingState.Ready(upper, cached)
+                return@launch
+            }
+            _whyMoving.value = WhyMovingState.Loading(upper)
+            val result = runCatching { moveExplainer.explain(upper) }
+            _whyMoving.value = result.fold(
+                onSuccess = { outcome ->
+                    when (outcome) {
+                        is MoveExplainer.Outcome.Ready -> WhyMovingState.Ready(upper, outcome.row)
+                        is MoveExplainer.Outcome.NoNews -> WhyMovingState.NoNews(upper, outcome.pctChange)
+                    }
+                },
+                onFailure = { t ->
+                    WhyMovingState.Error(upper, t.message ?: "Couldn't generate explanation")
+                },
+            )
+        }
+    }
+
+    fun closeWhyMoving() { _whyMoving.value = WhyMovingState.Idle }
 
     private companion object {
         const val HIGH_SCORE_THRESHOLD = 7
