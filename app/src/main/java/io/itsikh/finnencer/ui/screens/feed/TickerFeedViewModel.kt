@@ -175,6 +175,13 @@ class TickerFeedViewModel @Inject constructor(
     private val _earningsSyncError = MutableStateFlow<String?>(null)
     val earningsSyncError: StateFlow<String?> = _earningsSyncError.asStateFlow()
 
+    // Declared before `init` so the coroutine launched there can safely
+    // touch `_move` even when it runs synchronously on Main.immediate
+    // (issue #68: NPE because `_move` was still null when the cached
+    // explanation lookup resumed inside the constructor).
+    private val _move = MutableStateFlow<MoveUiState>(MoveUiState.Idle)
+    val move: StateFlow<MoveUiState> = _move.asStateFlow()
+
     init {
         // Kick off a one-shot earnings sync the first time the screen
         // opens, in case the periodic SyncWorker hasn't run yet — this is
@@ -193,9 +200,6 @@ class TickerFeedViewModel @Inject constructor(
             moveExplainer.cached(symbol)?.let { _move.value = MoveUiState.Loaded(it) }
         }
     }
-
-    private val _move = MutableStateFlow<MoveUiState>(MoveUiState.Idle)
-    val move: StateFlow<MoveUiState> = _move.asStateFlow()
 
     fun explainMove(force: Boolean = false) {
         if (_move.value is MoveUiState.Loading) return
