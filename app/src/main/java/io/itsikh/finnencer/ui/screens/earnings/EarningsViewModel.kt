@@ -9,6 +9,7 @@ import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.data.repo.AiJobsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -122,7 +123,7 @@ class EarningsViewModel @Inject constructor(
             val jobId = aiJobs.enqueueEarningsReport(
                 tickerSymbol = event.tickerSymbol,
                 earningsEventId = event.id,
-                eventLabel = "Q${event.fiscalQuarter} ${event.fiscalYear}",
+                eventLabel = event.fiscalLabelOrNull() ?: "latest earnings",
                 tier = tier,
             )
             watchPickerJob(jobId)

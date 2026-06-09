@@ -104,6 +104,9 @@ class EarningsNumericSync @Inject constructor(
                                 p.row.copy(
                                     fiscalYear = p.targetYear,
                                     fiscalQuarter = p.targetQuarter,
+                                    // Corrected to Finnhub's fiscal label —
+                                    // now safe to display (#70).
+                                    fiscalConfirmed = true,
                                 )
                             )
                             touched++
@@ -139,6 +142,15 @@ class EarningsNumericSync @Inject constructor(
         dateMs: Long,
     ): Pair<Boolean, PlannedRelabel?> {
         val hasActuals = row.epsActual != null || row.revenueActual != null
+        val newYear = row.year
+        val newQuarter = row.quarter
+        // Finnhub's labels are the company's actual fiscal calendar, so they
+        // confirm the period. Mark confirmed here only when the existing
+        // label already matches (no relabel needed); when it differs, the
+        // pass-2 relabel sets confirmed together with the corrected label so
+        // the flag never coexists with EDGAR's wrong calendar guess (#70).
+        val labelMatches = newYear != null && newQuarter != null &&
+            newYear == existing.fiscalYear && newQuarter == existing.fiscalQuarter
         val updated = existing.copy(
             consensusEps = row.epsEstimate ?: existing.consensusEps,
             consensusRevenue = row.revenueEstimate ?: existing.consensusRevenue,
@@ -146,14 +158,13 @@ class EarningsNumericSync @Inject constructor(
             actualRevenue = row.revenueActual ?: existing.actualRevenue,
             actualReportedAtMillis = if (hasActuals) (existing.actualReportedAtMillis ?: dateMs) else existing.actualReportedAtMillis,
             status = if (hasActuals) EarningsStatus.REPORTED.name else existing.status,
+            fiscalConfirmed = existing.fiscalConfirmed || labelMatches,
         )
         val wroteNumbers = if (updated != existing) {
             earningsDao.updateEvent(updated)
             true
         } else false
 
-        val newYear = row.year
-        val newQuarter = row.quarter
         val relabel = if (
             newYear != null && newQuarter != null &&
             (newYear != updated.fiscalYear || newQuarter != updated.fiscalQuarter)
@@ -194,6 +205,8 @@ class EarningsNumericSync @Inject constructor(
                     actualEps = row.epsActual,
                     actualRevenue = row.revenueActual,
                     status = if (hasActuals) EarningsStatus.REPORTED.name else EarningsStatus.SCHEDULED.name,
+                    // Labels come straight from Finnhub's fiscal calendar.
+                    fiscalConfirmed = true,
                 )
             )
         )

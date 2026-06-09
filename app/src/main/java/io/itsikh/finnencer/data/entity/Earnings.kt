@@ -41,7 +41,25 @@ data class EarningsEvent(
     @ColumnInfo(name = "actual_eps") val actualEps: Double? = null,
     @ColumnInfo(name = "actual_revenue") val actualRevenue: Double? = null,
     val status: String = EarningsStatus.SCHEDULED.name,
+    /**
+     * True once the fiscal label was set by the fiscal-aware source
+     * (Finnhub). EDGAR seeds rows with a *calendar-quarter* guess
+     * (`EarningsCalendarSync.fiscalGuess`) that's wrong for any company
+     * whose fiscal year doesn't track the calendar — Marvell's May filing
+     * is fiscal Q1 FY2027, not "Q2 2026". We keep the guess for
+     * sorting/dedup but refuse to display it as fact (#70).
+     */
+    @ColumnInfo(name = "fiscal_confirmed") val fiscalConfirmed: Boolean = false,
 )
+
+/**
+ * Display label for the fiscal period ("Q1 2027"), or null when the label
+ * hasn't been confirmed by the fiscal-aware source yet — callers fall back
+ * to just the ticker + date rather than show EDGAR's calendar-quarter
+ * guess, which is wrong for offset-fiscal-year companies (#70).
+ */
+fun EarningsEvent.fiscalLabelOrNull(): String? =
+    if (fiscalConfirmed) "Q$fiscalQuarter $fiscalYear" else null
 
 /**
  * A generated earnings report. `contentMarkdown` is the LLM output ready for

@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.gestures.detectTapGestures
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,8 +78,9 @@ fun TierPickerSheetCore(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            val fiscal = event.fiscalLabelOrNull()
             Text(
-                "${event.tickerSymbol}  ·  Q${event.fiscalQuarter} ${event.fiscalYear}",
+                if (fiscal != null) "${event.tickerSymbol}  ·  $fiscal" else event.tickerSymbol,
                 style = MaterialTheme.typography.headlineSmall,
                 color = FinnencerColors.TextPrimary,
                 fontWeight = FontWeight.SemiBold,

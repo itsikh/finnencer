@@ -55,6 +55,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.EarningsStatus
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 import java.time.Instant
@@ -285,8 +286,9 @@ private fun EventCard(event: EarningsEvent, onTap: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                val fiscal = event.fiscalLabelOrNull()
                 Text(
-                    "${event.tickerSymbol}  ·  Q${event.fiscalQuarter} ${event.fiscalYear}",
+                    if (fiscal != null) "${event.tickerSymbol}  ·  $fiscal" else event.tickerSymbol,
                     style = MaterialTheme.typography.titleMedium,
                     color = FinnencerColors.TextPrimary,
                     fontWeight = FontWeight.SemiBold,

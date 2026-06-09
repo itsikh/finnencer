@@ -183,6 +183,20 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
     }
 }
 
+/**
+ * v12 → v13: adds `fiscal_confirmed` to earnings_events. EDGAR seeds rows
+ * with a calendar-quarter guess that's wrong for offset fiscal years; this
+ * flag marks rows whose fiscal label was confirmed by the fiscal-aware
+ * Finnhub sync, so the UI only ever displays labels we trust (#70).
+ * Existing rows default to 0 (unconfirmed) and get re-confirmed on the
+ * next Finnhub earnings sync.
+ */
+val MIGRATION_12_13 = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE earnings_events ADD COLUMN fiscal_confirmed INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 /** All migrations in version order. Add new ones at the end. */
 val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_4_5,
@@ -193,4 +207,5 @@ val ALL_MIGRATIONS: Array<Migration> = arrayOf(
     MIGRATION_9_10,
     MIGRATION_10_11,
     MIGRATION_11_12,
+    MIGRATION_12_13,
 )

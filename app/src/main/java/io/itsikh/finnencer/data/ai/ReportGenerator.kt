@@ -11,6 +11,7 @@ import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.data.entity.TickerAnalystSnapshot
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -51,7 +52,9 @@ class ReportGenerator @Inject constructor(
         // ───────── Source bundle ─────────
         val bundle = StringBuilder()
         bundle.append("# ${ticker.symbol} — ${ticker.name}\n")
-        bundle.append("Fiscal Q${event.fiscalQuarter} ${event.fiscalYear}\n")
+        // Only state the fiscal period when it's confirmed; EDGAR's
+        // calendar-quarter guess is wrong for offset fiscal years (#70).
+        event.fiscalLabelOrNull()?.let { bundle.append("Fiscal $it\n") }
         bundle.append("Scheduled: ${event.scheduledAtMillis}\n")
         if (event.actualReportedAtMillis != null) {
             bundle.append("Reported: ${event.actualReportedAtMillis}\n")
@@ -177,7 +180,10 @@ class ReportGenerator @Inject constructor(
         )
         val text = completion.text
 
-        val title = "${ticker.symbol} · Q${event.fiscalQuarter} ${event.fiscalYear} · ${tier.name.lowercase().replaceFirstChar { it.uppercase() }}"
+        val tierLabel = tier.name.lowercase().replaceFirstChar { it.uppercase() }
+        val title = event.fiscalLabelOrNull()
+            ?.let { "${ticker.symbol} · $it · $tierLabel" }
+            ?: "${ticker.symbol} · $tierLabel"
         val id = earningsDao.insertReport(
             EarningsReport(
                 tickerSymbol = ticker.symbol,
