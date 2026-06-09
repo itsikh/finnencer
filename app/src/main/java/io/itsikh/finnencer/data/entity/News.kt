@@ -17,6 +17,11 @@ enum class NewsProvider {
     RSS_NASDAQ,
     RSS_SEEKING_ALPHA,
     SEC_EDGAR,
+    // Free market-wide firehoses (keyword-matched to the ticker)
+    RSS_CNBC,
+    RSS_MARKETWATCH,
+    RSS_INVESTING_COM,
+    RSS_PR_NEWSWIRE,
     // Legacy / inactive (kept so old rows still parse)
     FINNHUB,
     MARKETAUX,

@@ -72,8 +72,8 @@ class MorningBriefScheduler @Inject constructor(
     private suspend fun readConfig(): MorningBriefPreferences.Config {
         return MorningBriefPreferences.Config(
             enabled = prefs.enabled.firstOrNull() ?: false,
-            hourLocal = prefs.hourLocal.firstOrNull() ?: 8,
-            minuteLocal = prefs.minuteLocal.firstOrNull() ?: 30,
+            hourLocal = prefs.hourLocal.firstOrNull() ?: 5,
+            minuteLocal = prefs.minuteLocal.firstOrNull() ?: 0,
             weekdaysOnly = prefs.weekdaysOnly.firstOrNull() ?: true,
         )
     }

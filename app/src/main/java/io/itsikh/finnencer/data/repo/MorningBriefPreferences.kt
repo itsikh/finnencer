@@ -16,7 +16,8 @@ private val Context.morningBriefDataStore by preferencesDataStore(name = "mornin
 
 /**
  * Settings for the personalized daily morning brief — an AI-generated
- * 2-3 minute podcast that recaps the user's watchlist overnight.
+ * podcast (~5–15 min, scaled to how much big news there is) that recaps
+ * the user's watchlist overnight.
  *
  * Stored as raw prefs because we don't need history / migration; if a
  * later release changes the default time, existing users just keep
@@ -38,10 +39,10 @@ class MorningBriefPreferences @Inject constructor(
         .map { it[KEY_ENABLED] ?: false }
 
     val hourLocal: Flow<Int> = context.morningBriefDataStore.data
-        .map { (it[KEY_HOUR] ?: 8).coerceIn(0, 23) }
+        .map { (it[KEY_HOUR] ?: DEFAULT_HOUR).coerceIn(0, 23) }
 
     val minuteLocal: Flow<Int> = context.morningBriefDataStore.data
-        .map { (it[KEY_MINUTE] ?: 30).coerceIn(0, 59) }
+        .map { (it[KEY_MINUTE] ?: DEFAULT_MINUTE).coerceIn(0, 59) }
 
     val weekdaysOnly: Flow<Boolean> = context.morningBriefDataStore.data
         .map { it[KEY_WEEKDAYS_ONLY] ?: true }
@@ -67,6 +68,12 @@ class MorningBriefPreferences @Inject constructor(
     }
 
     private companion object {
+        // Default to 05:00 local — the brief is built overnight so it's
+        // ready before the user is awake (device-local time, so it follows
+        // them when travelling).
+        const val DEFAULT_HOUR = 5
+        const val DEFAULT_MINUTE = 0
+
         val KEY_ENABLED = booleanPreferencesKey("enabled")
         val KEY_HOUR = intPreferencesKey("hour_local")
         val KEY_MINUTE = intPreferencesKey("minute_local")

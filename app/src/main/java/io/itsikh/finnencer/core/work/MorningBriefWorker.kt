@@ -71,37 +71,68 @@ class MorningBriefWorker @AssistedInject constructor(
         }
         val symbols = tickers.map { it.symbol }
         val sinceMillis = System.currentTimeMillis() - LOOKBACK_HOURS * 60L * 60L * 1000L
+        // Only "big news" qualifies for the brief — the score floor is the
+        // gate the user asked for ("only big news, only if there's anything
+        // to tell"). Everything below MIN_SCORE is day-to-day noise.
         val articleIds = newsDao.topArticleIdsAcrossSymbols(
             symbols = symbols,
             minScore = MIN_SCORE,
             sinceMillis = sinceMillis,
             limit = MAX_ARTICLES,
         )
-        if (articleIds.size < MIN_ARTICLES) {
-            Log.i(TAG, "only ${articleIds.size} qualifying article(s) in last ${LOOKBACK_HOURS}h — skipping brief")
+        // Dynamic length: scale the episode to how much actually happened.
+        //   ≤1 big story  → skip entirely (a 30-second "nothing happened"
+        //                    podcast is worse than no podcast)
+        //   2–4 stories   → a tight ~5-minute brief
+        //   5+ stories    → the full ~15-minute brief
+        val count = articleIds.size
+        val plan = when {
+            count <= SKIP_AT_OR_BELOW -> null
+            count < LONG_BRIEF_THRESHOLD -> BriefPlan(
+                BundleSummarizer.Pages.TWO,
+                BundleSummarizer.PodcastMinutes.FIVE,
+            )
+            else -> BriefPlan(
+                BundleSummarizer.Pages.TEN,
+                BundleSummarizer.PodcastMinutes.FIFTEEN,
+            )
+        }
+        if (plan == null) {
+            Log.i(TAG, "only $count big story(ies) in last ${LOOKBACK_HOURS}h — skipping brief")
             return
         }
         val customPrompt = buildString {
-            append("This is a personalized **morning brief** for the user's watchlist: ")
+            append("This is a personalized **daily brief** for the user's watchlist: ")
             append(symbols.joinToString(", "))
-            append(". Cover what moved overnight, key earnings due today, and the most important news headlines. ")
-            append("Keep it punchy (around five minutes when read aloud) and skip generic market commentary the user can get anywhere else.")
+            append(". Cover only what genuinely matters: big moves, M&A, guidance/earnings, regulatory or management news. ")
+            append("Lead with the most important story. Skip generic market commentary the user can get anywhere else, ")
+            append("and don't pad — if a story isn't material, leave it out. ")
+            append("Target about ${plan.minutes.minutes} minutes when read aloud.")
         }
         val jobId = aiJobs.enqueueSummaryAndPodcast(
             tickerSymbol = null, // cross-watchlist, no single ticker tag
             articleIds = articleIds,
-            pages = BundleSummarizer.Pages.TWO,
-            minutes = BundleSummarizer.PodcastMinutes.FIVE,
+            pages = plan.pages,
+            minutes = plan.minutes,
             customPrompt = customPrompt,
         )
-        Log.i(TAG, "queued morning brief job $jobId from ${articleIds.size} articles across ${symbols.size} tickers")
+        Log.i(TAG, "queued daily brief job $jobId (~${plan.minutes.minutes}min) from $count big stories across ${symbols.size} tickers")
     }
+
+    private data class BriefPlan(
+        val pages: BundleSummarizer.Pages,
+        val minutes: BundleSummarizer.PodcastMinutes,
+    )
 
     private companion object {
         const val TAG = "MorningBrief"
-        const val LOOKBACK_HOURS = 16L
-        const val MIN_SCORE = 6
+        // Cover the full prior trading day + overnight + early pre-market.
+        const val LOOKBACK_HOURS = 24L
+        // "Big news only" — 8+ on the 1–10 importance scale.
+        const val MIN_SCORE = 8
         const val MAX_ARTICLES = 25
-        const val MIN_ARTICLES = 3
+        // ≤1 qualifying story → no episode. 5+ → the long (~15min) brief.
+        const val SKIP_AT_OR_BELOW = 1
+        const val LONG_BRIEF_THRESHOLD = 5
     }
 }

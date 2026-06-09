@@ -26,6 +26,21 @@ abstract class ProvidersModule {
     @Binds @IntoSet
     abstract fun bindEdgar(impl: EdgarFilingsProvider): NewsProvider
 
+    // Market-wide firehoses — fetched once per cycle (cached) and
+    // keyword-matched to each watched ticker. Broaden coverage beyond the
+    // per-ticker feeds above.
+    @Binds @IntoSet
+    abstract fun bindCnbc(impl: CnbcFirehoseProvider): NewsProvider
+
+    @Binds @IntoSet
+    abstract fun bindMarketWatch(impl: MarketWatchFirehoseProvider): NewsProvider
+
+    @Binds @IntoSet
+    abstract fun bindInvestingCom(impl: InvestingComFirehoseProvider): NewsProvider
+
+    @Binds @IntoSet
+    abstract fun bindPrNewswire(impl: PrNewswireFirehoseProvider): NewsProvider
+
     // Finnhub /company-news intentionally NOT in the news pipeline.
     // The Finnhub Retrofit service stays around for ticker auto-complete
     // (FinnhubService.search) in WatchlistRepository — free tier only,
