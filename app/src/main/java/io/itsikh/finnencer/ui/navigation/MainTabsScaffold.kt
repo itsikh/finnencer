@@ -32,7 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -261,10 +263,19 @@ private fun GlassNavigationBar(
                         }
                     },
                     label = {
+                        // Single line, never wrapping — with 6 tabs the
+                        // per-item slot is too narrow for "Earnings"/
+                        // "Settings" at the default label size, so they were
+                        // wrapping to "Earning\ns" (#71). Pin to one line and
+                        // shrink slightly so the full word fits the slot.
                         Text(
                             tab.label,
                             style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Visible,
                         )
                     },
                     colors = NavigationBarItemDefaults.colors(
