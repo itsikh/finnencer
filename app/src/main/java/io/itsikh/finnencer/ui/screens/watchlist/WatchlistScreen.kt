@@ -63,7 +63,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.ui.components.GlassCard
-import io.itsikh.finnencer.ui.components.Sparkline
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -236,91 +235,86 @@ private fun TickerCard(
     onLongPress: () -> Unit,
     onSettingsTap: () -> Unit,
 ) {
+    // Two-tier card (#69): the old single-row layout crammed monogram,
+    // name, an intraday sparkline, price, threshold + mute + settings all
+    // on one line — the weight(1f) name column got starved, truncating
+    // company names mid-word ("CoreW…"), and the vertically-centered
+    // sparkline floated up into the symbol/price text. We dropped the
+    // sparkline entirely and split the content into:
+    //   • a header row: identity (left) ⇄ live quote (right) + settings
+    //   • a footer FlowRow: every status tag/pill, wrapping freely
+    // so nothing overlaps and the name has room to breathe.
     GlassCard(onClick = onTap, onLongClick = onLongPress) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Ticker monogram while we don't have logo URL data yet.
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(FinnencerColors.Violet.copy(alpha = 0.18f))
-                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.40f), CircleShape),
-                contentAlignment = Alignment.Center,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = ticker.symbol.take(2),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                // Ticker monogram while we don't have logo URL data yet.
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(FinnencerColors.Violet.copy(alpha = 0.18f))
+                        .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.40f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = ticker.symbol.take(2),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(Modifier.size(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    // Symbol + company name, each on its own line. With the
+                    // sparkline gone and pills moved to the footer, this
+                    // column now owns all the horizontal slack the row has
+                    // left of the quote — so full names like "CoreWeave,
+                    // Inc." fit instead of collapsing to an ellipsis.
+                    Text(
+                        text = ticker.symbol,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = FinnencerColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = ticker.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinnencerColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.size(12.dp))
+                QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
+                IconButton(onClick = onSettingsTap) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "Ticker settings",
+                        tint = FinnencerColors.TextSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
-            Spacer(Modifier.size(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                // Symbol on its own line — no inline pills competing
-                // for horizontal space anymore (#67). Single line
-                // guaranteed via maxLines + ellipsis.
-                Text(
-                    text = ticker.symbol,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = FinnencerColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = ticker.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FinnencerColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                // Signal pill row carries every "what's notable about
-                // this ticker right now" chip, including the earnings
-                // proximity pill. FlowRow wraps to multiple lines when
-                // the column is narrow, so chips never overlap names
-                // or each other.
-                SignalPillRow(
-                    quote = quote,
-                    sector = ticker.sector,
-                    highScoreNewsCount = highScoreNewsCount,
-                    daysUntilEarnings = daysUntilEarnings(nextEarnings),
-                )
-            }
-            // Sparkline column — drawn between the name block and the
-            // quote column. Sized tight (40×20dp) so it doesn't crowd
-            // the name column on narrow phones (#65 — name+symbol got
-            // squeezed onto two lines on a Galaxy S23).
-            Sparkline(
-                closes = quote?.intradayCloses.orEmpty(),
-                modifier = Modifier
-                    .padding(horizontal = 4.dp)
-                    .size(width = 40.dp, height = 20.dp),
+            // Footer: alert threshold + every "what's notable" signal +
+            // mute state, wrapping freely on a full-width FlowRow so chips
+            // never overlap the name or each other and never get cut.
+            TickerSignalFooter(
+                quote = quote,
+                sector = ticker.sector,
+                highScoreNewsCount = highScoreNewsCount,
+                daysUntilEarnings = daysUntilEarnings(nextEarnings),
+                threshold = ticker.notificationThreshold,
+                muted = ticker.mutedUntilMillis != null,
             )
-            QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
-            Spacer(Modifier.size(8.dp))
-            ThresholdPill(ticker.notificationThreshold)
-            Spacer(Modifier.size(8.dp))
-            if (ticker.mutedUntilMillis != null) {
-                Icon(
-                    Icons.Default.NotificationsOff,
-                    contentDescription = "Muted",
-                    tint = FinnencerColors.TextTertiary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            IconButton(onClick = onSettingsTap) {
-                Icon(
-                    Icons.Default.Settings,
-                    contentDescription = "Ticker settings",
-                    tint = FinnencerColors.TextSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
         }
     }
 }
@@ -329,27 +323,29 @@ private const val FIFTY_TWO_WEEK_NEAR_THRESHOLD = 0.02
 private const val VOLUME_SPIKE_THRESHOLD = 2.0
 
 /**
- * Compact row of "signal pills" rendered below the company name.
+ * Full-width footer row carrying everything that used to fight for space
+ * on the right edge of the old single-line card: the live "what's
+ * notable" signal chips, the alert threshold pill, and the muted icon.
  *
- * Only renders pills that actually carry a signal — the row collapses
- * to nothing when none are active so quiet tickers stay quiet on the
- * watchlist (no permanent visual noise).
+ * It's a [FlowRow] spanning the whole card, so chips wrap to a second
+ * line instead of overlapping the name or getting clipped (#69). The
+ * threshold pill always shows (it's the row's alert config), so the
+ * footer renders for every ticker — that also gives the card a steady
+ * visual rhythm rather than collapsing for quiet tickers.
  *
- * Order: earnings (most urgent) → sector → 52w hi/lo → volume spike →
- * high-importance news.
- *
- * Earnings pill used to sit inline with the symbol; #67 moved it here
- * because on tickers with short names + earnings within the window,
- * the pill was crowding the symbol Text down to a single "." ellipsis.
- * The FlowRow gracefully wraps chips to a second line when needed.
+ * Reading order, most-urgent-first: earnings → high-importance news →
+ * 52w hi/lo → volume spike → sector. The threshold pill and mute icon
+ * trail at the end as "settings", visually separated from the signals.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SignalPillRow(
+private fun TickerSignalFooter(
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     sector: String?,
     highScoreNewsCount: Int,
     daysUntilEarnings: Int?,
+    threshold: Int,
+    muted: Boolean,
 ) {
     val price = quote?.price
     val nearHigh = price != null && quote.fiftyTwoWeekHigh != null &&
@@ -364,21 +360,20 @@ private fun SignalPillRow(
     val volSpike = volRatio != null && volRatio >= VOLUME_SPIKE_THRESHOLD
     val earningsSoon = daysUntilEarnings != null && daysUntilEarnings in 0..EARNINGS_SOON_DAYS
 
-    val hasAny = earningsSoon || !sector.isNullOrBlank() || nearHigh || nearLow ||
-        volSpike || highScoreNewsCount > 0
-    if (!hasAny) return
-
-    Spacer(Modifier.height(4.dp))
+    Spacer(Modifier.height(12.dp))
     androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (earningsSoon) {
             EarningsPill(daysUntil = daysUntilEarnings!!)
         }
-        if (!sector.isNullOrBlank()) {
-            FaintChip(label = sector, color = FinnencerColors.TextTertiary)
+        if (highScoreNewsCount > 0) {
+            FaintChip(
+                label = "🔥 $highScoreNewsCount",
+                color = FinnencerColors.Coral,
+            )
         }
         if (nearHigh) {
             FaintChip(label = "52w high", color = FinnencerColors.Mint)
@@ -391,10 +386,16 @@ private fun SignalPillRow(
                 color = FinnencerColors.Amber,
             )
         }
-        if (highScoreNewsCount > 0) {
-            FaintChip(
-                label = "🔥 $highScoreNewsCount",
-                color = FinnencerColors.Coral,
+        if (!sector.isNullOrBlank()) {
+            FaintChip(label = sector, color = FinnencerColors.TextTertiary)
+        }
+        ThresholdPill(threshold)
+        if (muted) {
+            Icon(
+                Icons.Default.NotificationsOff,
+                contentDescription = "Muted",
+                tint = FinnencerColors.TextTertiary,
+                modifier = Modifier.size(18.dp),
             )
         }
     }
