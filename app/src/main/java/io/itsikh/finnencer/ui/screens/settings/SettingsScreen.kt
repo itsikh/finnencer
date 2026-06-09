@@ -280,7 +280,7 @@ fun SettingsScreen(
             ) {
                 SettingsRow(
                     title = "Morning brief",
-                    subtitle = "Generate a 5-minute personalized podcast at 8:30am on weekdays — what moved overnight, earnings today, top scored news.",
+                    subtitle = "Generate a personalized podcast at 5:00am on weekdays — only the day's big news for your watchlist. Scales to ~5–15 min, or skips quiet days. Plays in the Library tab.",
                     icon = Icons.Default.AutoAwesome,
                     trailing = {
                         Switch(
