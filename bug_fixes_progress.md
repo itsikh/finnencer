@@ -1,5 +1,9 @@
 # Bug-fix progress — 2026-07-27 audit
 
+**STATUS: SHIPPED as v0.4.0** (commit 11d95b7 + release dac08fc, tag v0.4.0,
+GitHub release with APK published, issues #72–#84 auto-closed, issue tracker
+at zero open). Remaining: on-device testing of the big flows.
+
 Resume context: Claude Code session `cfcf2d70-f5bc-4990-b18a-92b7b091615d`
 (`claude --resume cfcf2d70-f5bc-4990-b18a-92b7b091615d` from ~/dev/finnencer).
 

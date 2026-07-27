@@ -43,6 +43,12 @@ class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = try {
         runPipeline()
         Result.success()
+    } catch (ce: kotlinx.coroutines.CancellationException) {
+        // The worker was STOPPED (constraint lost, REPLACE, 10-min cap) —
+        // not a pipeline failure. Rethrow so WorkManager records CANCELLED;
+        // swallowing it here logged bogus "sync failed / giving up after N
+        // attempts" storms while the runs were actually being cancelled (#85).
+        throw ce
     } catch (t: Throwable) {
         Log.e(TAG, "sync failed", t)
         // Bound the retry loop. A one-off sync left in retry() sits

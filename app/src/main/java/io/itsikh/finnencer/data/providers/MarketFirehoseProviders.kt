@@ -92,26 +92,36 @@ abstract class FirehoseRssProvider(
  * cycle (which iterates every watched ticker).
  */
 internal object FirehoseCache {
-    private data class Entry(val items: List<FeedParser.FeedItem>, val atMillis: Long)
+    /** [items] == null marks a FAILED fetch (negative entry). */
+    private data class Entry(val items: List<FeedParser.FeedItem>?, val atMillis: Long)
 
     private val cache = HashMap<String, Entry>()
     private val mutex = Mutex()
     private const val TTL_MS = 10 * 60 * 1000L
 
-    /** [loader] returns null on failure. Failures are NOT cached, so the
-     *  next ticker in the cycle retries instead of seeing a blank feed for
-     *  the whole TTL window. */
+    /** Failures are cached for a SHORT window instead of not at all: with
+     *  no negative cache, a dead feed (e.g. its CDN unreachable) cost a
+     *  full connect-timeout per WATCHED TICKER per cycle, stretching the
+     *  sync worker past WorkManager's cap and getting it cancelled (#85).
+     *  2 minutes bounds that to one timeout per window while still
+     *  recovering quickly once the feed is reachable again. */
+    private const val FAILURE_TTL_MS = 2 * 60 * 1000L
+
+    /** [loader] returns null on failure. */
     suspend fun get(
         url: String,
         loader: suspend (String) -> List<FeedParser.FeedItem>?,
     ): List<FeedParser.FeedItem> {
         val now = System.currentTimeMillis()
         mutex.withLock {
-            cache[url]?.let { if (now - it.atMillis < TTL_MS) return it.items }
+            cache[url]?.let { entry ->
+                val ttl = if (entry.items == null) FAILURE_TTL_MS else TTL_MS
+                if (now - entry.atMillis < ttl) return entry.items ?: emptyList()
+            }
         }
-        val fresh = loader(url) ?: return emptyList()
+        val fresh = loader(url)
         mutex.withLock { cache[url] = Entry(fresh, now) }
-        return fresh
+        return fresh ?: emptyList()
     }
 }
 
