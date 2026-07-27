@@ -300,6 +300,7 @@ fun SettingsScreen(
                 )
                 PodcastTtsModelRow(
                     current = podcastTtsModel,
+                    provider = podcastTtsProvider,
                     onPick = viewModel::setPodcastTtsModel,
                 )
                 PodcastTtsProviderRow(
@@ -1065,6 +1066,7 @@ private fun PodcastCharsPerMinRow(
 @Composable
 private fun PodcastTtsModelRow(
     current: io.itsikh.finnencer.data.repo.TtsModel,
+    provider: io.itsikh.finnencer.data.repo.TtsProvider,
     onPick: (io.itsikh.finnencer.data.repo.TtsModel) -> Unit,
 ) {
     Column(
@@ -1097,14 +1099,19 @@ private fun PodcastTtsModelRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            io.itsikh.finnencer.data.repo.TtsModel.entries.forEach { model ->
-                EndOfPodcastChip(
-                    label = model.displayName.removePrefix("Gemini "),
-                    selected = current == model,
-                    onClick = { onPick(model) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            // Vertex-only GA models 404 on the Generative Language
+            // surface — hide them unless the Vertex provider is active
+            // (GeminiTts also coerces at synth time as a backstop).
+            io.itsikh.finnencer.data.repo.TtsModel.entries
+                .filter { !it.vertexOnly || provider == io.itsikh.finnencer.data.repo.TtsProvider.VERTEX_AI }
+                .forEach { model ->
+                    EndOfPodcastChip(
+                        label = model.displayName.removePrefix("Gemini "),
+                        selected = current == model,
+                        onClick = { onPick(model) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
         }
     }
 }

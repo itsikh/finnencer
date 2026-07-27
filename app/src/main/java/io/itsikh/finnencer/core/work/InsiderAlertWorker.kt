@@ -98,8 +98,7 @@ class InsiderAlertWorker @AssistedInject constructor(
                     tag = "insider-$key",
                     title = "[$symbol] Insider purchase",
                     body = "$name bought ${formatShares(tx.share)} shares ($valueStr) on the open market.",
-                    deepLink = "finnencer://ticker/$symbol".takeIf { false }
-                        ?: null, // ticker deep link not yet wired; placeholder
+                    deepLink = "finnencer://ticker/$symbol",
                 )
                 newlyNotified.add(key)
                 already.add(key)

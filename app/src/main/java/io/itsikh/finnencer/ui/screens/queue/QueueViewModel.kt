@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 /**
@@ -157,40 +159,50 @@ class QueueViewModel @Inject constructor(
         }
     }
 
-    /** Persist the new order after a reorder. The list comes in
-     *  already-reordered; we only write rows whose [sortOrder] actually
-     *  changed. */
-    fun reorderTodo(reordered: List<QueueItem>) {
-        viewModelScope.launch { repo.reorder(reordered) }
-    }
+    /** Serializes the ↑/↓ read-compute-persist cycles so a quick
+     *  double-tap can't compute both moves from the same snapshot and
+     *  lose one of them. */
+    private val moveMutex = Mutex()
 
     /** Swap [id] with the previous item *within its sub-tab* (#33 —
      *  replaces drag-and-drop with explicit ↑ / ↓ taps). Reordering is
      *  scoped to the visible list so an article ↑ swaps with the
      *  article above it, never with a hidden podcast row. */
     fun moveTodoUp(id: Long) {
-        val list = todoListForId(id) ?: return
-        val i = list.indexOfFirst { it.id == id }
-        if (i <= 0) return
-        val moved = list.removeAt(i)
-        list.add(i - 1, moved)
-        reorderTodo(list)
+        viewModelScope.launch {
+            moveMutex.withLock {
+                val list = todoListForId(id) ?: return@withLock
+                val i = list.indexOfFirst { it.id == id }
+                if (i <= 0) return@withLock
+                val moved = list.removeAt(i)
+                list.add(i - 1, moved)
+                repo.reorder(list)
+            }
+        }
     }
 
     fun moveTodoDown(id: Long) {
-        val list = todoListForId(id) ?: return
-        val i = list.indexOfFirst { it.id == id }
-        if (i < 0 || i >= list.lastIndex) return
-        val moved = list.removeAt(i)
-        list.add(i + 1, moved)
-        reorderTodo(list)
+        viewModelScope.launch {
+            moveMutex.withLock {
+                val list = todoListForId(id) ?: return@withLock
+                val i = list.indexOfFirst { it.id == id }
+                if (i < 0 || i >= list.lastIndex) return@withLock
+                val moved = list.removeAt(i)
+                list.add(i + 1, moved)
+                repo.reorder(list)
+            }
+        }
     }
 
-    private fun todoListForId(id: Long): MutableList<QueueItem>? {
-        val articles = articlesTodoItems.value
-        if (articles.any { it.id == id }) return articles.toMutableList()
-        val podcasts = podcastsTodoItems.value
-        if (podcasts.any { it.id == id }) return podcasts.toMutableList()
-        return null
+    /** Sub-tab list containing [id], read fresh from the repo (not the
+     *  StateFlow snapshot, which lags one Room emission behind the
+     *  previous move). Callers must hold [moveMutex]. */
+    private suspend fun todoListForId(id: Long): MutableList<QueueItem>? {
+        val all = repo.incompleteSnapshot()
+        val target = all.firstOrNull { it.id == id } ?: return null
+        val podcastLane = target.kind == QueueItemKind.PODCAST.name
+        return all
+            .filter { (it.kind == QueueItemKind.PODCAST.name) == podcastLane }
+            .toMutableList()
     }
 }

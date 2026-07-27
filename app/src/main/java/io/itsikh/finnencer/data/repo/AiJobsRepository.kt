@@ -2,6 +2,7 @@ package io.itsikh.finnencer.data.repo
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -203,7 +204,14 @@ class AiJobsRepository @Inject constructor(
             .addTag(TAG_AI_JOB)
             .addTag("ai-job:$id")
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        // Unique per job id so a double-tap / WM race can't run the same
+        // job twice (re-billing the full LLM+TTS cost). KEEP no-ops while
+        // an attempt is still pending, and enqueues fresh once it isn't.
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "ai-job:$id",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
         return id
     }
 
@@ -244,7 +252,13 @@ class AiJobsRepository @Inject constructor(
             .addTag(TAG_AI_JOB)
             .addTag("ai-job:${existing.id}")
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        // Same unique-per-job-id guard as insertAndEnqueue: KEEP makes a
+        // second resume tap a no-op while the first is still pending.
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "ai-job:${existing.id}",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     /**
@@ -293,7 +307,15 @@ class AiJobsRepository @Inject constructor(
             .addTag(TAG_AI_JOB)
             .addTag("ai-job:${existing.id}")
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        // Unique per job id: double-tapping Retry would otherwise run
+        // the same job twice. KEEP drops the second enqueue while the
+        // first attempt is pending; once it finishes, retry enqueues
+        // fresh work as before.
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "ai-job:${existing.id}",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     companion object {

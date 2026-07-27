@@ -44,6 +44,7 @@ class GeminiTts @Inject constructor(
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
     private val podcastPrefs: io.itsikh.finnencer.data.repo.PodcastPreferences,
+    private val vertexAuth: io.itsikh.finnencer.data.api.VertexAuthManager,
 ) {
 
     /** Reasonable default voice pair: Charon (host) + Aoede (analyst). */
@@ -184,17 +185,51 @@ class GeminiTts @Inject constructor(
         // built-in default. The pref lets the user pick between the
         // three currently-shipping preview model ids without code
         // changes.
-        val resolvedModel: String = model ?: podcastPrefs.ttsModel.first().modelId
+        val provider = podcastPrefs.ttsProvider.first()
+        val requestedModel: String = model ?: podcastPrefs.ttsModel.first().modelId
+        val requestedEntry = io.itsikh.finnencer.data.repo.TtsModel.entries
+            .firstOrNull { it.modelId == requestedModel }
+        // The GA model ids only exist on the Vertex surface; sending one
+        // to generativelanguage.googleapis.com is a guaranteed 404 that
+        // would burn the whole retry loop. Coerce back to the default
+        // preview model instead.
+        val resolvedModel: String =
+            if (provider == TtsProvider.GENERATIVE_LANGUAGE && requestedEntry?.vertexOnly == true) {
+                Log.w(TAG, "model $requestedModel is Vertex-only; using ${io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH.modelId} on Generative Language instead")
+                io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH.modelId
+            } else requestedModel
         val resolvedDisplay: String = io.itsikh.finnencer.data.repo.TtsModel.entries
             .firstOrNull { it.modelId == resolvedModel }?.displayName
             ?: resolvedModel
-        val provider = podcastPrefs.ttsProvider.first()
         Log.i(TAG, "tts synth starting with model=$resolvedModel ($resolvedDisplay) provider=${provider.name}")
-        val chunks = chunkAtSpeakerBoundaries(script, maxCharsPerChunk)
+        // Bracket audio tags ([chuckles], [pause], …) are only honored
+        // by Gemini 3.1 TTS. The 2.5 models don't understand them and
+        // may read them aloud verbatim — strip before chunking.
+        val renderScript = if (supportsAudioTags(resolvedModel)) script else stripAudioTags(script)
+        val chunks = chunkAtSpeakerBoundaries(renderScript, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
         outputFile.parentFile?.mkdirs()
         cacheDir?.mkdirs()
+        // Chunk PCMs are only valid for the exact (script, chunk size,
+        // model, voices) they were rendered from — chunk boundaries and
+        // audio both change with any of them (model matters since 3.1
+        // keeps audio tags that are stripped for 2.5, and voices/model
+        // change the rendered sound). A stale cache from a failed prior
+        // attempt with different inputs would stitch mismatched chunks
+        // into a corrupt WAV, so wipe it when the key doesn't match.
+        if (cacheDir != null) {
+            val cacheKey = cacheContentKey(renderScript, maxCharsPerChunk, resolvedModel, voices)
+            val keyFile = File(cacheDir, "cache.key")
+            val existingKey = runCatching { keyFile.takeIf { it.exists() }?.readText() }.getOrNull()
+            if (existingKey != cacheKey) {
+                if (existingKey != null) {
+                    Log.i(TAG, "tts chunk cache invalidated (script/model/chunking/voices changed since prior attempt)")
+                }
+                cacheDir.listFiles()?.forEach { runCatching { it.delete() } }
+                runCatching { keyFile.writeText(cacheKey) }
+            }
+        }
         // Stream decoded PCM straight to a temp file rather than
         // accumulating in an in-memory ByteArrayOutputStream. A 10-min
         // podcast is ~60 MB of PCM across ~6 chunks; holding all of it
@@ -202,11 +237,21 @@ class GeminiTts @Inject constructor(
         // OutOfMemoryError on real devices (#31 — Base64.decode OOM).
         val pcmTmp = File(outputFile.parentFile, "${outputFile.name}.pcm.tmp")
         runCatching { pcmTmp.delete() }
+        // Sweep temp PCM stranded by previous FAILED attempts — each
+        // attempt gets a fresh output UUID, so the delete above never
+        // matches an older attempt's file and multi-MB leaks accumulate.
+        // Age-gated so a concurrently running synth (gate limit can be
+        // raised above 1) never loses its live temp file.
+        outputFile.parentFile
+            ?.listFiles { f -> f.name.endsWith(".pcm.tmp") && f != pcmTmp }
+            ?.filter { it.lastModified() < System.currentTimeMillis() - STALE_TMP_AGE_MS }
+            ?.forEach { runCatching { it.delete() } }
         var charsSubmitted = 0
         var pcmTotalBytes = 0L
         var cachedChunks = 0
         val startedAt = System.currentTimeMillis()
 
+        try {
         FileOutputStream(pcmTmp).use { pcmOut ->
             for ((idx, chunk) in chunks.withIndex()) {
                 progressReporter.update(
@@ -252,7 +297,12 @@ class GeminiTts @Inject constructor(
         }
 
         writeWavFromPcmFile(pcmTmp, pcmTotalBytes, SAMPLE_RATE, outputFile)
-        runCatching { pcmTmp.delete() }
+        } finally {
+            // The temp PCM is only an intermediate — delete on success
+            // AND failure (a failed 30-min synth stranded ~85 MB; the
+            // per-chunk cache, not this file, is what resume uses).
+            runCatching { pcmTmp.delete() }
+        }
         // Once we have the final WAV the per-chunk cache is dead weight.
         cacheDir?.let { dir ->
             runCatching { dir.listFiles()?.forEach { it.delete() } ; dir.delete() }
@@ -278,6 +328,47 @@ class GeminiTts @Inject constructor(
             modelDisplay = resolvedDisplay,
             synthesisMillis = elapsedMs,
         )
+    }
+
+    private fun supportsAudioTags(modelId: String) = modelId.startsWith("gemini-3")
+
+    /**
+     * Remove bracket audio tags like "[chuckles] " from the script.
+     * Matches ONLY the sanctioned tag set from
+     * [DefaultPrompts.DIALOGUE_STYLE] so legitimate bracketed content
+     * (e.g. a "[sourceName]" citation the script LLM leaked through)
+     * is never silently deleted from spoken audio.
+     */
+    private fun stripAudioTags(script: String): String =
+        script.replace(
+            Regex(
+                """\[(chuckles|laughing|sighs|pause|excited|skeptical|thoughtful|slowly|emphatic)] ?""",
+                RegexOption.IGNORE_CASE,
+            ),
+            "",
+        )
+            // A line that was ONLY a tag ("Host: [pause]") is now a bare
+            // speaker label; an empty turn is exactly the content shape
+            // that triggers Gemini's no-audio responses — drop it.
+            .lines()
+            .filterNot { val t = it.trim(); t == "Host:" || t == "Analyst:" }
+            .joinToString("\n")
+
+    /**
+     * Content fingerprint for the chunk-PCM resume cache. Any change to
+     * the inputs that shape chunk boundaries or rendered audio must
+     * change this key.
+     */
+    private fun cacheContentKey(
+        script: String,
+        chunkChars: Int,
+        modelId: String,
+        voices: VoicePair,
+    ): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update("$modelId|$chunkChars|${voices.host}|${voices.analyst}|".toByteArray())
+        md.update(script.toByteArray())
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun formatElapsed(ms: Long): String {
@@ -316,6 +407,7 @@ class GeminiTts @Inject constructor(
         var lastErr: Throwable? = null
         var noAudioCount = 0
         var rateLimitWaits = 0
+        var refreshedAuth = false
         var attempt = 0
         while (attempt < RETRY_ATTEMPTS) {
             try {
@@ -347,6 +439,39 @@ class GeminiTts @Inject constructor(
                 throw ce
             } catch (t: Throwable) {
                 lastErr = t
+                // Permanent 4xx (bad model id, revoked key, malformed
+                // request) fails identically on every attempt — retrying
+                // just burns ~8 minutes of backoff. 429 stays retryable
+                // via the Retry-After path below.
+                val causes = generateSequence(t) { cur -> cur.cause.takeIf { it !== cur } }.toList()
+                val httpCode = causes.filterIsInstance<retrofit2.HttpException>().firstOrNull()?.code()
+                // A Vertex 401 usually means the cached OAuth token was
+                // revoked server-side (the interceptor keeps serving it
+                // until the expiry margin, up to ~59 min). Invalidate and
+                // retry ONCE with a freshly minted token before treating
+                // 401 as permanent.
+                if (httpCode == 401 && provider == TtsProvider.VERTEX_AI && !refreshedAuth) {
+                    refreshedAuth = true
+                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal got 401 — invalidating cached Vertex token and retrying")
+                    vertexAuth.invalidate()
+                    continue
+                }
+                if (httpCode != null && httpCode in 400..499 && httpCode != 429) {
+                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal permanent HTTP $httpCode — not retrying")
+                    throw t
+                }
+                // Permanent config/auth failures (missing Vertex project
+                // id, unparseable service-account JSON) carry no
+                // HttpException but fail identically on every attempt —
+                // don't burn the ~8-minute backoff loop on them.
+                val permanentConfig = causes.any {
+                    it is io.itsikh.finnencer.data.api.VertexConfigError ||
+                        it.message?.startsWith("Vertex auth failed") == true
+                }
+                if (permanentConfig) {
+                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal permanent Vertex config/auth failure — not retrying")
+                    throw t
+                }
                 val retryAfterMs = extractRetryAfterMs(t)
                 if (retryAfterMs != null && rateLimitWaits < MAX_RATE_LIMIT_WAITS) {
                     rateLimitWaits++
@@ -371,7 +496,13 @@ class GeminiTts @Inject constructor(
      * integer-seconds form Google uses and the rare HTTP-date form.
      */
     private fun extractRetryAfterMs(t: Throwable): Long? {
-        val http = t as? retrofit2.HttpException ?: return null
+        // dispatchGenerateContent wraps HttpException in IOException to
+        // carry a friendlier message — walk the cause chain so the 429
+        // handling still sees the original. (Matching only the top-level
+        // throwable made this whole mechanism dead code.)
+        val http = generateSequence(t) { cur -> cur.cause.takeIf { it !== cur } }
+            .filterIsInstance<retrofit2.HttpException>()
+            .firstOrNull() ?: return null
         if (http.code() != 429 && http.code() != 503) return null
         val rawResp = http.response()?.raw() ?: return defaultRateLimitFallbackMs(http.code())
         val header = rawResp.header("Retry-After")
@@ -626,12 +757,17 @@ class GeminiTts @Inject constructor(
         ok: Boolean,
         err: String?,
     ) {
-        // Rough cost: $0.30/M input tokens (~chars/4) + $2.50/M audio out
-        // tokens (~bytes/2/24 for L16 24kHz mono).
+        // Rough cost per model tier. Flash: $0.30/M input tokens
+        // (~chars/4) + $2.50/M audio out tokens (~bytes/2/24 for L16
+        // 24kHz mono). Pro-tier models run ~2x on input and ~8x on
+        // output — billing them at Flash rates under-reported ~7x.
+        val isPro = model.contains("pro")
+        val inRate = if (isPro) 0.60 else 0.30
+        val outRate = if (isPro) 20.0 else 2.50
         val inTokens = charsIn / 4
         val outTokens = (bytesOut / 2) / 24
-        val inCents = (inTokens / 1_000_000.0) * 0.30 * 100
-        val outCents = (outTokens / 1_000_000.0) * 2.50 * 100
+        val inCents = (inTokens / 1_000_000.0) * inRate * 100
+        val outCents = (outTokens / 1_000_000.0) * outRate * 100
         val millicents = ((inCents + outCents) * 1000).toLong()
         apiUsageDao.insert(
             ApiUsage(
@@ -692,6 +828,9 @@ class GeminiTts @Inject constructor(
         private const val SAMPLE_RATE = 24_000
         private const val BYTES_PER_SAMPLE = 2 // 16-bit mono
         private const val RETRY_ATTEMPTS = 10
+        /** *.pcm.tmp older than this is a leak from a dead attempt, not
+         *  a live synth (which touches its file every few seconds). */
+        private const val STALE_TMP_AGE_MS = 60L * 60 * 1000
         /** Base for the exponential backoff schedule used on
          *  network / 5xx errors. Doubles per attempt up to
          *  [BACKOFF_CAP_MS], with ±25% jitter. */

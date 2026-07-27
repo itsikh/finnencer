@@ -18,6 +18,8 @@ import io.itsikh.finnencer.data.repo.WatchlistPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -110,19 +113,37 @@ class WatchlistViewModel @Inject constructor(
         )
 
     /**
+     * "Wall clock" tick for the time-windowed queries below: emits `now`
+     * immediately, then every 15 minutes, so a long foreground session
+     * doesn't keep querying against a stale timestamp captured at flow
+     * start. Cold — each downstream stateIn collects its own instance,
+     * and WhileSubscribed cancels it with the rest of the upstream, so
+     * nothing ticks while the app is in the background.
+     */
+    private val nowTicker: Flow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(NOW_TICK_MS)
+        }
+    }
+
+    /**
      * Next upcoming earnings event per watched symbol. Keyed by
      * ticker.symbol so the row card can do a single map lookup. Empty
      * until the user has at least one ticker AND that ticker has an
      * earnings_events row (synced by the every-15-min EarningsCalendarSync).
+     * The [nowTicker] leg refreshes the "upcoming" cutoff every 15 min
+     * so an event doesn't linger as "next" after it has passed.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val nextEarningsBySymbol: StateFlow<Map<String, EarningsEvent>> =
-        tickers
-            .map { it.map(Ticker::symbol) }
-            .distinctUntilChanged()
-            .flatMapLatest { symbols ->
+        combine(
+            tickers.map { it.map(Ticker::symbol) }.distinctUntilChanged(),
+            nowTicker,
+        ) { symbols, now -> symbols to now }
+            .flatMapLatest { (symbols, now) ->
                 if (symbols.isEmpty()) flowOf(emptyList())
-                else earningsDao.observeNextEventForSymbols(symbols, System.currentTimeMillis())
+                else earningsDao.observeNextEventForSymbols(symbols, now)
             }
             .map { events -> events.associateBy { it.tickerSymbol } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
@@ -151,20 +172,21 @@ class WatchlistViewModel @Inject constructor(
     /**
      * Per-ticker count of high-importance ( ≥7 ) news clusters published
      * in the last 24h. Drives the "🔥 N" pill on the watchlist row.
-     * Re-evaluates on a 15-minute boundary to pick up newly-scored
-     * articles without spamming the DB.
+     * Re-evaluates on a 15-minute boundary (via [nowTicker]) so the 24h
+     * window slides forward during long sessions without spamming the DB.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val highScoreNewsCounts: StateFlow<Map<String, Int>> =
-        tickers
-            .map { it.map(Ticker::symbol) }
-            .distinctUntilChanged()
-            .flatMapLatest { symbols ->
+        combine(
+            tickers.map { it.map(Ticker::symbol) }.distinctUntilChanged(),
+            nowTicker,
+        ) { symbols, now -> symbols to now }
+            .flatMapLatest { (symbols, now) ->
                 if (symbols.isEmpty()) flowOf(emptyList())
                 else newsDao.observeHighScoreCounts(
                     symbols = symbols,
                     minScore = HIGH_SCORE_THRESHOLD,
-                    sinceMillis = System.currentTimeMillis() - HIGH_SCORE_WINDOW_MS,
+                    sinceMillis = now - HIGH_SCORE_WINDOW_MS,
                 )
             }
             .map { rows -> rows.associate { it.symbol to it.count } }
@@ -418,6 +440,10 @@ class WatchlistViewModel @Inject constructor(
     private companion object {
         const val HIGH_SCORE_THRESHOLD = 7
         const val HIGH_SCORE_WINDOW_MS = 24L * 60 * 60 * 1000
+
+        /** How often [nowTicker] refreshes the 'now' used by the
+         *  time-windowed queries above. */
+        const val NOW_TICK_MS = 15L * 60 * 1000
     }
 }
 

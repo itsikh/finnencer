@@ -46,7 +46,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -155,9 +157,21 @@ private fun CameraPreview(onScanned: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
+    val analyzer = remember { QrAnalyzer(executor = analyzerExecutor, onResult = onScanned) }
+    // Bound asynchronously in the factory listener below; tracked here so
+    // onDispose can tear the camera down.
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var analysisUseCase by remember { mutableStateOf<ImageAnalysis?>(null) }
 
     DisposableEffect(Unit) {
-        onDispose { analyzerExecutor.shutdown() }
+        onDispose {
+            // Order matters: stop frame delivery first, detach the analyzer
+            // before its executor stops, then release the ML Kit scanner.
+            cameraProvider?.unbindAll()
+            analysisUseCase?.clearAnalyzer()
+            analyzerExecutor.shutdown()
+            analyzer.close()
+        }
     }
 
     Box(
@@ -181,6 +195,7 @@ private fun CameraPreview(onScanned: (String) -> Unit) {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
                     val provider = cameraProviderFuture.get()
+                    cameraProvider = provider
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
@@ -198,10 +213,8 @@ private fun CameraPreview(onScanned: (String) -> Unit) {
                         )
                         .build()
                         .also {
-                            it.setAnalyzer(
-                                analyzerExecutor,
-                                QrAnalyzer(executor = analyzerExecutor, onResult = onScanned),
-                            )
+                            it.setAnalyzer(analyzerExecutor, analyzer)
+                            analysisUseCase = it
                         }
                     runCatching {
                         provider.unbindAll()

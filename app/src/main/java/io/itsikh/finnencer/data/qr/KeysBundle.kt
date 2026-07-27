@@ -100,6 +100,11 @@ class KeysBundle @Inject constructor(
         val iv = Base64.decode(root["iv"].asString, Base64.NO_WRAP)
         val ct = Base64.decode(root["ct"].asString, Base64.NO_WRAP)
         val iter = root["iter"]?.asInt ?: PBKDF2_ITERATIONS
+        // `iter` is attacker-controlled: an absurd count turns PBKDF2 into
+        // a CPU DoS. Reject anything outside a sane range.
+        require(iter in PBKDF2_MIN_ITERATIONS..PBKDF2_MAX_ITERATIONS) {
+            "Unreasonable KDF iteration count ($iter)"
+        }
 
         val secret = deriveKey(passphrase, salt, iter)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -141,6 +146,11 @@ class KeysBundle @Inject constructor(
 
     companion object {
         const val PBKDF2_ITERATIONS = 100_000
+
+        // Bounds for the `iter` field of a scanned bundle. Anything below
+        // is too weak to bother decrypting; anything above is a DoS vector.
+        const val PBKDF2_MIN_ITERATIONS = 10_000
+        const val PBKDF2_MAX_ITERATIONS = 1_000_000
 
         /**
          * Keys that must never be exported in a QR bundle. The OAuth

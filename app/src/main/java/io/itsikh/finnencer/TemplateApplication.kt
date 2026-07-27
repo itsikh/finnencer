@@ -91,9 +91,11 @@ class TemplateApplication : Application(), Configuration.Provider {
         }
         // Ensure the morning-brief chain is alive (idempotent — when
         // disabled, this cancels any leftover scheduling; when enabled
-        // it (re)schedules the next run based on current prefs).
+        // it schedules only if nothing is pending). Must be KEEP-based:
+        // REPLACE here used to delete a past-due request that doze
+        // hadn't dispatched yet, silently skipping that day's brief.
         appScope.launch {
-            runCatching { morningBriefScheduler.rescheduleNext() }
+            runCatching { morningBriefScheduler.ensureScheduled() }
                 .onFailure { AppLogger.e("App", "Morning brief reschedule failed", it) }
         }
         // Same idempotent ensure-or-cancel pattern for the three new

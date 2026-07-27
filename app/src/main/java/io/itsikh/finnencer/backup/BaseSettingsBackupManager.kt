@@ -45,6 +45,14 @@ abstract class BaseSettingsBackupManager(
     protected val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     /**
+     * Highest envelope `version` this build can restore. Subclasses pin
+     * this to their current backup schema version so files written by a
+     * newer app fail the import with a clear message instead of being
+     * silently misread.
+     */
+    protected open val maxSupportedSettingsVersion: Int = Int.MAX_VALUE
+
+    /**
      * Collect all app settings to back up. Implementations should read
      * API keys, preferences, debug settings, etc. and return as [SettingsData].
      */
@@ -126,6 +134,16 @@ abstract class BaseSettingsBackupManager(
         } catch (e: Exception) {
             throw IOException("Invalid backup file - JSON parse error: ${e.message}")
         } ?: throw IOException("Invalid backup file - empty JSON")
+
+        // Refuse files written by a newer app before touching any state —
+        // a newer schema may carry entries this build would drop or misread.
+        val fileVersion = envelope["version"]?.takeIf { it.isJsonPrimitive }?.asInt ?: 1
+        if (fileVersion > maxSupportedSettingsVersion) {
+            throw IOException(
+                "Backup file version $fileVersion is newer than this app supports " +
+                    "(max $maxSupportedSettingsVersion). Update the app, then retry the import."
+            )
+        }
 
         // Extract data object for subclass
         val data = envelope.getAsJsonObject("data")

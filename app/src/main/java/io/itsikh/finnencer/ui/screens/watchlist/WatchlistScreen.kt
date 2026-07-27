@@ -106,6 +106,11 @@ fun WatchlistScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            // Leaving via navigation disposes the composable WITHOUT an
+            // ON_PAUSE (the activity stays resumed) — stop here too or
+            // the singleton poller keeps hitting Yahoo every 60s from
+            // any other tab/screen until the app is backgrounded.
+            vm.stopQuotePolling()
         }
     }
 

@@ -144,9 +144,33 @@ fun AppNavHost(
                     onOpenReader = { navController.navigate("reader") },
                 )
             }
-            composable("ticker/{symbol}") {
+            composable(
+                route = "ticker/{symbol}",
+                arguments = listOf(
+                    navArgument("symbol") { type = NavType.StringType },
+                ),
+                // Notification taps (e.g. insider-purchase alerts) land
+                // here via finnencer://ticker/{symbol} — same singleTop /
+                // onNewIntent forwarding as the article deep link above.
+                // An unwatched symbol degrades gracefully: the feed screen
+                // renders with an empty ticker header and the back button
+                // falls back to the tab scaffold.
+                deepLinks = listOf(
+                    navDeepLink { uriPattern = "finnencer://ticker/{symbol}" },
+                ),
+            ) {
                 TickerFeedScreen(
-                    onBack = { navController.popBackStack() },
+                    onBack = {
+                        // popBackStack() is a no-op when the back stack
+                        // is empty (deep-link cold start). Fall back to
+                        // the tab scaffold so the user always has a way
+                        // out of the ticker feed.
+                        if (!navController.popBackStack()) {
+                            navController.navigate("main") {
+                                popUpTo("main") { inclusive = true }
+                            }
+                        }
+                    },
                     onOpenArticle = { articleId -> navController.navigate("article/$articleId") },
                     onOpenReport = { reportId -> navController.navigate("report/$reportId") },
                     onOpenPodcast = { podcastId -> navController.navigate("podcast/$podcastId") },

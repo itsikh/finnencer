@@ -20,10 +20,10 @@ object ClaudeModels {
     const val HAIKU = "claude-haiku-4-5-20251001"
 
     /** Default model for article summaries + BRIEF/STANDARD earnings reports. */
-    const val SONNET = "claude-sonnet-4-6"
+    const val SONNET = "claude-sonnet-5"
 
     /** 1M-context model for DEEP earnings reports. */
-    const val OPUS = "claude-opus-4-7"
+    const val OPUS = "claude-opus-5"
 }
 
 /**
@@ -66,20 +66,28 @@ class ClaudeClient @Inject constructor(
             )
             else -> system
         }
+        // Opus 5 / Sonnet 5 run adaptive thinking when the `thinking`
+        // field is omitted, and max_tokens caps thinking + response text
+        // together — our tightly-sized budgets would truncate mid-answer
+        // and pay for thinking tokens. These are pure text-generation
+        // calls (no tools), so disable it to keep behavior/cost parity.
+        // Valid only at effort <= high; we never send effort (default
+        // high), so this is always accepted.
+        val thinking = if (model.startsWith("claude-opus-5") || model.startsWith("claude-sonnet-5")) {
+            mapOf("type" to "disabled")
+        } else null
         val request = AnthropicRequest(
             model = model,
             maxTokens = maxTokens,
             system = systemField,
             messages = listOf(AnthropicMessage(role = "user", content = userMessage)),
             temperature = effectiveTemperature,
+            thinking = thinking,
         )
-        // The 1M-context variant of Opus 4.x requires the per-request
-        // `anthropic-beta` header; without it the server returns HTTP 400.
-        // Decide based on the catalog entry's declared context window so
-        // future models inherit the right behavior automatically.
-        val beta = entry
-            ?.takeIf { it.provider == AiProvider.ANTHROPIC && it.maxContextTokens > 200_000 }
-            ?.let { "context-1m-2025-08-07" }
+        // Opus 5 / Sonnet 5 serve the 1M context window by default — the
+        // `context-1m-2025-08-07` beta header the Opus 4.7 era needed is
+        // gone along with the 4.x catalog entries.
+        val beta: String? = null
         val started = System.currentTimeMillis()
         val response = try {
             service.messages(request, beta)
@@ -123,13 +131,26 @@ class ClaudeClient @Inject constructor(
         if (start == -1) return null
         val open = s[start]
         val close = if (open == '{') '}' else ']'
+        // String-aware scan: braces/brackets inside JSON string literals
+        // (e.g. {"summary": "Q3 {beat}"}) must not affect the depth count,
+        // so we track whether we're inside a string and skip escaped chars.
         var depth = 0
+        var inString = false
+        var escaped = false
         for (i in start until s.length) {
             val c = s[i]
-            if (c == open) depth++
-            else if (c == close) {
-                depth--
-                if (depth == 0) return s.substring(start, i + 1)
+            when {
+                escaped -> escaped = false
+                inString -> when (c) {
+                    '\\' -> escaped = true
+                    '"' -> inString = false
+                }
+                c == '"' -> inString = true
+                c == open -> depth++
+                c == close -> {
+                    depth--
+                    if (depth == 0) return s.substring(start, i + 1)
+                }
             }
         }
         return null
@@ -192,7 +213,10 @@ class ClaudeClient @Inject constructor(
         // Per million tokens: (input_usd, output_usd)
         val (inPerM, outPerM) = when {
             model.contains("haiku") -> 1.0 to 5.0
-            model.contains("opus") -> 15.0 to 75.0
+            // Opus 4.6 through Opus 5 are all $5/$25 per MTok. The old
+            // 15/75 figure was Opus-4.1-era pricing and overstated every
+            // Opus call ~3x.
+            model.contains("opus") -> 5.0 to 25.0
             else /* sonnet */ -> 3.0 to 15.0
         }
         val freshCost = (freshInputTokens / 1_000_000.0) * inPerM

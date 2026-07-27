@@ -3,6 +3,7 @@ package io.itsikh.finnencer.data.repo
 import io.itsikh.finnencer.data.api.YahooChartResult
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.logging.AppLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -101,10 +102,17 @@ class QuotePoller @Inject constructor(
         pollJob?.cancel()
         pollJob = scope.launch {
             // Fire one fetch immediately so the user sees a number,
-            // then settle into the 60s cadence.
+            // then settle into the 60s cadence. When EVERY symbol fails
+            // (Yahoo outage, no connectivity) double the delay each cycle
+            // up to 10 min so we don't hammer a dead endpoint; any
+            // successful cycle resets the cadence.
+            var failedCycles = 0
             while (true) {
-                fetchOnce(unique)
-                delay(POLL_INTERVAL_MS)
+                val anyFresh = fetchOnce(unique)
+                failedCycles = if (anyFresh) 0 else failedCycles + 1
+                val backoff = (POLL_INTERVAL_MS shl failedCycles.coerceAtMost(4))
+                    .coerceAtMost(MAX_BACKOFF_MS)
+                delay(backoff)
             }
         }
     }
@@ -132,19 +140,22 @@ class QuotePoller @Inject constructor(
     /**
      * One tick: kick off a parallel chart fetch per symbol, merge the
      * results into [_latest]. Each symbol's request is independent;
-     * one failure doesn't poison the others.
+     * one failure doesn't poison the others. Returns true when at least
+     * one symbol produced a quote, so the poll loop can back off during
+     * a total outage.
      */
-    private suspend fun fetchOnce(tickers: List<String>) {
+    private suspend fun fetchOnce(tickers: List<String>): Boolean {
         val results: List<TickerQuote?> = coroutineScope {
             tickers.map { symbol ->
                 async { fetchOneSymbol(symbol) }
             }.awaitAll()
         }
         val fresh = results.filterNotNull()
-        if (fresh.isEmpty()) return
+        if (fresh.isEmpty()) return false
         val merged = _latest.value.toMutableMap()
         for (q in fresh) merged[q.symbol] = q
         _latest.value = merged
+        return true
     }
 
     /**
@@ -156,6 +167,9 @@ class QuotePoller @Inject constructor(
     private suspend fun fetchOneSymbol(symbol: String): TickerQuote? {
         val result = runCatching { service.chart(symbol).chart.result?.firstOrNull() }
             .getOrElse { primaryErr ->
+                // runCatching would otherwise swallow the poll loop's own
+                // cancellation and turn stop() into a query2 retry.
+                if (primaryErr is CancellationException) throw primaryErr
                 AppLogger.w(TAG, "query1 chart failed for $symbol (${primaryErr.message}); trying query2")
                 runCatching {
                     service.chartAt(
@@ -163,11 +177,21 @@ class QuotePoller @Inject constructor(
                             "$symbol?interval=15m&range=1d&includePrePost=true",
                     ).chart.result?.firstOrNull()
                 }.getOrElse { fallbackErr ->
+                    if (fallbackErr is CancellationException) throw fallbackErr
                     AppLogger.w(TAG, "query2 chart also failed for $symbol: ${fallbackErr.message}")
                     null
                 }
+            } ?: return null
+        // Parse inside the same per-symbol isolation. Gson populates the
+        // payload reflectively, so a malformed response can leave
+        // "non-null" Kotlin fields (meta, meta.symbol) null — an NPE here
+        // must cost this symbol one tick, not kill the whole poll loop.
+        return runCatching { toQuote(result) }
+            .getOrElse { parseErr ->
+                if (parseErr is CancellationException) throw parseErr
+                AppLogger.w(TAG, "chart parse failed for $symbol: ${parseErr.message}")
+                null
             }
-        return result?.let { toQuote(it) }
     }
 
     /**
@@ -258,13 +282,17 @@ class QuotePoller @Inject constructor(
         val meta = result.meta
         val regular = meta.currentTradingPeriod?.regular
 
+        // Same zero-guard the main-session path applies to previousClose:
+        // a zero regular price would turn every computed pct into ±Inf.
+        fun pctVsRegular(price: Double): Double =
+            if (regularPrice != 0.0) (price - regularPrice) / regularPrice * 100.0 else 0.0
+
         // Cheap path: meta-level extended fields
         meta.postMarketPrice?.let { pp ->
             val regEnd = regular?.end ?: 0L
             val pt = meta.postMarketTime ?: 0L
             if (pt > regEnd) {
-                val pct = meta.postMarketChangePercent
-                    ?: ((pp - regularPrice) / regularPrice * 100.0)
+                val pct = meta.postMarketChangePercent ?: pctVsRegular(pp)
                 return ExtendedHours(pp, pct, ExtendedSession.POST)
             }
         }
@@ -272,8 +300,7 @@ class QuotePoller @Inject constructor(
             val regStart = regular?.start ?: Long.MAX_VALUE
             val pt = meta.preMarketTime ?: 0L
             if (pt in 1 until regStart) {
-                val pct = meta.preMarketChangePercent
-                    ?: ((pp - regularPrice) / regularPrice * 100.0)
+                val pct = meta.preMarketChangePercent ?: pctVsRegular(pp)
                 return ExtendedHours(pp, pct, ExtendedSession.PRE)
             }
         }
@@ -288,14 +315,10 @@ class QuotePoller @Inject constructor(
             val close = closes[i] ?: continue
             val ts = timestamps[i]
             return when {
-                ts > regular.end -> {
-                    val pct = (close - regularPrice) / regularPrice * 100.0
-                    ExtendedHours(close, pct, ExtendedSession.POST)
-                }
-                ts < regular.start -> {
-                    val pct = (close - regularPrice) / regularPrice * 100.0
-                    ExtendedHours(close, pct, ExtendedSession.PRE)
-                }
+                ts > regular.end ->
+                    ExtendedHours(close, pctVsRegular(close), ExtendedSession.POST)
+                ts < regular.start ->
+                    ExtendedHours(close, pctVsRegular(close), ExtendedSession.PRE)
                 // Latest candle is in the regular window → no extended trade
                 else -> null
             }
@@ -306,5 +329,7 @@ class QuotePoller @Inject constructor(
     private companion object {
         const val TAG = "QuotePoller"
         const val POLL_INTERVAL_MS = 60_000L
+        /** Ceiling for the all-symbols-failing backoff (10 min). */
+        const val MAX_BACKOFF_MS = 600_000L
     }
 }

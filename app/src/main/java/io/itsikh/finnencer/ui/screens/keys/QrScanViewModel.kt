@@ -1,11 +1,15 @@
 package io.itsikh.finnencer.ui.screens.keys
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.data.qr.KeysBundle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 sealed interface ScanStage {
@@ -58,13 +62,20 @@ class QrScanViewModel @Inject constructor(
     fun tryDecryptWithPassphrase() {
         val s = _state.value
         val stage = s.stage as? ScanStage.NeedsPassphrase ?: return
-        keysBundle.parsePayload(stage.rawPayload, s.passphrase)
-            .onSuccess { parsed ->
-                _state.value = s.copy(stage = ScanStage.Preview(stage.rawPayload, parsed))
+        viewModelScope.launch {
+            // PBKDF2 at 100k+ iterations takes seconds — keep the derive
+            // off the main thread; state updates land back on main.
+            val result = withContext(Dispatchers.Default) {
+                keysBundle.parsePayload(stage.rawPayload, s.passphrase)
             }
-            .onFailure { t ->
-                _state.value = s.copy(stage = ScanStage.Error(t.message ?: "Decrypt failed"))
-            }
+            result
+                .onSuccess { parsed ->
+                    _state.value = s.copy(stage = ScanStage.Preview(stage.rawPayload, parsed))
+                }
+                .onFailure { t ->
+                    _state.value = s.copy(stage = ScanStage.Error(t.message ?: "Decrypt failed"))
+                }
+        }
     }
 
     fun setOverwrite(value: Boolean) {

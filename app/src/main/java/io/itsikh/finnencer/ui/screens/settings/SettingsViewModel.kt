@@ -307,7 +307,17 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setPodcastTtsProvider(value: io.itsikh.finnencer.data.repo.TtsProvider) {
-        viewModelScope.launch { podcastPrefs.setTtsProvider(value) }
+        viewModelScope.launch {
+            podcastPrefs.setTtsProvider(value)
+            // A Vertex-only GA model can't be used on the Generative
+            // Language surface (404). Reset it to the default so the
+            // picker doesn't render with no selected chip and every
+            // downstream consumer agrees on the effective model.
+            val model = podcastPrefs.ttsModel.first()
+            if (value != io.itsikh.finnencer.data.repo.TtsProvider.VERTEX_AI && model.vertexOnly) {
+                podcastPrefs.setTtsModel(io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH)
+            }
+        }
     }
 
     /**

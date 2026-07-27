@@ -94,7 +94,7 @@ class WatchlistRestorer @Inject constructor(
             TAG,
             "Tickers table empty but snapshot has ${saved.size} entries — restoring",
         )
-        saved.forEach { tickerDao.upsert(it) }
+        saved.forEach { tickerDao.insertIgnore(it) }
     }
 
     private companion object { const val TAG = "WatchlistRestorer" }

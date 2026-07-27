@@ -54,7 +54,11 @@ class MorningBriefWorker @AssistedInject constructor(
             // Don't retry on the same trigger — we'll get another shot
             // tomorrow. Always reschedule so the next firing happens.
         } finally {
-            runCatching { scheduler.rescheduleNext() }
+            // APPEND_OR_REPLACE: REPLACE would cancel this still-RUNNING
+            // attempt when the enqueue's cancel step races our own
+            // completion. doWork always returns success, so the appended
+            // next-day request is never chain-cancelled by a failure.
+            runCatching { scheduler.rescheduleNext(androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE) }
         }
         return Result.success()
     }

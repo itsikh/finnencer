@@ -70,6 +70,7 @@ class PodcastLibraryViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val podcastDao: PodcastDao,
     private val viewModePrefs: io.itsikh.finnencer.data.repo.ViewModePreferences,
+    private val queueRepo: io.itsikh.finnencer.data.repo.QueueRepository,
 ) : ViewModel() {
 
     val podcasts: StateFlow<List<Podcast>> = podcastDao.observeAll()
@@ -94,6 +95,10 @@ class PodcastLibraryViewModel @Inject constructor(
         viewModelScope.launch {
             deleteFilesFor(podcast)
             podcastDao.delete(podcast.id)
+            // Also drop the queue item — a dangling refId left the
+            // end-of-podcast auto-advance navigating to a dead row
+            // and hanging on "Loading…" (#78).
+            queueRepo.removeByRef(QueueItemKind.PODCAST, podcast.id.toString())
         }
     }
 
@@ -110,6 +115,7 @@ class PodcastLibraryViewModel @Inject constructor(
             failed.forEach { p ->
                 deleteFilesFor(p)
                 podcastDao.delete(p.id)
+                queueRepo.removeByRef(QueueItemKind.PODCAST, p.id.toString())
             }
         }
     }

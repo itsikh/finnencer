@@ -17,6 +17,12 @@ interface QueueItemDao {
     @Update
     suspend fun update(item: QueueItem)
 
+    /** Multi-row update. Room runs list-parameter @Update calls inside a
+     *  single transaction, which is what makes [QueueRepository.reorder]
+     *  atomic — either every row gets its new sort_order or none do. */
+    @Update
+    suspend fun updateAll(items: List<QueueItem>)
+
     @Query("SELECT * FROM queue_items WHERE id = :id")
     suspend fun get(id: Long): QueueItem?
 
@@ -31,6 +37,12 @@ interface QueueItemDao {
     /** "To do" tab: unfinished items, user-ordered by sortOrder. */
     @Query("SELECT * FROM queue_items WHERE completed_at_millis IS NULL ORDER BY sort_order ASC")
     fun observeIncomplete(): Flow<List<QueueItem>>
+
+    /** One-shot snapshot of the same list — used by the ↑/↓ reorder path
+     *  so it computes against the CURRENT rows rather than a possibly
+     *  stale StateFlow emission (double-tap race). */
+    @Query("SELECT * FROM queue_items WHERE completed_at_millis IS NULL ORDER BY sort_order ASC")
+    suspend fun getIncomplete(): List<QueueItem>
 
     /** "Done" tab: completed items, most-recently-completed first. */
     @Query("SELECT * FROM queue_items WHERE completed_at_millis IS NOT NULL ORDER BY completed_at_millis DESC")

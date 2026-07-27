@@ -40,10 +40,22 @@ class MorningBriefScheduler @Inject constructor(
      *
      * - When disabled, cancels any in-flight scheduling.
      * - When enabled, enqueues a OneTimeWorkRequest with the
-     *   appropriate initial delay. UNIQUE+REPLACE so flipping the
-     *   time picker doesn't double-schedule.
+     *   appropriate initial delay. UNIQUE so there's never more than
+     *   one chain scheduled.
+     *
+     * [policy] matters — pick per call site:
+     *  - REPLACE (default): user changed brief settings; the pending
+     *    request encodes a stale time and must be replaced.
+     *  - APPEND_OR_REPLACE: the worker rescheduling itself. REPLACE
+     *    here would cancel the still-RUNNING attempt (this very
+     *    worker) when the enqueue races ahead of its completion.
+     *
+     * App startup must NOT call this with REPLACE: a past-due request
+     * that doze hasn't dispatched yet would be replaced by one aimed
+     * at tomorrow, silently skipping today's brief. Use
+     * [ensureScheduled] there.
      */
-    suspend fun rescheduleNext() {
+    suspend fun rescheduleNext(policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
         val cfg = readConfig()
         if (!cfg.enabled) {
             cancel()
@@ -60,10 +72,18 @@ class MorningBriefScheduler @Inject constructor(
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_NAME,
-            ExistingWorkPolicy.REPLACE,
+            policy,
             request,
         )
     }
+
+    /**
+     * Startup-safe scheduling: enqueue only when no pending request
+     * exists (KEEP). A pending — possibly past-due — request keeps its
+     * slot so today's brief still fires after doze; a finished/absent
+     * chain gets a fresh request.
+     */
+    suspend fun ensureScheduled() = rescheduleNext(ExistingWorkPolicy.KEEP)
 
     fun cancel() {
         WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)

@@ -45,6 +45,14 @@ data class AnthropicRequest(
     val system: Any? = null,
     val messages: List<AnthropicMessage>,
     val temperature: Double? = null,
+    /**
+     * Thinking config. On Opus 5 / Sonnet 5, OMITTING this field runs
+     * adaptive thinking by default — and max_tokens then caps thinking
+     * PLUS response text, so tightly-sized budgets truncate mid-answer.
+     * ClaudeClient sends {"type":"disabled"} on those models to keep
+     * pre-migration behavior and cost. Null = field absent on the wire.
+     */
+    val thinking: Map<String, String>? = null,
 )
 
 /**

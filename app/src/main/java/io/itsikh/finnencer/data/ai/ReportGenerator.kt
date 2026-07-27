@@ -81,7 +81,11 @@ class ReportGenerator @Inject constructor(
                 .onFailure { Log.w(TAG, "on-demand CIK lookup failed for ${ticker.symbol}: ${it.message}") }
                 .getOrNull()
             if (cik != null) {
-                tickerDao.update(ticker.copy(cik = cik))
+                // Targeted UPDATE of the cik column only: a full-row
+                // update from the stale `ticker` snapshot (captured
+                // before the network lookup) would clobber settings the
+                // user changed meanwhile.
+                tickerDao.updateCik(ticker.symbol, cik)
                 Log.i(TAG, "resolved CIK $cik for ${ticker.symbol} on-demand")
             } else {
                 Log.w(TAG, "${ticker.symbol} has no CIK; XBRL section will be empty. EDGAR sync hasn't resolved it — check API keys → EDGAR User-Agent.")
@@ -155,10 +159,13 @@ class ReportGenerator @Inject constructor(
         }
 
         // ───────── Prompt template ─────────
+        // Caps sized for Sonnet 5 / Opus 5: Sonnet 5's tokenizer emits
+        // ~30% more tokens for the same text than 4.6 did, so the old
+        // caps (1500/3500/6500) would truncate equivalent-length reports.
         val (usage, baseSystem, maxTokens) = when (tier) {
-            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, BRIEF_PROMPT, 1500)
-            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, STANDARD_PROMPT, 3500)
-            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DEEP_PROMPT, 6500)
+            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, BRIEF_PROMPT, 2000)
+            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, STANDARD_PROMPT, 4600)
+            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DEEP_PROMPT, 8500)
         }
         val system = promptPrefs.applyExtras(
             base = baseSystem,
@@ -178,7 +185,12 @@ class ReportGenerator @Inject constructor(
             // read rates on the shared prefix.
             cacheSystem = true,
         )
-        val text = completion.text
+        // Surface truncation instead of persisting a silently cut-off
+        // report (a DEEP report ending mid-table looks like a render bug).
+        val text = if (completion.stopReason == "max_tokens") {
+            Log.w(TAG, "${tier.name} report for ${ticker.symbol} hit the $maxTokens-token output cap; storing with truncation marker")
+            completion.text + "\n\n> ⚠️ Report hit the output-token limit and may be truncated."
+        } else completion.text
 
         val tierLabel = tier.name.lowercase().replaceFirstChar { it.uppercase() }
         val title = event.fiscalLabelOrNull()

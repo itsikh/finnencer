@@ -38,6 +38,13 @@ import javax.inject.Singleton
  *  5. another article in the same cluster_key was NOT already notified in
  *     the last 6h
  *  6. system notification permission + channel are both enabled
+ *
+ * Quiet hours defer rather than drop: an alert suppressed ONLY by the
+ * quiet-hours gate is recorded in [DeferredAlertStore] and re-offered on
+ * later cycles (up to ~12h) so it fires on the first fanout after the
+ * window ends. Every other suppression (threshold, mute, cap, cluster
+ * dedup) is terminal — deferred entries hitting one of those gates at
+ * delivery time are dropped from the store, never retried.
  */
 @Singleton
 class AlertNotifier @Inject constructor(
@@ -45,6 +52,7 @@ class AlertNotifier @Inject constructor(
     private val tickerDao: TickerDao,
     private val newsDao: NewsDao,
     private val notificationDao: NotificationDao,
+    private val deferredStore: DeferredAlertStore,
 ) {
 
     data class FanoutStats(
@@ -55,21 +63,30 @@ class AlertNotifier @Inject constructor(
         val suppressedByCap: Int,
         val suppressedByClusterDedup: Int,
         val posted: Int,
+        /** Dropped because POST_NOTIFICATIONS is denied or the alerts
+         *  channel is off — a system-level block, not a threshold verdict. */
+        val suppressedBySystemDisabled: Int = 0,
     )
 
     suspend fun fanout(newScores: List<ArticleScore>): FanoutStats {
-        if (newScores.isEmpty()) return FanoutStats(0, 0, 0, 0, 0, 0, 0)
+        val now = System.currentTimeMillis()
+        // Alerts deferred by quiet hours in earlier cycles join this
+        // cycle's candidates; they pass through the exact same gates below
+        // (threshold, mute, cap, cluster dedup), so nothing double-fires.
+        val deferred = deferredCandidates(newScores, now)
+        val deferredKeys = deferred.mapTo(HashSet()) { it.articleId to it.tickerSymbol }
+        val candidates = newScores + deferred
+        if (candidates.isEmpty()) return FanoutStats(0, 0, 0, 0, 0, 0, 0)
         if (!hasNotificationPermission()) {
-            AppLogger.w(TAG, "fanout: notifications permission not granted; suppressing ${newScores.size}")
-            return FanoutStats(newScores.size, newScores.size, 0, 0, 0, 0, 0)
+            AppLogger.w(TAG, "fanout: notifications permission not granted; suppressing ${candidates.size}")
+            return FanoutStats(candidates.size, 0, 0, 0, 0, 0, 0, suppressedBySystemDisabled = candidates.size)
         }
         NotificationChannels.ensureCreated(context)
         if (!NotificationChannels.areAlertsEnabled(context)) {
-            AppLogger.w(TAG, "fanout: alerts channel disabled by user; suppressing ${newScores.size}")
-            return FanoutStats(newScores.size, newScores.size, 0, 0, 0, 0, 0)
+            AppLogger.w(TAG, "fanout: alerts channel disabled by user; suppressing ${candidates.size}")
+            return FanoutStats(candidates.size, 0, 0, 0, 0, 0, 0, suppressedBySystemDisabled = candidates.size)
         }
 
-        val now = System.currentTimeMillis()
         val startOfTodayMillis = ZonedDateTime.now(ZoneId.systemDefault())
             .toLocalDate()
             .atStartOfDay(ZoneId.systemDefault())
@@ -86,46 +103,70 @@ class AlertNotifier @Inject constructor(
 
         // Sort highest-score-first so we burn the day's cap on the most
         // material items.
-        for (score in newScores.sortedByDescending { it.score }) {
-            val ticker = tickerDao.get(score.tickerSymbol) ?: continue
+        for (score in candidates.sortedByDescending { it.score }) {
+            val key = score.articleId to score.tickerSymbol
+            val isDeferred = key in deferredKeys
+            // Any terminal verdict for a deferred entry drops it from the
+            // store — only "still inside quiet hours" keeps it alive.
+            suspend fun dropDeferred() {
+                if (isDeferred) deferredStore.remove(score.articleId, score.tickerSymbol)
+            }
+
+            val ticker = tickerDao.get(score.tickerSymbol)
+            if (ticker == null) {
+                dropDeferred(); continue
+            }
 
             if (score.score < ticker.notificationThreshold) {
-                thrSup++; continue
+                thrSup++; dropDeferred(); continue
             }
             if (ticker.mutedUntilMillis != null && ticker.mutedUntilMillis > now) {
-                muteSup++; continue
+                muteSup++; dropDeferred(); continue
             }
             if (insideQuietHours(ticker, now)) {
-                quietSup++; continue
+                quietSup++
+                // The ONLY non-terminal suppression: record for a later
+                // cycle (no-op refresh if already recorded).
+                if (!isDeferred) deferredStore.add(score.articleId, score.tickerSymbol, now)
+                continue
             }
             val sentToday = notificationDao.countSinceForTicker(ticker.symbol, startOfTodayMillis)
             if (sentToday >= ticker.dailyNotificationCap) {
-                capSup++; continue
+                capSup++; dropDeferred(); continue
             }
-            val article = newsDao.getArticle(score.articleId) ?: continue
+            val article = newsDao.getArticle(score.articleId)
+            if (article == null) {
+                dropDeferred(); continue
+            }
             val clusterAlreadyAlerted = notificationDao.clusterAlreadyNotified(
                 article.clusterKey, sixHoursAgo,
             )
             if (clusterAlreadyAlerted) {
-                clusterSup++; continue
+                clusterSup++; dropDeferred(); continue
             }
 
             postNotification(ticker, article, score)
-            notificationDao.insert(
-                NotificationLog(
-                    articleId = article.id,
-                    tickerSymbol = ticker.symbol,
-                    score = score.score,
-                    sentAtMillis = now,
+            dropDeferred()
+            // Log-insert failure must not abort the whole fanout: the
+            // notification is already on screen, and rethrowing here would
+            // retry the cycle and re-post it (no log row = no dedup).
+            runCatching {
+                notificationDao.insert(
+                    NotificationLog(
+                        articleId = article.id,
+                        tickerSymbol = ticker.symbol,
+                        score = score.score,
+                        sentAtMillis = now,
+                    )
                 )
-            )
+            }.onFailure { AppLogger.e(TAG, "notification log insert failed for ${article.id}", it) }
             AppLogger.i(TAG, "posted $${ticker.symbol} score=${score.score} cat=${score.category}")
             posted++
         }
 
-        AppLogger.i(TAG, "fanout: candidates=${newScores.size} posted=$posted thr=$thrSup mute=$muteSup quiet=$quietSup cap=$capSup cluster=$clusterSup")
+        AppLogger.i(TAG, "fanout: candidates=${candidates.size} posted=$posted thr=$thrSup mute=$muteSup quiet=$quietSup cap=$capSup cluster=$clusterSup")
         return FanoutStats(
-            candidates = newScores.size,
+            candidates = candidates.size,
             suppressedByThreshold = thrSup,
             suppressedByQuietHours = quietSup,
             suppressedByMute = muteSup,
@@ -133,6 +174,30 @@ class AlertNotifier @Inject constructor(
             suppressedByClusterDedup = clusterSup,
             posted = posted,
         )
+    }
+
+    /**
+     * Alerts previously recorded in [DeferredAlertStore] (quiet-hours
+     * suppressions only), resolved back to their [ArticleScore] rows.
+     * Entries whose score or article row has since been pruned are
+     * dropped from the store. This cycle's own scores are excluded so a
+     * just-recorded deferral isn't offered twice in the same fanout.
+     */
+    private suspend fun deferredCandidates(
+        newScores: List<ArticleScore>,
+        now: Long,
+    ): List<ArticleScore> {
+        val newKeys = newScores.mapTo(HashSet()) { it.articleId to it.tickerSymbol }
+        return deferredStore.entries(DEFERRED_LOOKBACK_MS, now)
+            .filter { (it.articleId to it.tickerSymbol) !in newKeys }
+            .mapNotNull { entry ->
+                val score = newsDao.scoresFor(entry.articleId)
+                    .firstOrNull { it.tickerSymbol == entry.tickerSymbol }
+                if (score == null) {
+                    deferredStore.remove(entry.articleId, entry.tickerSymbol)
+                }
+                score
+            }
     }
 
     private fun insideQuietHours(ticker: Ticker, instantMillis: Long): Boolean {
@@ -186,11 +251,20 @@ class AlertNotifier @Inject constructor(
             .build()
 
         runCatching {
-            NotificationManagerCompat.from(context).notify(article.id.hashCode(), notif)
+            // Tag by article id with a fixed numeric id: id.hashCode() can
+            // collide across articles and replace an unrelated live
+            // notification. The tap Intent is already unique per article via
+            // its data URI, which PendingIntent's filterEquals includes.
+            NotificationManagerCompat.from(context).notify(article.id, ALERT_NOTIFICATION_ID, notif)
         }.onFailure { AppLogger.e(TAG, "notify() threw for ${article.id}", it) }
     }
 
-    private companion object { const val TAG = "AlertNotifier" }
+    private companion object {
+        const val TAG = "AlertNotifier"
+        const val ALERT_NOTIFICATION_ID = 1
+        // How long a quiet-hours-deferred alert stays deliverable.
+        const val DEFERRED_LOOKBACK_MS = 12 * 60 * 60 * 1000L
+    }
 
     private fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true

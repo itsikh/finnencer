@@ -28,10 +28,15 @@ class WatchlistRepository @Inject constructor(
     fun observe(symbol: String): Flow<Ticker?> = tickerDao.observe(symbol)
 
     suspend fun add(symbol: String, name: String, exchange: String, sector: String? = null) {
+        val normalized = symbol.uppercase()
+        // Re-adding an already-watched symbol must not touch the existing
+        // row — its per-ticker settings, articles, earnings and
+        // notifications stay exactly as they are.
+        if (tickerDao.get(normalized) != null) return
         val nextOrder = tickerDao.maxOrder() + 1
-        tickerDao.upsert(
+        tickerDao.insertIgnore(
             Ticker(
-                symbol = symbol.uppercase(),
+                symbol = normalized,
                 name = name,
                 exchange = exchange,
                 sector = sector,

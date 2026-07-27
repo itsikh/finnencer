@@ -19,6 +19,7 @@ class QueueRepository @Inject constructor(
 ) {
 
     fun observeIncomplete(): Flow<List<QueueItem>> = dao.observeIncomplete()
+    suspend fun incompleteSnapshot(): List<QueueItem> = dao.getIncomplete()
     fun observeCompleted(): Flow<List<QueueItem>> = dao.observeCompleted()
     fun observeIncompleteCount(): Flow<Int> = dao.observeIncompleteCount()
     fun observeByRef(kind: QueueItemKind, refId: String): Flow<QueueItem?> =
@@ -96,15 +97,17 @@ class QueueRepository @Inject constructor(
     /**
      * Persist a user-reordered list. We rewrite [sortOrder] in
      * [SORT_STRIDE] increments so a future single-row insert between
-     * two existing rows has room without needing a re-pack.
+     * two existing rows has room without needing a re-pack. All changed
+     * rows go through one multi-row [QueueItemDao.updateAll] so the
+     * write is atomic — a mid-loop failure can't leave the list
+     * half-reordered.
      */
     suspend fun reorder(orderedItems: List<QueueItem>) {
-        orderedItems.forEachIndexed { index, item ->
+        val changed = orderedItems.mapIndexedNotNull { index, item ->
             val newSort = (index + 1L) * SORT_STRIDE
-            if (item.sortOrder != newSort) {
-                dao.update(item.copy(sortOrder = newSort))
-            }
+            if (item.sortOrder != newSort) item.copy(sortOrder = newSort) else null
         }
+        if (changed.isNotEmpty()) dao.updateAll(changed)
     }
 
     private companion object {

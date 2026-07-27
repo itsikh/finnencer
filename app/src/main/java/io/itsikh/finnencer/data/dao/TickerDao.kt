@@ -26,11 +26,19 @@ interface TickerDao {
     @Query("SELECT * FROM tickers WHERE symbol = :symbol")
     fun observe(symbol: String): Flow<Ticker?>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(ticker: Ticker)
+    // IGNORE, never REPLACE: SQLite REPLACE is DELETE+INSERT, which fires
+    // ON DELETE CASCADE on article_ticker_xref, earnings_events,
+    // earnings_reports and notifications — re-inserting an existing symbol
+    // would silently wipe all of the ticker's children. Returns -1 when the
+    // symbol already exists; callers that mean "update" must use [update].
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(ticker: Ticker): Long
 
     @Update
     suspend fun update(ticker: Ticker)
+
+    @Query("UPDATE tickers SET cik = :cik WHERE symbol = :symbol")
+    suspend fun updateCik(symbol: String, cik: String)
 
     @Query("DELETE FROM tickers WHERE symbol = :symbol")
     suspend fun delete(symbol: String)

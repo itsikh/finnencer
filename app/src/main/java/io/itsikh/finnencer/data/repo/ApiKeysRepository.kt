@@ -187,6 +187,13 @@ class ApiKeysRepository @Inject constructor(
 
     fun isConfigured(key: ApiKey): Boolean = secureKeyManager.hasKey(key.alias)
 
+    /** Re-syncs [configured] with the encrypted store after out-of-band
+     *  writes that bypass [save]/[clear] (e.g. a backup restore writing
+     *  through [SecureKeyManager] directly). */
+    internal fun refreshConfigured() {
+        _configured.value = snapshot()
+    }
+
     /** Cheap, offline syntactic check. Real network probes land in A·7. */
     fun checkSyntax(key: ApiKey): KeyTestResult {
         val value = get(key) ?: return KeyTestResult.NotConfigured

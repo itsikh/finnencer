@@ -26,11 +26,13 @@ private val Context.podcastPrefsDataStore by preferencesDataStore(name = "podcas
 enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
 
 /**
- * Gemini multi-speaker TTS preview models the app can route podcast
- * synthesis through. All three are documented at
- * https://ai.google.dev/gemini-api/docs/speech-generation and differ
- * mostly in cost, latency, and audio quality. The user picks one in
- * Settings → Podcasts.
+ * Gemini multi-speaker TTS models the app can route podcast synthesis
+ * through. Preview ids are documented at
+ * https://ai.google.dev/gemini-api/docs/speech-generation (Generative
+ * Language API); the GA ids at
+ * https://docs.cloud.google.com/text-to-speech/docs/gemini-tts are
+ * served on Vertex AI only. They differ mostly in cost, latency, and
+ * audio quality. The user picks one in Settings → Podcasts.
  */
 /**
  * Which Google API surface to call for TTS.
@@ -47,6 +49,16 @@ enum class EndOfPodcastAction { STOP, CONTINUE, SHUFFLE }
  * to paste a service-account JSON first; flipping the default would
  * silently break existing users.
  */
+/**
+ * The model TTS synthesis will actually use under [provider]: Vertex-only
+ * GA ids coerce to the default preview model on the Generative Language
+ * surface, where they 404. Apply anywhere a model is probed, displayed,
+ * or billed so smoke tests and status lines agree with what GeminiTts
+ * really sends (its own inline coercion stays as a backstop).
+ */
+fun TtsModel.coercedFor(provider: TtsProvider): TtsModel =
+    if (vertexOnly && provider != TtsProvider.VERTEX_AI) TtsModel.GEMINI_3_1_FLASH else this
+
 enum class TtsProvider(val displayName: String, val description: String) {
     GENERATIVE_LANGUAGE(
         displayName = "Generative Language API",
@@ -58,11 +70,31 @@ enum class TtsProvider(val displayName: String, val description: String) {
     ),
 }
 
-enum class TtsModel(val modelId: String, val displayName: String, val description: String) {
+enum class TtsModel(
+    val modelId: String,
+    val displayName: String,
+    val description: String,
+    /** True for GA model ids that only exist on the Vertex AI surface —
+     *  hidden from the picker and coerced away at synth time when the
+     *  Generative Language provider is active (guaranteed 404 there). */
+    val vertexOnly: Boolean = false,
+) {
     GEMINI_3_1_FLASH(
         modelId = "gemini-3.1-flash-tts-preview",
         displayName = "Gemini 3.1 Flash",
-        description = "Default. Newest preview (April 2026), fastest on most keys.",
+        description = "Default. Newest preview (April 2026), fastest on most keys. Only model that honors [audio tags].",
+    ),
+    GEMINI_2_5_PRO_GA(
+        modelId = "gemini-2.5-pro-tts",
+        displayName = "Gemini 2.5 Pro (GA)",
+        description = "Best voice quality, stable GA quota. Vertex AI provider only.",
+        vertexOnly = true,
+    ),
+    GEMINI_2_5_FLASH_GA(
+        modelId = "gemini-2.5-flash-tts",
+        displayName = "Gemini 2.5 Flash (GA)",
+        description = "Stable GA Flash, cheaper than Pro. Vertex AI provider only.",
+        vertexOnly = true,
     ),
     GEMINI_2_5_FLASH(
         modelId = "gemini-2.5-flash-preview-tts",
@@ -71,8 +103,8 @@ enum class TtsModel(val modelId: String, val displayName: String, val descriptio
     ),
     GEMINI_2_5_PRO(
         modelId = "gemini-2.5-pro-preview-tts",
-        displayName = "Gemini 2.5 Pro",
-        description = "Higher quality, slower, costs more per chunk.",
+        displayName = "Gemini 2.5 Pro (preview)",
+        description = "Higher quality, slower, costs more per chunk. On Vertex, prefer the GA variant above.",
     ),
 }
 
@@ -180,15 +212,12 @@ class PodcastPreferences @Inject constructor(
     }
 
     /**
-     * Which Gemini TTS preview model to use for multi-speaker
-     * synthesis. The official docs list three currently-supported
-     * preview models with similar capabilities but different
-     * latency/quality trade-offs. Default is the 2.5 Flash preview —
-     * it's been stable longest and is the fastest on most keys.
-     * Users who want the latest model or higher quality can switch
-     * in Settings → Podcasts. Bounded to [TtsModel.entries] on read
-     * so a manually-edited DataStore can't pick a model the API
-     * would 4xx on.
+     * Which Gemini TTS model to use for multi-speaker synthesis.
+     * Default is the 3.1 Flash preview — newest and fastest on most
+     * keys. Users on the Vertex provider can pick the GA 2.5 models
+     * for better quality/stability in Settings → Podcasts. Bounded to
+     * [TtsModel.entries] on read so a manually-edited DataStore can't
+     * pick a model the API would 4xx on.
      */
     val ttsModel: Flow<TtsModel> =
         context.podcastPrefsDataStore.data.map { p ->

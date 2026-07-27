@@ -39,10 +39,14 @@ class ImportanceScorer @Inject constructor(
         var batches = 0
         var parseErrors = 0
 
+        // Only recently-fetched articles are scoring candidates, so an
+        // article the model persistently omits stops costing API calls
+        // after this window instead of riding along until retention prunes it.
+        val fetchedSince = System.currentTimeMillis() - SCORING_WINDOW_MS
         var remaining = maxArticles
         while (remaining > 0) {
             val batchSize = minOf(BATCH_SIZE, remaining)
-            val articles = newsDao.unscoredJoined(batchSize)
+            val articles = newsDao.unscoredJoined(batchSize, fetchedSince)
             if (articles.isEmpty()) break
 
             batches++
@@ -192,6 +196,7 @@ class ImportanceScorer @Inject constructor(
 
     private companion object {
         const val BATCH_SIZE = 10
+        const val SCORING_WINDOW_MS = 48L * 60 * 60 * 1000
         const val TAG = "ImportanceScorer"
 
         const val SYSTEM_PROMPT = """

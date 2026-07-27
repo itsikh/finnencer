@@ -41,7 +41,18 @@ class PodcastPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val player = ExoPlayer.Builder(this).build()
+        // Audio focus + becoming-noisy are default-OFF in ExoPlayer:
+        // without them a podcast keeps playing over phone calls / other
+        // media apps, and unplugging headphones blasts the speaker
+        // instead of pausing.
+        val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
+            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_SPEECH)
+            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+            .build()
+        val player = ExoPlayer.Builder(this)
+            .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }

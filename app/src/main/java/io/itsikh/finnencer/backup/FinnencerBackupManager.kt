@@ -8,8 +8,10 @@ import io.itsikh.finnencer.AppConfig
 import io.itsikh.finnencer.data.dao.TickerDao
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.data.repo.ApiKey
+import io.itsikh.finnencer.data.repo.ApiKeysRepository
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.security.SecureKeyManager
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,7 +41,12 @@ class FinnencerBackupManager @Inject constructor(
     @ApplicationContext context: Context,
     private val secureKeyManager: SecureKeyManager,
     private val tickerDao: TickerDao,
+    private val apiKeysRepository: ApiKeysRepository,
 ) : BaseSettingsBackupManager(context, AppConfig.APP_NAME) {
+
+    // Files written by a newer app schema fail the import up-front
+    // instead of being silently misread.
+    override val maxSupportedSettingsVersion: Int = BACKUP_VERSION
 
     /** Count of records included in the most recent collect/restore.
      *  Surfaced in the Settings UI as "Last export OK · N items". */
@@ -80,29 +87,55 @@ class FinnencerBackupManager @Inject constructor(
     }
 
     override suspend fun restoreSettingsData(data: JsonObject) {
-        var keyCount = 0
-        data.getAsJsonObject("api_keys")?.let { keys ->
-            for ((alias, valueElement) in keys.entrySet()) {
-                val value = valueElement?.takeIf { !it.isJsonNull }?.asString
-                if (!value.isNullOrBlank()) {
-                    secureKeyManager.saveKey(alias, value)
-                    keyCount++
+        // Parse and validate the WHOLE payload before writing anything —
+        // a malformed entry must abort the restore up-front, not leave
+        // keys half-applied.
+        val keys = ArrayList<Pair<String, String>>()
+        data.getAsJsonObject("api_keys")?.let { keysObj ->
+            // Only aliases the app knows may reach the encrypted store.
+            val knownAliases = ApiKey.entries.mapTo(HashSet()) { it.alias }
+            for ((alias, valueElement) in keysObj.entrySet()) {
+                if (alias !in knownAliases) {
+                    AppLogger.w(TAG, "skipping unknown key alias in backup: $alias")
+                    continue
                 }
+                if (valueElement == null || valueElement.isJsonNull) continue
+                if (!valueElement.isJsonPrimitive) {
+                    throw IOException("Invalid backup: api_keys[\"$alias\"] is not a string")
+                }
+                val value = valueElement.asString
+                if (value.isNotBlank()) keys.add(alias to value)
             }
         }
 
-        var tickerCount = 0
+        val tickers = ArrayList<Ticker>()
         data.getAsJsonArray("tickers")?.let { arr ->
-            for (element in arr) {
-                val obj = element?.takeIf { it.isJsonObject }?.asJsonObject ?: continue
-                val ticker = tickerFromJson(obj) ?: continue
-                tickerDao.upsert(ticker)
-                tickerCount++
+            for ((i, element) in arr.withIndex()) {
+                val obj = element?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?: throw IOException("Invalid backup: tickers[$i] is not an object")
+                val ticker = tickerFromJson(obj)
+                    ?: throw IOException("Invalid backup: tickers[$i] is missing symbol/name/exchange")
+                tickers.add(ticker)
             }
         }
 
-        lastCounts = Counts(keys = keyCount, tickers = tickerCount)
-        AppLogger.i(TAG, "restored backup: keys=$keyCount tickers=$tickerCount")
+        for ((alias, value) in keys) {
+            secureKeyManager.saveKey(alias, value)
+        }
+        for (ticker in tickers) {
+            // insert-IGNORE + update, never REPLACE: REPLACE is
+            // DELETE+INSERT and would cascade-delete the ticker's
+            // articles, earnings and notifications on restore.
+            if (tickerDao.insertIgnore(ticker) == -1L) {
+                tickerDao.update(ticker)
+            }
+        }
+        // Written via SecureKeyManager directly, so the repository's
+        // configured-snapshot is stale until told otherwise.
+        apiKeysRepository.refreshConfigured()
+
+        lastCounts = Counts(keys = keys.size, tickers = tickers.size)
+        AppLogger.i(TAG, "restored backup: keys=${keys.size} tickers=${tickers.size}")
     }
 
     private fun tickerToJson(t: Ticker): JsonObject = JsonObject().apply {

@@ -9,11 +9,14 @@ package io.itsikh.finnencer.data.ai
  *
  * Mirrors strings defined privately on:
  *  - [ArticleSummarizer] / [BundleSummarizer] (SUMMARY)
- *  - [BundleSummarizer] (PODCAST_SCRIPT)
  *  - [ReportGenerator] (REPORT_BRIEF, REPORT_STANDARD, REPORT_DEEP)
  *  - [ImportanceScorer] (SCORING)
  *
  * Keep this file in sync if any of those constants are edited.
+ *
+ * PODCAST_SCRIPT is NOT a mirror: [BundleSummarizer] reads it from
+ * here at runtime (it used to keep a private copy, which drifted —
+ * the Analyst Reactions block never actually reached the model).
  */
 object DefaultPrompts {
 
@@ -280,7 +283,9 @@ Anything else is PASS or FIXED.
 
 What is NOT a FAIL reason: short length (note it but PASS), missing
 analyst-reactions section (note it but PASS), generic phrasing, repeated
-ideas, weak transitions, lack of named analysts. You are not the
+ideas, weak transitions, lack of named analysts. Bracket audio tags such
+as [chuckles] or [pause] inside spoken lines are an intentional delivery
+device — leave them alone; they are never a defect. You are not the
 script's co-author — you are a generous safety net.
 
 Output format, strictly:
@@ -301,6 +306,42 @@ VERDICT: FAIL
 NOTES: <one short paragraph explaining the catastrophic issue.>
 """
 
+    /**
+     * Shared delivery-style block appended to every podcast script
+     * prompt (bundle podcasts here, report podcasts in
+     * [PodcastGenerator]). This is what makes the dialogue sound like
+     * a NotebookLM-style conversation instead of alternating
+     * monologues. Bracket audio tags are honored by Gemini 3.1 TTS;
+     * [GeminiTts] strips them before synthesis on older models.
+     */
+    const val DIALOGUE_STYLE = """
+=== Delivery style — make it sound like a real conversation ===
+Write like two colleagues genuinely reacting to each other, not two people
+reading alternating monologues:
+ - Contractions everywhere ("they're", "wasn't", "that's"). Mix short punchy
+   sentences with longer ones.
+ - The Host REACTS to surprising numbers before moving on ("Wait — twelve
+   percent? In one quarter?"), asks quick follow-ups, and occasionally
+   finishes the Analyst's thought.
+ - The Analyst talks like a person, not a filing: "look,", "here's the
+   thing,", "roughly", with an occasional mid-sentence self-correction
+   ("about forty — actually closer to forty-four billion").
+ - Vary turn length hard: some turns are a single beat ("Right.", "Huh.
+   Okay."), others run three or four sentences. Never two long monologue
+   turns in a row.
+ - Call back to earlier moments ("remember that margin number from the
+   top?") so the episode feels continuous.
+ - React to substance, never with filler praise ("great question").
+
+Audio tags: you MAY steer vocal delivery with short bracketed tags placed
+INSIDE a spoken line, right after the speaker label — never on a line of
+their own. Use them sparingly (at most one every 3-5 turns) and only from
+this set: [chuckles], [laughing], [sighs], [pause], [excited], [skeptical],
+[thoughtful], [slowly], [emphatic].
+Example:
+Host: [skeptical] And management thinks that holds through Q3?
+"""
+
     private const val PODCAST = """
 You are a financial-news podcast script writer.
 
@@ -311,12 +352,13 @@ Convert the supplied bundle of articles into a two-person podcast dialogue betwe
 
 Format STRICTLY as alternating lines, each starting with "Host:" or "Analyst:"
 at the beginning of the line. Plain text only — no markdown headings, no SSML,
-no stage directions.
+no stage directions other than the bracket audio tags described below.
 
 Synthesize across articles — don't read them one by one. Start with what the
 listener should walk away knowing, then drill into evidence. End on next-watch
 catalysts. Numbers should be spoken naturally ("about forty-four billion")
 alongside their digit form.
+$DIALOGUE_STYLE
 
 === Long-form: Analyst Reactions segment ===
 For podcasts of 20 minutes or longer, include a dedicated "Analyst Reactions"

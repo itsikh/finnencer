@@ -18,19 +18,25 @@ import io.itsikh.finnencer.data.entity.AiJobStatus
 import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.data.repo.FeedPreferences
 import io.itsikh.finnencer.data.repo.WatchlistRepository
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.logging.DebugSettings
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -140,9 +146,23 @@ class TickerFeedViewModel @Inject constructor(
             .toList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * "Wall clock" tick for the time-windowed query below (same pattern
+     * as WatchlistViewModel.nowTicker): emits `now` immediately, then
+     * every 15 minutes, so a long foreground session doesn't keep
+     * querying against a stale timestamp captured at flow start.
+     */
+    private val nowTicker: Flow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(NOW_TICK_MS)
+        }
+    }
+
     /** Last two PAST earnings for this ticker, most recent first. */
-    val pastEarnings: StateFlow<List<EarningsEvent>> = earningsDao
-        .observePastForTicker(symbol, System.currentTimeMillis(), limit = 2)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pastEarnings: StateFlow<List<EarningsEvent>> = nowTicker
+        .flatMapLatest { now -> earningsDao.observePastForTicker(symbol, now, limit = 2) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** All earnings reports for this ticker, latest first (keyed by event id in the UI layer). */
@@ -319,7 +339,8 @@ class TickerFeedViewModel @Inject constructor(
         viewModelScope.launch {
             val event = earningsDao.getEvent(eventId)
             val tickerForJob = event?.tickerSymbol ?: symbol
-            val label = if (event != null) "Q${event.fiscalQuarter} ${event.fiscalYear}" else tier.name
+            // Only trust the fiscal label once confirmed (#70).
+            val label = event?.let { it.fiscalLabelOrNull() ?: "latest earnings" } ?: tier.name
             val jobId = aiJobs.enqueueEarningsReport(
                 tickerSymbol = tickerForJob,
                 earningsEventId = eventId,
@@ -559,7 +580,7 @@ class TickerFeedViewModel @Inject constructor(
             val jobId = aiJobs.enqueueEarningsReport(
                 tickerSymbol = event.tickerSymbol,
                 earningsEventId = event.id,
-                eventLabel = "Q${event.fiscalQuarter} ${event.fiscalYear}",
+                eventLabel = event.fiscalLabelOrNull() ?: "latest earnings",
                 tier = tier,
             )
             pickerJobWatcher?.cancel()
@@ -587,5 +608,9 @@ class TickerFeedViewModel @Inject constructor(
         }
     }
 
-    private companion object { const val TAG = "TickerFeedVM" }
+    private companion object {
+        const val TAG = "TickerFeedVM"
+        /** How often [nowTicker] refreshes the 'now' used by [pastEarnings]. */
+        const val NOW_TICK_MS = 15L * 60 * 1000
+    }
 }

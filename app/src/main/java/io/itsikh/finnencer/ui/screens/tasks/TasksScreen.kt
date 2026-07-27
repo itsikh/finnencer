@@ -260,7 +260,11 @@ private fun open(
     onOpenReport: (Long) -> Unit,
 ) {
     val kind = job.resultKind ?: return
-    when (AiJobResultKind.valueOf(kind)) {
+    // Defensive parse: a stored resultKind can predate (or postdate) the
+    // current enum after a downgrade/upgrade — ignore the tap rather
+    // than crash on an unknown value.
+    val resultKind = runCatching { AiJobResultKind.valueOf(kind) }.getOrNull() ?: return
+    when (resultKind) {
         AiJobResultKind.PODCAST -> job.resultRefId?.toLongOrNull()?.let(onOpenPodcast)
         AiJobResultKind.EARNINGS_REPORT -> job.resultRefId?.toLongOrNull()?.let(onOpenReport)
         // Combo: tapping the card expands the summary inline; the explicit

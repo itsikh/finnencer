@@ -109,8 +109,20 @@ fun PodcastPlayerScreen(
     ) { padding ->
         val p = podcast
         if (p == null) {
+            // Room emits null both while loading AND when the row was
+            // deleted (e.g. auto-advance raced a library delete). After
+            // a short grace period call it what it is instead of
+            // spinning on "Loading…" forever (#78).
+            val timedOut = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(2_000)
+                timedOut.value = true
+            }
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("Loading…", color = FinnencerColors.TextSecondary)
+                Text(
+                    if (timedOut.value) "Podcast not found — it may have been deleted." else "Loading…",
+                    color = FinnencerColors.TextSecondary,
+                )
             }
             return@Scaffold
         }
@@ -330,17 +342,40 @@ fun PodcastPlayerScreen(
                     )
                 }
                 PodcastGenerationStatus.READY.name -> {
-                    PlayerControls(
-                        positionMs = ui.positionMs,
-                        durationMs = if (ui.durationMs > 0) ui.durationMs else (p.durationMs ?: 0L),
-                        isPlaying = ui.isPlaying,
-                        speed = ui.speed,
-                        onPlayPause = vm::playPause,
-                        onSkipBack = vm::skipBack,
-                        onSkipForward = vm::skipForward,
-                        onSeek = vm::seekTo,
-                        onSpeed = vm::setSpeed,
-                    )
+                    val fileMissing by vm.fileMissing.collectAsState()
+                    if (fileMissing) {
+                        // READY row whose WAV is gone from disk — dead
+                        // controls used to render here and silently
+                        // no-op (#77). Offer regeneration instead.
+                        Text(
+                            "The audio file for this podcast is missing — it may have been cleaned up. Regenerate it to listen again.",
+                            color = FinnencerColors.Coral,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        val retryStatus by vm.retryStatus.collectAsState()
+                        androidx.compose.material3.FilledTonalButton(
+                            onClick = vm::retry,
+                            enabled = retryStatus != PodcastPlayerViewModel.RetryStatus.Retrying,
+                            colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                                containerColor = FinnencerColors.Violet,
+                                contentColor = FinnencerColors.TextOnAccent,
+                            ),
+                        ) {
+                            Text(if (retryStatus == PodcastPlayerViewModel.RetryStatus.Retrying) "Regenerating…" else "Regenerate")
+                        }
+                    } else {
+                        PlayerControls(
+                            positionMs = ui.positionMs,
+                            durationMs = if (ui.durationMs > 0) ui.durationMs else (p.durationMs ?: 0L),
+                            isPlaying = ui.isPlaying,
+                            speed = ui.speed,
+                            onPlayPause = vm::playPause,
+                            onSkipBack = vm::skipBack,
+                            onSkipForward = vm::skipForward,
+                            onSeek = vm::seekTo,
+                            onSpeed = vm::setSpeed,
+                        )
+                    }
                 }
             }
 
@@ -366,9 +401,25 @@ private fun PlayerControls(
     onSpeed: (Float) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Track the drag locally and seek once on release — seeking on
+        // every drag frame flooded the controller with seeks (#79), and
+        // while paused the thumb snapped back to the stale position.
+        val dragFraction = androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf<Float?>(null)
+        }
         Slider(
-            value = if (durationMs > 0) positionMs / durationMs.toFloat() else 0f,
-            onValueChange = { v -> onSeek((v * durationMs).toLong()) },
+            value = dragFraction.value
+                ?: if (durationMs > 0) positionMs / durationMs.toFloat() else 0f,
+            onValueChange = { v -> dragFraction.value = v },
+            onValueChangeFinished = {
+                // durationMs can still be 0 during load (controller not
+                // READY, legacy row without duration) — a seek then lands
+                // on 0:00 and discards the pending resume position.
+                if (durationMs > 0) {
+                    dragFraction.value?.let { onSeek((it * durationMs).toLong()) }
+                }
+                dragFraction.value = null
+            },
             colors = SliderDefaults.colors(
                 thumbColor = FinnencerColors.Violet,
                 activeTrackColor = FinnencerColors.Violet,

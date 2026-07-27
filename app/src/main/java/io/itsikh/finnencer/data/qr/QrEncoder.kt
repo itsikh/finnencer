@@ -41,7 +41,10 @@ object QrEncoder {
         var i = 0
         for (y in 0 until h) {
             for (x in 0 until w) {
-                pixels[i++] = if (matrix[x, y]) Color.WHITE else Color.TRANSPARENT
+                // Standard QR polarity: dark modules on a light background.
+                // Scanners assume it, and the share screen shows the bitmap
+                // on a white card.
+                pixels[i++] = if (matrix[x, y]) Color.BLACK else Color.WHITE
             }
         }
         return Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)

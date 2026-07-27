@@ -1,5 +1,6 @@
 package io.itsikh.finnencer.data.api
 
+import com.google.gson.annotations.SerializedName
 import retrofit2.http.Body
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -56,6 +57,10 @@ data class GeminiInlineData(
 
 data class GeminiGenerationConfig(
     val temperature: Double? = null,
+    // Output cap for text generation. Null (the default) omits the field
+    // entirely, which is what the TTS path wants — audio renders are not
+    // token-capped.
+    @SerializedName("maxOutputTokens") val maxOutputTokens: Int? = null,
     val responseModalities: List<String>? = null,
     val speechConfig: GeminiSpeechConfig? = null,
 )

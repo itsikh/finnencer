@@ -5,6 +5,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import io.itsikh.finnencer.BuildConfig
 import io.itsikh.finnencer.data.api.AnthropicService
 import io.itsikh.finnencer.data.api.FinnhubService
 import io.itsikh.finnencer.data.api.GeminiService
@@ -15,6 +16,7 @@ import io.itsikh.finnencer.data.api.VertexService
 import io.itsikh.finnencer.data.api.YahooQuoteService
 import io.itsikh.finnencer.data.repo.ApiKey
 import io.itsikh.finnencer.data.repo.ApiKeysRepository
+import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.util.AppSigningInfo
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
@@ -99,7 +101,21 @@ class EdgarUserAgentInterceptor(
     private val repo: ApiKeysRepository,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
-        val ua = repo.get(ApiKey.EDGAR_UA) ?: "finnencer (no-contact-set)"
+        val configured = repo.get(ApiKey.EDGAR_UA)
+        val ua = if (!configured.isNullOrBlank()) configured else {
+            // SEC 403s non-identifying User-Agents. Until the user sets
+            // their own contact string, at least identify the app and give
+            // the repo URL as a way to reach the operator.
+            if (fallbackWarned.compareAndSet(false, true)) {
+                AppLogger.w(
+                    TAG,
+                    "EDGAR User-Agent not configured; using fallback UA. " +
+                        "Set it in Settings → API keys (SEC wants a contact email).",
+                )
+            }
+            "finnencer/${BuildConfig.VERSION_NAME} " +
+                "(+https://github.com/itsikh/finnencer; contact not configured)"
+        }
         // Intentionally NOT setting Accept-Encoding here. OkHttp's
         // BridgeInterceptor handles gzip transparently — but ONLY when it
         // sets the Accept-Encoding header itself. If we set it, OkHttp
@@ -112,6 +128,14 @@ class EdgarUserAgentInterceptor(
             .header("User-Agent", ua)
             .build()
         return chain.proceed(req)
+    }
+
+    private companion object {
+        const val TAG = "EdgarUA"
+
+        /** Warn once per process, not once per request — EDGAR syncs fire
+         *  dozens of calls back-to-back. */
+        val fallbackWarned = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 }
 

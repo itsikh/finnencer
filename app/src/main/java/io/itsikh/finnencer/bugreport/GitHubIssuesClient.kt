@@ -43,7 +43,7 @@ data class GitHubIssueResult(
  * - `repo` (for private repos) or `public_repo` (for public repos)
  *
  * ## Security — sensitive data sanitization
- * Before creating an issue, [sanitizeIssueContent] scans the body for patterns that look
+ * Before creating an issue, [sanitizeIssueContent] scans the title and body for patterns that look
  * like API keys (OpenAI, Gemini, GitHub tokens, Anthropic, generic Bearer tokens, JSON
  * password fields) and redacts them. This prevents accidental leakage of secrets that
  * might appear in log lines attached to the report.
@@ -133,12 +133,15 @@ class GitHubIssuesClient(
     /**
      * Creates a new GitHub issue in the configured repository.
      *
-     * The [body] is sanitized by [sanitizeIssueContent] before submission to remove any
-     * accidental API key patterns from attached log lines.
+     * The [title] and [body] are sanitized by [sanitizeIssueContent] before submission to
+     * remove any accidental API key patterns — the body carries attached log lines, and the
+     * title carries the user's subject (BugReportViewModel) or the exception message
+     * (CrashAutoReporter), either of which can embed a pasted key or token-bearing URL.
      *
      * Requires the GitHub token stored under [KEY_GITHUB_TOKEN] in [SecureKeyManager].
      *
      * @param title Issue title (shown in the GitHub issues list). Should be concise.
+     *              Will be sanitized before sending.
      * @param body Markdown-formatted issue body. Will be sanitized before sending.
      * @param labels List of label names to apply. Labels that don't exist in the repo
      *               will be silently ignored by GitHub.
@@ -158,14 +161,16 @@ class GitHubIssuesClient(
                         error = "GitHub Token not configured in settings"
                     )
 
-                // Sanitize the body to prevent accidental key leakage
+                // Sanitize both title and body to prevent accidental key
+                // leakage — sanitizing here covers every caller.
+                val sanitizedTitle = sanitizeIssueContent(title)
                 val sanitizedBody = sanitizeIssueContent(body)
-                if (sanitizedBody != body) {
-                    AppLogger.w(TAG, "Issue body was sanitized - potential sensitive data detected")
+                if (sanitizedTitle != title || sanitizedBody != body) {
+                    AppLogger.w(TAG, "Issue content was sanitized - potential sensitive data detected")
                 }
 
                 val issueBody = mapOf(
-                    "title" to title,
+                    "title" to sanitizedTitle,
                     "body" to sanitizedBody,
                     "labels" to labels
                 )
@@ -202,15 +207,17 @@ class GitHubIssuesClient(
 
     /**
      * Scans [content] for known sensitive data patterns and replaces matches with
-     * redaction placeholders. Called automatically on the issue body before [createIssue]
-     * sends it to GitHub.
+     * redaction placeholders. Called automatically on the issue title and body before
+     * [createIssue] sends them to GitHub.
      *
      * Patterns detected:
-     * - OpenAI API keys (`sk-...`)
-     * - Google/Gemini API keys (`AIza...`)
-     * - GitHub personal access tokens (`ghp_...`, `gho_...`)
      * - Anthropic/Claude API keys (`sk-ant-...`)
+     * - OpenAI API keys (`sk-...`, including project keys with `-`/`_`)
+     * - Google/Gemini API keys (`AIza...`)
+     * - GitHub personal access tokens (`ghp_...`, `gho_...`, `ghs_...`, `ghu_...`,
+     *   fine-grained `github_pat_...`)
      * - Generic Bearer authorization headers
+     * - Finnhub-style `token=...` query parameters in URLs
      * - JSON fields named `api_key`, `apiKey`, `x-api-key`
      * - JSON fields named `password`
      */
@@ -218,17 +225,26 @@ class GitHubIssuesClient(
         var sanitized = content
 
         val sensitivePatterns = listOf(
-            // OpenAI API keys
-            Regex("sk-[a-zA-Z0-9]{20,}", RegexOption.MULTILINE) to "[OPENAI_API_KEY_REDACTED]",
+            // Anthropic/Claude API keys — must run before the OpenAI
+            // pattern, which now also matches hyphens and would otherwise
+            // consume `sk-ant-...` first.
+            Regex("sk-ant-[a-zA-Z0-9_-]{95,}", RegexOption.MULTILINE) to "[CLAUDE_API_KEY_REDACTED]",
+            // OpenAI API keys (modern project keys include `-` and `_`)
+            Regex("sk-[a-zA-Z0-9_-]{20,}", RegexOption.MULTILINE) to "[OPENAI_API_KEY_REDACTED]",
             // Google/Gemini API keys
             Regex("AIza[a-zA-Z0-9_-]{35}", RegexOption.MULTILINE) to "[GEMINI_API_KEY_REDACTED]",
-            // GitHub tokens
+            // GitHub tokens (classic PATs, OAuth, server-to-server,
+            // user-to-server, and fine-grained PATs)
+            Regex("github_pat_[a-zA-Z0-9_]{20,}", RegexOption.MULTILINE) to "[GITHUB_TOKEN_REDACTED]",
             Regex("ghp_[a-zA-Z0-9]{36}", RegexOption.MULTILINE) to "[GITHUB_TOKEN_REDACTED]",
             Regex("gho_[a-zA-Z0-9]{36}", RegexOption.MULTILINE) to "[GITHUB_TOKEN_REDACTED]",
-            // Anthropic/Claude API keys
-            Regex("sk-ant-[a-zA-Z0-9_-]{95,}", RegexOption.MULTILINE) to "[CLAUDE_API_KEY_REDACTED]",
+            Regex("ghs_[a-zA-Z0-9]{36}", RegexOption.MULTILINE) to "[GITHUB_TOKEN_REDACTED]",
+            Regex("ghu_[a-zA-Z0-9]{36}", RegexOption.MULTILINE) to "[GITHUB_TOKEN_REDACTED]",
             // Generic bearer tokens
             Regex("Bearer\\s+[a-zA-Z0-9_-]{20,}", RegexOption.MULTILINE) to "Bearer [TOKEN_REDACTED]",
+            // Finnhub-style API tokens in URL query strings
+            // (e.g. https://finnhub.io/api/v1/quote?...&token=abc123...)
+            Regex("token=[a-zA-Z0-9]{20,}", RegexOption.MULTILINE) to "token=[REDACTED]",
             // JSON API key patterns
             Regex("\"(?:api_?key|apiKey|x-api-key)\"\\s*:\\s*\"[^\"]{10,}\"", RegexOption.MULTILINE) to "\"apiKey\":\"[REDACTED]\"",
             // Password patterns in JSON

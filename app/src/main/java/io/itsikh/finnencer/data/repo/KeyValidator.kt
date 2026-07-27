@@ -91,8 +91,13 @@ class KeyValidator @Inject constructor(
         // /quote on AAPL is free-tier and returns {c, d, dp, h, l, o, pc, t}.
         // We don't deserialize — just confirm the 200 + body contains a "c"
         // field. Raw string match avoids the R8/Gson reflection issue.
+        // Token goes in the header, not the query string — the base OkHttp
+        // client logs full URLs (HttpLoggingInterceptor BASIC), so a
+        // ?token= param would leak the key into logcat. Same header auth
+        // AuthHeaderInterceptor uses for the app's normal Finnhub calls.
         val req = Request.Builder()
-            .url("https://finnhub.io/api/v1/quote?symbol=AAPL&token=$token")
+            .url("https://finnhub.io/api/v1/quote?symbol=AAPL")
+            .addHeader("X-Finnhub-Token", token)
             .get()
             .build()
         okHttp.newCall(req).execute().use { resp ->

@@ -34,6 +34,12 @@ object DatabaseModule {
             // migration here will throw at startup rather than wipe the
             // user's watchlist (which happened on v0.0.30; see #28).
             .addMigrations(*ALL_MIGRATIONS)
+            // Schema v1-3 predate the retained-data era (migrations only
+            // exist from v4 onward), so a device still on those versions
+            // would otherwise crash-loop on update. Wiping is acceptable
+            // there — those builds shipped before user data was retained.
+            // Deliberately NOT a blanket fallbackToDestructiveMigration().
+            .fallbackToDestructiveMigrationFrom(1, 2, 3)
             .build()
 
     @Provides fun provideTickerDao(db: FinnencerDatabase): TickerDao = db.tickerDao()

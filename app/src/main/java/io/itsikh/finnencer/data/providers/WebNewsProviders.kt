@@ -41,19 +41,23 @@ class GoogleNewsRssProvider @Inject constructor(
             .filter { it.publishedAtMillis >= sinceMillis - SLACK_MS }
             .map { item ->
                 val source = extractSource(item.title) ?: "Google News"
+                // Google News titles are formatted "Real headline - Source"; trim trailing source.
+                val headline = item.title.replace(Regex(" - [^-]+$"), "").trim()
                 NewsArticle(
                     id = ArticleIds.stableId(key, item.guid),
                     provider = ProviderEnum.RSS_GOOGLE_NEWS.name,
                     sourceArticleId = item.guid,
-                    // Google News titles are formatted "Real headline - Source"; trim trailing source.
-                    title = item.title.replace(Regex(" - [^-]+$"), "").trim(),
+                    title = headline,
                     snippet = item.summary,
                     url = item.link,
                     sourceName = source,
                     imageUrl = null,
                     publishedAtMillis = item.publishedAtMillis,
                     fetchedAtMillis = System.currentTimeMillis(),
-                    clusterKey = ArticleIds.clusterKey(item.title),
+                    // Keyed on the trimmed headline — the raw title's source
+                    // suffix would put the same story carried by two outlets
+                    // in different clusters, defeating cross-provider dedup.
+                    clusterKey = ArticleIds.clusterKey(headline),
                     primaryTickerSymbol = tickerSymbol,
                 )
             }

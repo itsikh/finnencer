@@ -65,11 +65,19 @@ enum class AiModel(
      */
     val supportsTemperature: Boolean = true,
 ) {
+    // Haiku 4.5 is still the newest Haiku as of 2026-07.
     CLAUDE_HAIKU_4_5("claude-haiku-4-5-20251001", "Claude Haiku 4.5", AiProvider.ANTHROPIC, 200_000, false, AiTier.FAST_CHEAP),
-    CLAUDE_SONNET_4_6("claude-sonnet-4-6", "Claude Sonnet 4.6", AiProvider.ANTHROPIC, 200_000, true, AiTier.BALANCED),
-    CLAUDE_OPUS_4_7("claude-opus-4-7", "Claude Opus 4.7 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE, supportsTemperature = false),
-    GEMINI_2_5_FLASH("gemini-2.5-flash", "Gemini 2.5 Flash", AiProvider.GEMINI, 1_000_000, true, AiTier.FAST_CHEAP),
-    GEMINI_2_5_PRO("gemini-2.5-pro", "Gemini 2.5 Pro", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE);
+    // Sonnet 5: adaptive thinking on by default (ClaudeClient sends
+    // thinking=disabled to keep behavior/cost parity) and non-default
+    // sampling params are rejected — hence supportsTemperature=false.
+    // New tokenizer: ~30% more tokens for the same text than 4.6.
+    CLAUDE_SONNET_5("claude-sonnet-5", "Claude Sonnet 5", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.BALANCED, supportsTemperature = false),
+    // Opus 5: drop-in for Opus 4.7 at the same $5/$25 pricing; 1M ctx
+    // is the default (no beta header needed). Same thinking caveat as
+    // Sonnet 5.
+    CLAUDE_OPUS_5("claude-opus-5", "Claude Opus 5 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE, supportsTemperature = false),
+    GEMINI_3_6_FLASH("gemini-3.6-flash", "Gemini 3.6 Flash", AiProvider.GEMINI, 1_000_000, true, AiTier.FAST_CHEAP),
+    GEMINI_3_1_PRO("gemini-3.1-pro", "Gemini 3.1 Pro", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE);
 
     companion object {
         fun byId(id: String?): AiModel? = entries.firstOrNull { it.id == id }
@@ -112,22 +120,22 @@ sealed class AiModelOption {
 val AiUsage.defaultModel: AiModel
     get() = when (this) {
         AiUsage.SCORING -> AiModel.CLAUDE_HAIKU_4_5
-        AiUsage.SUMMARY -> AiModel.CLAUDE_SONNET_4_6
-        AiUsage.REPORT_BRIEF -> AiModel.CLAUDE_SONNET_4_6
-        AiUsage.REPORT_STANDARD -> AiModel.CLAUDE_SONNET_4_6
-        AiUsage.REPORT_DEEP -> AiModel.CLAUDE_OPUS_4_7
-        // Podcast script doesn't need Opus 4.7's 1M context — Sonnet 4.6
-        // responds 2-3x faster and costs ~5x less per token, which cuts
+        AiUsage.SUMMARY -> AiModel.CLAUDE_SONNET_5
+        AiUsage.REPORT_BRIEF -> AiModel.CLAUDE_SONNET_5
+        AiUsage.REPORT_STANDARD -> AiModel.CLAUDE_SONNET_5
+        AiUsage.REPORT_DEEP -> AiModel.CLAUDE_OPUS_5
+        // Podcast script doesn't need Opus-tier 1M context — Sonnet
+        // responds 2-3x faster and costs ~40% less per token, which cuts
         // total worker runtime well clear of WorkManager's 10-min cap
         // even with continuation passes (#42 — "rewire & optimize").
-        // Users who already picked Opus 4.7 in Settings → AI keep their
+        // Users who already picked Opus in Settings → AI keep their
         // choice; this only affects fresh installs / unconfigured slots.
-        AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_4_6
+        AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_5
         AiUsage.MOVE_EXPLAIN -> AiModel.CLAUDE_HAIKU_4_5
-        AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_4_6
+        AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_5
         // Validator runs against the script-writer's output — using a
         // stronger model gives a meaningful second opinion. If the
         // validator is the same model as the writer it risks endorsing
         // its own mistakes.
-        AiUsage.PODCAST_VALIDATION -> AiModel.CLAUDE_OPUS_4_7
+        AiUsage.PODCAST_VALIDATION -> AiModel.CLAUDE_OPUS_5
     }

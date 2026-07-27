@@ -46,7 +46,10 @@ class EarningsCalendarSync @Inject constructor(
         var inserted = 0
         for (ticker in tickers) {
             val cik = ticker.cik ?: cikLookup.resolve(ticker.symbol) ?: continue
-            if (ticker.cik == null) tickerDao.update(ticker.copy(cik = cik))
+            // Targeted column update — writing back the full `ticker` row
+            // here would clobber any settings the user changed while the
+            // (slow) CIK lookup was in flight.
+            if (ticker.cik == null) tickerDao.updateCik(ticker.symbol, cik)
 
             val raw = runCatching { edgar.submissions(cik) }
                 .onFailure { AppLogger.w(TAG, "EDGAR submissions fetch failed for ${ticker.symbol}: ${it.message}") }
@@ -116,9 +119,11 @@ class EarningsCalendarSync @Inject constructor(
             }
 
             // Cleanup: merge any existing duplicates per ticker. The
-            // canonical row is the one with the most non-null numeric
-            // fields (so we keep whichever Finnhub filled). This is
-            // idempotent — once dupes are gone, the function is a no-op.
+            // canonical row is the fiscal-confirmed one if any (#70 —
+            // never delete the row whose label Finnhub verified), then
+            // the one with the most non-null numeric fields (so we keep
+            // whichever Finnhub filled). This is idempotent — once dupes
+            // are gone, the function is a no-op.
             dedupeForTicker(ticker.symbol)
         }
         return inserted
@@ -137,7 +142,10 @@ class EarningsCalendarSync @Inject constructor(
         val toDelete = mutableListOf<Long>()
         for (group in groups) {
             if (group.size < 2) continue
-            val canonical = group.maxByOrNull { countFilledNumericFields(it) } ?: group.first()
+            val canonical = group.maxWithOrNull(
+                compareBy<EarningsEvent> { it.fiscalConfirmed }
+                    .thenBy { countFilledNumericFields(it) }
+            ) ?: group.first()
             toDelete += group.filter { it.id != canonical.id }.map { it.id }
         }
         if (toDelete.isNotEmpty()) {

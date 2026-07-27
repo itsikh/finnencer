@@ -74,8 +74,12 @@ class EdgarXbrlExtractor @Inject constructor(
     // ~1-2 MB per ticker; SEC asks for ≤ 10 req/sec global, so we cache
     // per-CIK for [CACHE_TTL_MILLIS] to avoid re-fetching during a single
     // session of generating multiple reports for the same ticker.
+    // ConcurrentHashMap because this singleton is hit from concurrent
+    // coroutines (report generation + syncs); a plain HashMap can corrupt
+    // under parallel puts. Two coroutines may still fetch the same CIK
+    // once each on a cold cache — harmless, last write wins.
     private data class CacheEntry(val rootObj: JsonObject, val fetchedAt: Long)
-    private val cache = mutableMapOf<String, CacheEntry>()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, CacheEntry>()
 
     /**
      * Fetch + parse the company's recent quarters.

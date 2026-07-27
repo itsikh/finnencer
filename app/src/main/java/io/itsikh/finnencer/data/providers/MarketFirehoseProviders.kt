@@ -73,10 +73,12 @@ abstract class FirehoseRssProvider(
             .toList()
     }
 
-    private suspend fun fetchFeed(url: String): List<FeedParser.FeedItem> =
+    // Null (not emptyList) on failure so the cache can tell "feed is down"
+    // apart from "feed is legitimately empty" and skip caching the former.
+    private suspend fun fetchFeed(url: String): List<FeedParser.FeedItem>? =
         runCatching { FeedParser.parse(rss.fetch(url)) }
             .onFailure { AppLogger.w(key, "$displayName fetch failed for $url: ${it.message}") }
-            .getOrDefault(emptyList())
+            .getOrNull()
 
     protected companion object {
         const val SLACK_MS = 60 * 60 * 1000L
@@ -96,15 +98,18 @@ internal object FirehoseCache {
     private val mutex = Mutex()
     private const val TTL_MS = 10 * 60 * 1000L
 
+    /** [loader] returns null on failure. Failures are NOT cached, so the
+     *  next ticker in the cycle retries instead of seeing a blank feed for
+     *  the whole TTL window. */
     suspend fun get(
         url: String,
-        loader: suspend (String) -> List<FeedParser.FeedItem>,
+        loader: suspend (String) -> List<FeedParser.FeedItem>?,
     ): List<FeedParser.FeedItem> {
         val now = System.currentTimeMillis()
         mutex.withLock {
             cache[url]?.let { if (now - it.atMillis < TTL_MS) return it.items }
         }
-        val fresh = loader(url)
+        val fresh = loader(url) ?: return emptyList()
         mutex.withLock { cache[url] = Entry(fresh, now) }
         return fresh
     }
@@ -113,30 +118,55 @@ internal object FirehoseCache {
 /**
  * Decides whether a free-text headline/summary is about a given company.
  *
- * Matches on either an explicit ticker mention (`(NVDA)`, `$NVDA`,
- * `NASDAQ: NVDA`) or the normalized company name (legal suffixes and share
- * classes stripped, e.g. "COREWEAVE INC-CL A" → "coreweave"). Bare symbol
- * substring matching is deliberately avoided — short tickers would match
- * unrelated words.
+ * Matches on an explicit ticker mention (`(NVDA)`, `$NVDA`, `NASDAQ: NVDA`),
+ * the normalized company name (legal suffixes and share classes stripped,
+ * e.g. "COREWEAVE INC-CL A" → "coreweave"), or a short alias — the leading
+ * tokens left once trade-name suffixes like "platforms" / "motor" / "com"
+ * are dropped, so "Meta Platforms" matches a headline saying just "Meta".
+ * Name and alias are matched on word boundaries: raw substring matching
+ * would tag Intel on "artificial intelligence" and Apple on "pineapple".
+ * Bare symbol substring matching is deliberately avoided — short tickers
+ * would match unrelated words.
  */
 internal class CompanyMatcher private constructor(
     private val explicit: List<String>,
-    private val name: String?,
+    private val namePattern: Regex?,
+    private val aliasPattern: Regex?,
 ) {
     /** False when we have nothing reliable to match on (no usable name). */
-    val usable: Boolean get() = name != null
+    val usable: Boolean get() = namePattern != null
 
     fun matches(text: String?): Boolean {
         if (text.isNullOrBlank()) return false
         val t = text.lowercase()
         if (explicit.any { t.contains(it) }) return true
-        return name != null && t.contains(name)
+        if (namePattern == null) return false
+        // Normalize punctuation to spaces so "Amazon.com" / "Meta,
+        // Platforms" still line up with the space-separated name tokens.
+        val normalized = t.replace(NON_ALNUM, " ")
+        return namePattern.containsMatchIn(normalized) ||
+            aliasPattern?.containsMatchIn(normalized) == true
     }
 
     companion object {
+        private val NON_ALNUM = Regex("[^a-z0-9]+")
+
         private val SUFFIXES = Regex(
             "\\b(incorporated|inc|corporation|corp|company|co|ltd|limited|plc|" +
                 "holdings|holding|group|sa|nv|ag|class [a-c]|cl [a-c]|the)\\b\\.?",
+        )
+
+        // Trade-name tokens headlines drop ("Meta Platforms" → "Meta").
+        // Applied after SUFFIXES, so pure legal-form tokens are already gone.
+        private val ALIAS_SUFFIX_TOKENS = setOf(
+            "inc", "corp", "corporation", "co", "com", "ltd", "plc",
+            "platforms", "motor", "motors", "holdings", "group", "technologies",
+        )
+
+        // Aliases too common as plain English to match alone ("General"
+        // would tag every "general market" headline).
+        private val ALIAS_STOPLIST = setOf(
+            "general", "national", "united", "american", "first",
         )
 
         fun from(symbol: String, companyName: String?): CompanyMatcher {
@@ -150,8 +180,19 @@ internal class CompanyMatcher private constructor(
                 ?.replace(Regex("\\s+"), " ")
                 ?.trim()
                 ?.takeIf { it.length >= 4 }
-            return CompanyMatcher(explicit, name)
+            val alias = name
+                ?.split(' ')
+                ?.takeWhile { it !in ALIAS_SUFFIX_TOKENS }
+                ?.joinToString(" ")
+                ?.takeIf { it.isNotBlank() && it != name && it !in ALIAS_STOPLIST }
+            return CompanyMatcher(
+                explicit = explicit,
+                namePattern = name?.let(::wordBounded),
+                aliasPattern = alias?.let(::wordBounded),
+            )
         }
+
+        private fun wordBounded(phrase: String) = Regex("\\b${Regex.escape(phrase)}\\b")
     }
 }
 

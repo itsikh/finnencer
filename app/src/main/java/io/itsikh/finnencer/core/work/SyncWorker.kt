@@ -45,7 +45,19 @@ class SyncWorker @AssistedInject constructor(
         Result.success()
     } catch (t: Throwable) {
         Log.e(TAG, "sync failed", t)
-        Result.retry()
+        // Bound the retry loop. A one-off sync left in retry() sits
+        // ENQUEUED through exponential backoff indefinitely, and
+        // [SyncScheduler.isSyncRunning] counts ENQUEUED one-off work as
+        // active — so the UI "syncing" indicator would stay on for
+        // hours. Giving up after a few attempts is also fine for the
+        // periodic path: the next interval retries the whole pipeline
+        // anyway.
+        if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+            Log.e(TAG, "sync giving up after ${runAttemptCount + 1} attempts")
+            Result.failure()
+        } else {
+            Result.retry()
+        }
     }
 
     private suspend fun runPipeline() {
@@ -69,18 +81,21 @@ class SyncWorker @AssistedInject constructor(
         }
 
         // Stage 2 — score newly-ingested articles with Claude Haiku. Skipped
-        // entirely if the user hasn't pasted an Anthropic key yet.
-        if (!apiKeys.isConfigured(ApiKey.ANTHROPIC)) {
-            Log.i(TAG, "scoring skipped: ANTHROPIC key not configured")
-            return
-        }
-        val scorerStats = scorer.scoreUnscored()
-        Log.i(TAG, "scoring done: $scorerStats")
+        // entirely if the user hasn't pasted an Anthropic key yet. The
+        // retention sweep must NOT hide behind this gate: a
+        // news-provider-only setup still ingests 4 feeds every 15 min,
+        // and skipping the prune here let the DB grow unboundedly.
+        if (apiKeys.isConfigured(ApiKey.ANTHROPIC)) {
+            val scorerStats = scorer.scoreUnscored()
+            Log.i(TAG, "scoring done: $scorerStats")
 
-        // Stage 3 — fan notifications out for any newly-scored items that
-        // pass per-ticker threshold + quiet hours + dedup gates.
-        val fanout = notifier.fanout(scorerStats.newScores)
-        Log.i(TAG, "fanout: $fanout")
+            // Stage 3 — fan notifications out for any newly-scored items
+            // that pass per-ticker threshold + quiet hours + dedup gates.
+            val fanout = notifier.fanout(scorerStats.newScores)
+            Log.i(TAG, "fanout: $fanout")
+        } else {
+            Log.i(TAG, "scoring skipped: ANTHROPIC key not configured")
+        }
 
         // Stage 4 — retention sweep. Trim cached news + API-usage rows
         // older than the user-configured retention windows so the DB
@@ -106,5 +121,9 @@ class SyncWorker @AssistedInject constructor(
 
     private companion object {
         const val TAG = "SyncWorker"
+
+        /** runAttemptCount is 0-based, so this allows 3 backoff retries
+         *  (4 runs total) before the work finishes as FAILED. */
+        const val MAX_RETRY_ATTEMPTS = 3
     }
 }

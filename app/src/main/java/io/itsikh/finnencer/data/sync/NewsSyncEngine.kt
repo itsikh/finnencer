@@ -49,10 +49,12 @@ class NewsSyncEngine @Inject constructor(
 
         for (ticker in tickers) {
             // Best-effort backfill of CIK on a ticker that doesn't have one
-            // yet — cheap and unblocks the EDGAR provider.
+            // yet — cheap and unblocks the EDGAR provider. Targeted UPDATE
+            // of the cik column only: a full-row update from the stale
+            // `ticker` copy would clobber settings changed concurrently.
             val cik = ticker.cik ?: runCatching { cikLookup.resolve(ticker.symbol) }
                 .onSuccess { c ->
-                    if (c != null) tickerDao.update(ticker.copy(cik = c))
+                    if (c != null) tickerDao.updateCik(ticker.symbol, c)
                 }
                 .getOrNull()
 
@@ -81,11 +83,16 @@ class NewsSyncEngine @Inject constructor(
             // Drop articles already in the DB so we know how many are net new
             val existing = newsDao.existingIds(unique.map { it.id }).toHashSet()
             val fresh = unique.filterNot { existing.contains(it.id) }
-            if (fresh.isEmpty()) continue
 
-            newsDao.insertArticles(fresh)
+            if (fresh.isNotEmpty()) newsDao.insertArticles(fresh)
+            // Link xrefs for ALL fetched uniques, not just fresh rows:
+            // firehose/Google News ids are ticker-independent, so when
+            // another watched ticker inserted the article first, this
+            // ticker still needs its own xref or the story never shows
+            // in its feed, is never scored for it, and can't alert.
+            // linkTickers is OnConflict.IGNORE, so re-links are no-ops.
             newsDao.linkTickers(
-                fresh.map { ArticleTickerXref(articleId = it.id, tickerSymbol = ticker.symbol) }
+                unique.map { ArticleTickerXref(articleId = it.id, tickerSymbol = ticker.symbol) }
             )
             inserted += fresh.size
         }

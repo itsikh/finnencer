@@ -21,6 +21,7 @@ import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.data.ai.BundleSummarizer
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.AiJobDao
+import io.itsikh.finnencer.data.repo.coercedFor
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.entity.AiJobResultKind
 import io.itsikh.finnencer.data.entity.AiJobStage
@@ -258,7 +259,12 @@ class AiJobWorker @AssistedInject constructor(
      * etc.).
      */
     private suspend fun runTtsSmokeWithFallback(jobId: String): io.itsikh.finnencer.data.repo.TtsModel {
-        val selected = podcastPrefs.ttsModel.first()
+        // Coerce Vertex-only GA ids on the Generative Language provider
+        // BEFORE probing — otherwise the smoke test 404s a model the
+        // synth stage would never actually use, burning a probe + timeout
+        // and blaming the user's "default" for it.
+        val provider = podcastPrefs.ttsProvider.first()
+        val selected = podcastPrefs.ttsModel.first().coercedFor(provider)
         val chain = fallbackChainFor(selected)
         var firstErr: Throwable? = null
         for ((idx, candidate) in chain.withIndex()) {
@@ -341,6 +347,9 @@ class AiJobWorker @AssistedInject constructor(
         // Cheap-first ordering. Putting Pro last means a user who picked
         // 3.1 Flash gets 2.5 Flash as their first fallback (same cost
         // tier) before we silently bump them up to Pro pricing.
+        // The GA models are deliberately NOT fallback candidates: they
+        // only exist on Vertex, so falling back to them on a
+        // Generative Language key would be a guaranteed 404.
         val cheapFirst = listOf(
             io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH,
             io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH,
@@ -359,8 +368,10 @@ class AiJobWorker @AssistedInject constructor(
      */
     private fun ttsSmokeTimeoutMsFor(model: io.itsikh.finnencer.data.repo.TtsModel): Long = when (model) {
         io.itsikh.finnencer.data.repo.TtsModel.GEMINI_3_1_FLASH -> 45_000L
-        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH -> 60_000L
-        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO -> 90_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH,
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_FLASH_GA -> 60_000L
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO,
+        io.itsikh.finnencer.data.repo.TtsModel.GEMINI_2_5_PRO_GA -> 90_000L
     }
 
     private fun AiJobType.producesPodcast(): Boolean = when (this) {

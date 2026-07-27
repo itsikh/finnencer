@@ -159,19 +159,32 @@ object WavToM4a {
             val size = leInt(chunkHeader, 4)
             when (tag) {
                 "fmt " -> {
+                    // bitsPerSample lives at offset 14, so anything under
+                    // the 16-byte PCM minimum would IndexOutOfBounds with
+                    // no context — fail with the actual size instead.
+                    if (size < 16) {
+                        throw IllegalArgumentException(
+                            "fmt chunk too small: $size bytes (PCM needs >= 16)"
+                        )
+                    }
                     val fmtBuf = ByteArray(size).also { raf.readFully(it) }
                     format = leShort(fmtBuf, 0).toInt()
                     channels = leShort(fmtBuf, 2).toInt()
                     sampleRate = leInt(fmtBuf, 4)
                     bitsPerSample = leShort(fmtBuf, 14).toInt()
                     fmtSeen = true
+                    // RIFF chunks are word-aligned: an odd-sized chunk is
+                    // followed by a pad byte not counted in `size`.
+                    if (size % 2 == 1) raf.seek(raf.filePointer + 1)
                 }
                 "data" -> {
                     dataOffset = raf.filePointer.toInt()
                     dataSize = size
                     break
                 }
-                else -> raf.seek(raf.filePointer + size)
+                // Skip unknown chunks, including the word-alignment pad
+                // byte after odd-sized ones.
+                else -> raf.seek(raf.filePointer + size + (size % 2))
             }
         }
         require(fmtSeen && dataOffset > 0 && dataSize > 0) {

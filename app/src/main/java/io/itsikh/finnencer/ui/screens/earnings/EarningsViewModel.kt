@@ -11,11 +11,16 @@ import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.data.repo.AiJobsRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -34,11 +39,27 @@ class EarningsViewModel @Inject constructor(
     private val aiJobDao: AiJobDao,
 ) : ViewModel() {
 
+    /**
+     * "Wall clock" tick for the time-windowed query below (same pattern
+     * as WatchlistViewModel.nowTicker): emits `now` immediately, then
+     * every 15 minutes, so a long foreground session doesn't keep
+     * querying against a stale timestamp captured at flow start.
+     */
+    private val nowTicker: Flow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(NOW_TICK_MS)
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     val upcoming: StateFlow<List<EarningsEvent>> =
-        earningsDao.observeBetween(
-            fromMillis = System.currentTimeMillis() - 14L * 24 * 60 * 60 * 1000,
-            toMillis = System.currentTimeMillis() + 90L * 24 * 60 * 60 * 1000,
-        ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        nowTicker.flatMapLatest { now ->
+            earningsDao.observeBetween(
+                fromMillis = now - 14L * 24 * 60 * 60 * 1000,
+                toMillis = now + 90L * 24 * 60 * 60 * 1000,
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val recentReports: StateFlow<List<EarningsReport>> =
         earningsDao.observeRecentReports(50)
@@ -156,5 +177,10 @@ class EarningsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private companion object {
+        /** How often [nowTicker] refreshes the 'now' used by [upcoming]. */
+        const val NOW_TICK_MS = 15L * 60 * 1000
     }
 }

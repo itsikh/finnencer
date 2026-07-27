@@ -28,15 +28,32 @@ object ArticleIds {
      */
     fun clusterKey(title: String): String {
         if (title.isBlank()) return "empty"
+        val tokens = titleTokens(title)
+        if (tokens.isEmpty()) return sha256(title).take(16)
+        return sha256(tokens.joinToString(" ")).take(16)
+    }
+
+    /**
+     * Cluster key scoped to a single company. EDGAR filing titles ("8-K -
+     * Current report") carry no company name, so the unscoped key collides
+     * across every company filing the same form — company A's 8-K would
+     * suppress company B's as a "duplicate". The scope participates in the
+     * hash so equal titles from different companies stay distinct.
+     */
+    fun scopedClusterKey(scope: String, title: String): String {
+        val tokens = titleTokens(title)
+        val body = if (tokens.isEmpty()) title else tokens.joinToString(" ")
+        return sha256(scope.lowercase().trim() + "::" + body).take(16)
+    }
+
+    private fun titleTokens(title: String): List<String> {
         val sanitized = title.lowercase()
             .replace(Regex("[\\p{Punct}$€£¥]"), " ")
             .replace(Regex("\\d+"), " ")
-        val tokens = sanitized.split(Regex("\\s+"))
+        return sanitized.split(Regex("\\s+"))
             .filter { it.isNotBlank() }
             .filter { it !in STOPWORDS }
             .take(8)
-        if (tokens.isEmpty()) return sha256(title).take(16)
-        return sha256(tokens.joinToString(" ")).take(16)
     }
 
     private fun sha256(s: String): String {

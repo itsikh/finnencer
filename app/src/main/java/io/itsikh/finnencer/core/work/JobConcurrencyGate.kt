@@ -38,7 +38,13 @@ class JobConcurrencyGate @Inject constructor() {
         return try {
             block()
         } finally {
-            sem.release()
+            // NonCancellable: this finally often runs BECAUSE the worker
+            // was cancelled (WorkManager stop). release() suspends on the
+            // gate mutex; without NonCancellable a contended lock throws
+            // CancellationException here and the permit leaks forever.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                sem.release()
+            }
             AppLogger.i(TAG, "gate ${kind.name} released for $label")
         }
     }
@@ -93,22 +99,50 @@ class AdjustableSemaphore(initial: Int) {
                 true
             }
         }
-        if (mustWait) waiter.await()
+        if (!mustWait) return
+        try {
+            waiter.await()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            // Cancelled while queued. Cancelling the awaiting coroutine
+            // does NOT cancel the CompletableDeferred, so without this
+            // cleanup release() would hand the permit to a coroutine
+            // that will never release it and the gate deadlocks (the
+            // "waiting for the pipeline to be free" hang).
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                mutex.withLock {
+                    if (waiter.isCompleted) {
+                        // release()/setLimit() already popped us and
+                        // handed us the permit — pass it on so it isn't
+                        // stranded on this dead coroutine.
+                        handOffOrFreeLocked()
+                    } else {
+                        waiters.remove(waiter)
+                    }
+                }
+            }
+            throw ce
+        }
     }
 
     suspend fun release() {
-        mutex.withLock {
-            // If a waiter is queued AND we're still within budget, hand
-            // the permit off without bumping inUse down — net zero.
-            // If we're over budget (limit was shrunk), drain the surplus
-            // by decrementing inUse and leaving any waiters in the queue
-            // until budget allows them in.
-            val waiter = if (inUse <= limit) waiters.removeFirstOrNull() else null
-            if (waiter != null) {
-                waiter.complete(Unit)
-            } else {
-                inUse = (inUse - 1).coerceAtLeast(0)
-            }
+        mutex.withLock { handOffOrFreeLocked() }
+    }
+
+    /**
+     * Hand the caller's permit to the next queued waiter, or return it
+     * to the free pool. Must be called with [mutex] held.
+     *
+     * If a waiter is queued AND we're still within budget, hand the
+     * permit off without bumping inUse down — net zero. If we're over
+     * budget (limit was shrunk), drain the surplus by decrementing
+     * inUse and leaving any waiters queued until budget allows them in.
+     */
+    private fun handOffOrFreeLocked() {
+        val waiter = if (inUse <= limit) waiters.removeFirstOrNull() else null
+        if (waiter != null) {
+            waiter.complete(Unit)
+        } else {
+            inUse = (inUse - 1).coerceAtLeast(0)
         }
     }
 

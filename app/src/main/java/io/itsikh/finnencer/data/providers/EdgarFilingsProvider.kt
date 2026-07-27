@@ -47,7 +47,10 @@ class EdgarFilingsProvider @Inject constructor(
                     imageUrl = null,
                     publishedAtMillis = item.publishedAtMillis,
                     fetchedAtMillis = nowMillis,
-                    clusterKey = ArticleIds.clusterKey(item.title),
+                    // Scoped to the ticker: filing titles are form-type
+                    // boilerplate shared by every company, so an unscoped
+                    // key would cluster different companies' filings.
+                    clusterKey = ArticleIds.scopedClusterKey(tickerSymbol, item.title),
                     primaryTickerSymbol = tickerSymbol,
                 )
             }

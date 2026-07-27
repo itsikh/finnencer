@@ -172,8 +172,12 @@ object FeedParser {
         }
     }
 
+    // Locale.US is load-bearing: RFC-822 day/month names ("Mon", "Jul")
+    // are English. Without it, devices on a non-English format locale
+    // fail every parse and each article silently falls back to
+    // "now" (System.currentTimeMillis()), defeating freshness windows.
     private val RFC822: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("EEE, d MMM yyyy HH:mm:ss [Z][z]")
+        DateTimeFormatter.ofPattern("EEE, d MMM yyyy HH:mm:ss [Z][z]", java.util.Locale.US)
 
     private fun parseRfc822(raw: String?): Long? {
         if (raw.isNullOrBlank()) return null

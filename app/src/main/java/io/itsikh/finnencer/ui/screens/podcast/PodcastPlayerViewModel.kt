@@ -45,7 +45,7 @@ data class PlaybackUiState(
 class PodcastPlayerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     savedState: SavedStateHandle,
-    podcastDao: PodcastDao,
+    private val podcastDao: PodcastDao,
     private val queueRepo: QueueRepository,
     private val prefs: PodcastPreferences,
     private val aiJobDao: io.itsikh.finnencer.data.dao.AiJobDao,
@@ -83,9 +83,21 @@ class PodcastPlayerViewModel @Inject constructor(
     private var controller: MediaController? = null
     private var loaded = false
     /** Guards [handlePlaybackEnded] so STATE_ENDED-triggered work runs once
-     *  per opened podcast, not once per state-change repaint. */
+     *  per playback-to-completion, not once per state-change repaint.
+     *  Reset when the player leaves STATE_ENDED so a replayed episode
+     *  can trigger end-of-podcast handling again (#84). */
     private var endHandled = false
+    /** Set by [onCleared]; the async controller-connect callback checks it
+     *  so a controller that finishes connecting AFTER the screen is gone
+     *  is released instead of leaked (and never auto-plays) (#80). */
+    @Volatile private var cleared = false
     private var pollJob: Job? = null
+
+    /** True when the podcast row says READY but the WAV is gone from disk
+     *  (deleted externally / restored backup without audio). The screen
+     *  shows an explicit error instead of dead controls (#77). */
+    private val _fileMissing = MutableStateFlow(false)
+    val fileMissing: StateFlow<Boolean> = _fileMissing.asStateFlow()
 
     init {
         // Build the MediaController on the main looper and dispatch the
@@ -99,7 +111,16 @@ class PodcastPlayerViewModel @Inject constructor(
             val token = SessionToken(context, ComponentName(context, PodcastPlaybackService::class.java))
             val future = MediaController.Builder(context, token).buildAsync()
             future.addListener({
-                controller = future.get()
+                val connected = future.get()
+                if (cleared) {
+                    // Screen was exited before the connect completed —
+                    // releasing here (instead of assigning) prevents a
+                    // leaked controller that keeps the service bound and
+                    // could even start ghost playback (#80).
+                    connected.release()
+                    return@addListener
+                }
+                controller = connected
                 io.itsikh.finnencer.logging.AppLogger.i(TAG, "MediaController connected (id=$podcastId)")
                 attachListener()
                 attemptLoad()
@@ -116,16 +137,53 @@ class PodcastPlayerViewModel @Inject constructor(
         c.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _ui.value = _ui.value.copy(isPlaying = isPlaying)
-                if (isPlaying) startPolling() else stopPolling()
+                if (isPlaying) {
+                    startPolling()
+                } else {
+                    stopPolling()
+                    // Pause is the most reliable "user is leaving" signal —
+                    // persist so reopening resumes here. Guarded by mediaId
+                    // because this listener sits on the SHARED session
+                    // player, which may be playing a different podcast.
+                    if (c.currentMediaItem?.mediaId == podcastId.toString()) {
+                        persistPosition(c.currentPosition.coerceAtLeast(0))
+                    }
+                }
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 _ui.value = _ui.value.copy(
                     positionMs = c.currentPosition,
                     durationMs = c.duration.coerceAtLeast(0),
                 )
-                if (playbackState == Player.STATE_ENDED) handlePlaybackEnded()
+                if (playbackState == Player.STATE_ENDED) {
+                    // The listener sits on the SHARED session player —
+                    // only react when it's OUR podcast that ended, or a
+                    // background episode finishing would mark this one
+                    // done and misfire auto-advance (#81).
+                    if (c.currentMediaItem?.mediaId == podcastId.toString()) {
+                        // Reset the saved position so a replay starts
+                        // from the top.
+                        persistPosition(0)
+                        handlePlaybackEnded()
+                    }
+                } else {
+                    // Left ENDED (replay/seek-back) — re-arm so finishing
+                    // again triggers end-of-podcast handling again (#84).
+                    endHandled = false
+                }
             }
         })
+    }
+
+    /** Last position written to Room — dedups the periodic writes. */
+    private var lastPersistedPosMs = -1L
+
+    private fun persistPosition(positionMs: Long) {
+        if (kotlin.math.abs(positionMs - lastPersistedPosMs) < 1_000) return
+        lastPersistedPosMs = positionMs
+        viewModelScope.launch {
+            runCatching { podcastDao.updatePosition(podcastId, positionMs, System.currentTimeMillis()) }
+        }
     }
 
     /**
@@ -144,6 +202,12 @@ class PodcastPlayerViewModel @Inject constructor(
             }
             val incompletePodcasts = queueRepo.observeIncomplete().first()
                 .filter { it.kind == QueueItemKind.PODCAST.name && it.refId != refId }
+                // Skip queue items whose podcast row no longer exists —
+                // auto-advancing to a deleted podcast left the player
+                // stuck on "Loading…" forever (#78).
+                .filter { item ->
+                    item.refId?.toLongOrNull()?.let { podcastDao.get(it) != null } == true
+                }
             // When the player was opened from the queue, the user is
             // implicitly playing through it — override a global STOP
             // setting to CONTINUE for this listening session. The
@@ -165,12 +229,18 @@ class PodcastPlayerViewModel @Inject constructor(
     private fun startPolling() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
+            var ticks = 0
             while (true) {
                 val c = controller ?: break
                 _ui.value = _ui.value.copy(
                     positionMs = c.currentPosition.coerceAtLeast(0),
                     durationMs = c.duration.coerceAtLeast(0),
                 )
+                // Persist the listening position every ~5s so process
+                // death / navigation loses at most a few seconds.
+                if (++ticks % 10 == 0 && c.currentMediaItem?.mediaId == podcastId.toString()) {
+                    persistPosition(c.currentPosition.coerceAtLeast(0))
+                }
                 delay(500)
             }
         }
@@ -198,19 +268,51 @@ class PodcastPlayerViewModel @Inject constructor(
             return
         }
         if (loaded) return
-        if (!File(path).exists()) {
-            io.itsikh.finnencer.logging.AppLogger.w(TAG, "attemptLoad skip: file missing $path")
+        // The session player is shared and may already be playing THIS
+        // podcast in the background (user backed out and came back).
+        // Adopt it instead of re-setting the media item, which restarted
+        // playback from 0:00 on every reopen.
+        if (c.currentMediaItem?.mediaId == podcastId.toString()) {
+            loaded = true
+            _ui.value = _ui.value.copy(
+                isPlaying = c.isPlaying,
+                positionMs = c.currentPosition.coerceAtLeast(0),
+                durationMs = c.duration.coerceAtLeast(0),
+                speed = c.playbackParameters.speed,
+            )
+            if (c.isPlaying) startPolling()
+            io.itsikh.finnencer.logging.AppLogger.i(TAG, "player adopted live session (id=$podcastId pos=${c.currentPosition})")
             return
         }
+        if (!File(path).exists()) {
+            io.itsikh.finnencer.logging.AppLogger.w(TAG, "attemptLoad skip: file missing $path")
+            // Surface it — a READY row with no WAV used to render fully
+            // live controls that silently did nothing (#77).
+            _fileMissing.value = true
+            return
+        }
+        _fileMissing.value = false
         val uri = Uri.fromFile(File(path))
-        c.setMediaItem(MediaItem.fromUri(uri))
+        c.setMediaItem(
+            MediaItem.Builder()
+                .setUri(uri)
+                // mediaId is how we later recognize "this podcast is
+                // already loaded" — keep it the row id.
+                .setMediaId(podcastId.toString())
+                .build()
+        )
         c.prepare()
+        // Resume where the user left off — unless they were effectively
+        // done (within the last 5s), then start from the top.
+        val resumeAt = p.playPositionMs
+        val nearEnd = p.durationMs?.let { resumeAt >= it - 5_000 } ?: false
+        if (resumeAt > 0 && !nearEnd) c.seekTo(resumeAt)
         // Auto-start playback when the player opens (#29). Opening the
         // player from the queue / library row previously left it paused
         // and the user had to tap play — friction the bug report flagged.
         c.play()
         loaded = true
-        io.itsikh.finnencer.logging.AppLogger.i(TAG, "player loaded + play() called (id=$podcastId path=$path)")
+        io.itsikh.finnencer.logging.AppLogger.i(TAG, "player loaded + play() called (id=$podcastId resumeAt=$resumeAt path=$path)")
     }
 
     private companion object { const val TAG = "PodcastPlayerVM" }
@@ -256,21 +358,53 @@ class PodcastPlayerViewModel @Inject constructor(
 
     fun playPause() {
         val c = controller ?: return
-        if (c.isPlaying) c.pause() else c.play()
+        if (c.isPlaying) {
+            c.pause()
+        } else {
+            // Replaying a finished episode: in STATE_ENDED play() only
+            // sets playWhenReady (often already true) and nothing moves —
+            // seek to the start so the tap actually restarts playback.
+            if (c.playbackState == Player.STATE_ENDED) c.seekTo(0)
+            c.play()
+        }
     }
 
     fun skipBack(ms: Long = 30_000) {
         val c = controller ?: return
-        c.seekTo((c.currentPosition - ms).coerceAtLeast(0))
+        val target = (c.currentPosition - ms).coerceAtLeast(0)
+        c.seekTo(target)
+        // Reflect immediately — the poll loop is stopped while paused,
+        // so without this the slider/label snap back until play resumes.
+        _ui.value = _ui.value.copy(positionMs = target)
+        persistSeek(c, target)
     }
 
     fun skipForward(ms: Long = 30_000) {
         val c = controller ?: return
-        c.seekTo((c.currentPosition + ms).coerceAtMost(c.duration))
+        // duration is TIME_UNSET (a huge negative) until READY —
+        // coercing against it seeked to the default position (0:00).
+        val duration = c.duration
+        val cap = if (duration == androidx.media3.common.C.TIME_UNSET) Long.MAX_VALUE else duration
+        val target = (c.currentPosition + ms).coerceAtMost(cap)
+        c.seekTo(target)
+        _ui.value = _ui.value.copy(positionMs = target.coerceAtLeast(0))
+        persistSeek(c, target.coerceAtLeast(0))
     }
 
     fun seekTo(positionMs: Long) {
-        controller?.seekTo(positionMs)
+        val c = controller ?: return
+        c.seekTo(positionMs)
+        _ui.value = _ui.value.copy(positionMs = positionMs)
+        persistSeek(c, positionMs)
+    }
+
+    /** Seeks made while PAUSED never hit the poll loop or a pause
+     *  transition — persist them here or a pause→scrub→leave sequence
+     *  resumes at the pre-scrub position. */
+    private fun persistSeek(c: MediaController, positionMs: Long) {
+        if (c.currentMediaItem?.mediaId == podcastId.toString()) {
+            persistPosition(positionMs)
+        }
     }
 
     fun setSpeed(speed: Float) {
@@ -280,6 +414,7 @@ class PodcastPlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        cleared = true
         stopPolling()
         controller?.release()
         controller = null

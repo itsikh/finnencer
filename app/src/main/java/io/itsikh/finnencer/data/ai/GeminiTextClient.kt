@@ -48,6 +48,7 @@ class GeminiTextClient @Inject constructor(
                 temperature = temperature,
                 // Gemini's text generation honors maxOutputTokens here; not
                 // related to the responseModalities (audio) used by TTS.
+                maxOutputTokens = maxTokens,
                 responseModalities = null,
                 speechConfig = null,
             ),
@@ -81,8 +82,15 @@ class GeminiTextClient @Inject constructor(
         val text = candidate?.content?.parts?.mapNotNull { it.text }?.joinToString("")
             ?.trim().orEmpty()
         if (text.isBlank()) {
-            AppLogger.w(TAG, "Gemini ($model) returned empty text")
-            error("Gemini returned empty content")
+            // finishReason is the actual diagnostic here: SAFETY /
+            // RECITATION / MAX_TOKENS all present as "empty content".
+            // Record a failed usage row too — this throw happens after
+            // the HTTP try/catch, so nothing else will.
+            val reason = candidate?.finishReason ?: "no candidates"
+            val message = "Gemini returned empty content (finishReason=$reason)"
+            AppLogger.w(TAG, "Gemini ($model) returned empty text (finishReason=$reason)")
+            recordUsage(model, merged.length / 4, 0, startedAt, ok = false, error = message)
+            error(message)
         }
         val inputTokens = merged.length / 4
         val outputTokens = text.length / 4
@@ -106,11 +114,13 @@ class GeminiTextClient @Inject constructor(
         ok: Boolean,
         error: String?,
     ) {
-        // Approximate Gemini text pricing (2026 rates): Flash $0.075/M in,
-        // $0.30/M out; Pro $1.25/M in, $5.00/M out.
+        // Approximate Gemini text pricing (mid-2026 rates): 3.x Flash
+        // ~$0.30/M in, $2.50/M out; 3.1 Pro $2/M in, $12/M out. Keep in
+        // sync with ModelCost.pricePerMillion so the pre-tap hint and
+        // the actuals meter agree.
         val (inPerM, outPerM) = when {
-            model.contains("pro") -> 1.25 to 5.00
-            else -> 0.075 to 0.30
+            model.contains("pro") -> 2.0 to 12.0
+            else -> 0.30 to 2.50
         }
         val cents = (inputTokens / 1_000_000.0) * inPerM * 100 +
                 (outputTokens / 1_000_000.0) * outPerM * 100

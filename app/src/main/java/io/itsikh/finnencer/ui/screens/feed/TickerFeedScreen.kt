@@ -66,6 +66,7 @@ import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsStatus
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.screens.earnings.TierPickerSheetCore
 import io.itsikh.finnencer.ui.theme.FinnencerColors
@@ -375,12 +376,16 @@ fun TickerFeedScreen(
     }
 
     earningsPodcastTarget?.let { target ->
+        // Only show the fiscal label once confirmed by the fiscal-aware
+        // source (#70); otherwise fall back to the scheduled date.
+        val targetLabel = target.fiscalLabelOrNull()
+            ?: EARN_FMT.format(Instant.ofEpochMilli(target.scheduledAtMillis))
         EarningsPodcastDialog(
-            quarter = "Q${target.fiscalQuarter} ${target.fiscalYear}",
+            quarter = targetLabel,
             onPick = { minutes ->
                 vm.requestEarningsPodcast(
                     eventId = target.id,
-                    eventLabel = "Q${target.fiscalQuarter} ${target.fiscalYear}",
+                    eventLabel = targetLabel,
                     minutes = minutes,
                     customPrompt = null,
                 )
@@ -661,8 +666,11 @@ private fun EarningsCard(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Unconfirmed fiscal labels are EDGAR calendar-quarter
+                // guesses — don't display them as fact (#70). The scheduled
+                // date on the right of this row still identifies the event.
                 Text(
-                    "Q${event.fiscalQuarter} ${event.fiscalYear}",
+                    event.fiscalLabelOrNull() ?: "Earnings",
                     style = MaterialTheme.typography.titleMedium,
                     color = FinnencerColors.TextPrimary,
                     fontWeight = FontWeight.SemiBold,

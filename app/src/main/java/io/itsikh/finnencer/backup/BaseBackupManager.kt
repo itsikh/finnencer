@@ -174,6 +174,11 @@ abstract class BaseBackupManager(
                     var entry = zis.nextEntry
                     while (entry != null) {
                         val outputFile = File(extractDir, entry.name)
+                        // Zip-Slip guard: a crafted "../" entry name must
+                        // not write outside the extraction directory.
+                        if (!outputFile.canonicalPath.startsWith(extractDir.canonicalPath + File.separator)) {
+                            throw Exception("Invalid backup file: entry escapes extraction directory: ${entry.name}")
+                        }
                         outputFile.parentFile?.mkdirs()
                         if (!entry.isDirectory) {
                             FileOutputStream(outputFile).use { fos ->

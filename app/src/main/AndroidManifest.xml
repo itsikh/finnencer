@@ -39,18 +39,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!--
-                Deep link for notification taps. AlertNotifier posts
+                Deep links for notification taps. AlertNotifier posts
                 `finnencer://article/{articleId}` and AppNavHost has a
                 matching navDeepLink on the `article/{articleId}` route,
                 so the tap lands directly on ArticleDetailScreen where
                 the user can read, bookmark to the reading list, or
-                generate a summary.
+                generate a summary. InsiderAlertWorker posts
+                `finnencer://ticker/{symbol}`, which lands on the
+                `ticker/{symbol}` route (TickerFeedScreen).
             -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="finnencer" android:host="article" />
+                <data android:scheme="finnencer" android:host="ticker" />
             </intent-filter>
         </activity>
 

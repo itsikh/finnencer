@@ -9,6 +9,7 @@ import io.itsikh.finnencer.data.entity.Podcast
 import io.itsikh.finnencer.data.entity.PodcastGenerationStatus
 import io.itsikh.finnencer.data.entity.PodcastSourceType
 import io.itsikh.finnencer.data.repo.PodcastPreferences
+import io.itsikh.finnencer.data.repo.coercedFor
 import io.itsikh.finnencer.logging.AppLogger
 import java.io.File
 import java.util.UUID
@@ -48,8 +49,17 @@ class BundleSummarizer @Inject constructor(
      */
     class ValidationReviewRequiredException(val podcastId: Long) : RuntimeException("Validator flagged the script; podcast $podcastId is awaiting review")
 
+    /** The user can delete the podcast row mid-job (library delete /
+     *  "Clear failed"); fail with a clear message instead of an NPE. */
+    private suspend fun requirePodcastRow(id: Long): Podcast =
+        podcastDao.get(id)
+            ?: throw IllegalStateException("Podcast $id was deleted while it was being generated")
+
+    // maxTokens sized for Sonnet 5, whose tokenizer emits ~30% more
+    // tokens for the same text than Sonnet 4.6 — the old caps
+    // (2000/4500/9000) would truncate equivalent-length summaries.
     enum class Pages(val target: Int, val maxTokens: Int) {
-        TWO(2, 2_000), FIVE(5, 4_500), TEN(10, 9_000)
+        TWO(2, 2_600), FIVE(5, 6_000), TEN(10, 12_000)
     }
 
     enum class PodcastMinutes(val minutes: Int) {
@@ -277,10 +287,14 @@ class BundleSummarizer @Inject constructor(
             .onFailure { AppLogger.w(TAG, "onPodcastIdAssigned callback failed: ${it.message}") }
 
         runCatching {
-            podcastDao.update(podcastDao.get(id)!!.copy(status = PodcastGenerationStatus.GENERATING.name))
+            podcastDao.update(requirePodcastRow(id).copy(status = PodcastGenerationStatus.GENERATING.name))
 
             val baseScriptSystem = buildString {
-                append(DIALOGUE_SYSTEM)
+                // Single source of truth shared with the Settings
+                // prompt editor. A private copy here previously
+                // drifted: the Analyst Reactions long-form block only
+                // existed in DefaultPrompts and never reached runtime.
+                append(DefaultPrompts.forUsage(AiUsage.PODCAST_SCRIPT))
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
                 append("(~").append(charBudget).append(" characters of dialogue). ")
                 append("A ").append(minutes.minutes).append("-minute podcast typically contains ")
@@ -301,18 +315,18 @@ class BundleSummarizer @Inject constructor(
                 extra = promptPrefs.get(AiUsage.PODCAST_SCRIPT),
                 perCallCustom = customPrompt,
             )
-            // ~3.5 chars/token average for English dialogue. /2.5 leaves
-            // headroom so the model isn't truncated by maxTokens at the
-            // target length (#34/#35). Capped well under Anthropic's
-            // 16k-token output limit on Sonnet 4.6 / Opus 4.7.
-            val maxTokens = (charBudget / 2.5).toInt().coerceIn(2000, 12000)
+            // Sonnet 5's tokenizer runs ~2.7 chars/token on English
+            // dialogue (~30% more tokens than 4.6). /2.0 leaves headroom
+            // so the model isn't truncated by maxTokens at the target
+            // length (#34/#35); the cap stays low enough that a single
+            // non-streaming call finishes inside the 600s callTimeout.
+            val maxTokens = (charBudget / 2.0).toInt().coerceIn(2600, 14000)
             // Resolve the TTS model NOW so the script-stage status detail
             // names which engine will render the audio. Lets users verify
             // their Settings choice persisted before the (expensive)
             // script LLM call kicks off. Single read — reused later in
             // the synth call so a mid-flight pref edit can't desync the
             // status label from the model actually used.
-            val resolvedTtsModel = ttsModelOverride ?: podcastPrefs.ttsModel.first()
             // Surface the active TTS provider next to the model name in
             // the task subtitle so the user can confirm at a glance that
             // their Settings → Podcasts choice is in effect (#63 —
@@ -320,6 +334,11 @@ class BundleSummarizer @Inject constructor(
             //   "Gemini 2.5 Pro · Vertex AI"
             //   "Gemini 2.5 Pro · Generative Language API"
             val resolvedTtsProvider = podcastPrefs.ttsProvider.first()
+            // Coerced BEFORE display/billing so the status line names the
+            // model GeminiTts will actually use (Vertex-only GA ids swap
+            // to the default preview on Generative Language).
+            val resolvedTtsModel = (ttsModelOverride ?: podcastPrefs.ttsModel.first())
+                .coercedFor(resolvedTtsProvider)
             val plannedTtsDisplay = "${resolvedTtsModel.displayName} · ${resolvedTtsProvider.displayName}"
             // Phase 1: produce the script (skip if a prior failed attempt
             // already persisted one). Persisted to the row IMMEDIATELY so
@@ -396,7 +415,7 @@ class BundleSummarizer @Inject constructor(
                     PodcastValidator.Verdict.FIXED -> {
                         val finalScript = v.script ?: script
                         podcastDao.update(
-                            podcastDao.get(id)!!.copy(
+                            requirePodcastRow(id).copy(
                                 scriptText = finalScript,
                                 validationNotes = v.notes,
                                 validationModel = v.model,
@@ -411,7 +430,7 @@ class BundleSummarizer @Inject constructor(
                     }
                     PodcastValidator.Verdict.FAIL -> {
                         podcastDao.update(
-                            podcastDao.get(id)!!.copy(
+                            requirePodcastRow(id).copy(
                                 status = PodcastGenerationStatus.PENDING_REVIEW.name,
                                 validationNotes = v.notes,
                                 validationModel = v.model,
@@ -447,7 +466,7 @@ class BundleSummarizer @Inject constructor(
             )
 
             podcastDao.update(
-                podcastDao.get(id)!!.copy(
+                requirePodcastRow(id).copy(
                     filePath = result.file.absolutePath,
                     durationMs = result.durationMs,
                     status = PodcastGenerationStatus.READY.name,
@@ -462,13 +481,22 @@ class BundleSummarizer @Inject constructor(
             // podcast row again.
             if (t is ValidationReviewRequiredException) throw t
             val friendly = FriendlyError.describe(t, stage = "podcast")
-            podcastDao.update(
-                podcastDao.get(id)!!.copy(
-                    status = PodcastGenerationStatus.FAILED.name,
-                    generationError = friendly,
+            // Null-safe: the user may have deleted the row mid-job, and
+            // an NPE thrown from inside onFailure would mask the real
+            // diagnostic.
+            podcastDao.get(id)?.let {
+                podcastDao.update(
+                    it.copy(
+                        status = PodcastGenerationStatus.FAILED.name,
+                        generationError = friendly,
+                    )
                 )
-            )
+            }
             AppLogger.e(TAG, "bundle podcast $id failed: $friendly", t)
+            // Rethrow so the AiJobWorker layer marks the JOB failed too.
+            // Swallowing here made the worker mark the job COMPLETED and
+            // fire a "Podcast ready" notification for a FAILED podcast.
+            throw t
         }
         return id
     }
@@ -646,21 +674,5 @@ summary around that thread.
 For every claim, name the source (e.g. "Bloomberg reports", "the 8-K says"). Lead
 with what's actionable. Sectionalize only if the page target is 5+ pages."""
 
-        const val DIALOGUE_SYSTEM = """
-You are a financial-news podcast script writer.
-
-Convert the supplied bundle of articles into a two-person podcast dialogue between:
- - Host: a sharp finance interviewer who asks framing questions, summarizes, and
-         pulls the analyst forward
- - Analyst: a senior equity analyst who gives data-rich answers with context
-
-Format STRICTLY as alternating lines, each starting with "Host:" or "Analyst:"
-at the beginning of the line. Plain text only — no markdown headings, no SSML,
-no stage directions.
-
-Synthesize across articles — don't read them one by one. Start with what the
-listener should walk away knowing, then drill into evidence. End on next-watch
-catalysts. Numbers should be spoken naturally ("about forty-four billion")
-alongside their digit form."""
     }
 }

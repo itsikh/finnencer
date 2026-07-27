@@ -68,7 +68,12 @@ interface NewsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertScores(scores: List<ArticleScore>)
 
-    /** Articles still missing a score for a given ticker. Used by the scoring batcher. */
+    /**
+     * Articles still missing a score for a given ticker. Used by the scoring
+     * batcher. Bounded by fetch time: an article the model persistently
+     * omits from its response would otherwise be re-sent (and re-billed)
+     * every cycle until retention prunes it.
+     */
     @Query(
         """
         SELECT a.* FROM news_articles a
@@ -76,11 +81,12 @@ interface NewsDao {
         LEFT JOIN article_scores s
             ON s.article_id = a.id AND s.ticker_symbol = x.ticker_symbol
         WHERE s.score IS NULL
+          AND a.fetched_at_millis >= :fetchedSinceMillis
         ORDER BY a.published_at_millis DESC
         LIMIT :limit
         """
     )
-    suspend fun unscoredJoined(limit: Int): List<NewsArticle>
+    suspend fun unscoredJoined(limit: Int, fetchedSinceMillis: Long): List<NewsArticle>
 
     @Query("SELECT * FROM article_scores WHERE article_id = :articleId")
     suspend fun scoresFor(articleId: String): List<ArticleScore>
