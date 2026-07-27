@@ -167,6 +167,13 @@ class AiPrefsViewModel @Inject constructor(
                         .filter { (it.name ?: "").contains("-tts", ignoreCase = true).not() }
                         // Skip image-only / embedding models even if they advertise generateContent.
                         .filter { (it.name ?: "").contains("embedding", ignoreCase = true).not() }
+                        // Google's metadata advertises generateContent on some
+                        // models that REJECT it at runtime ("This model only
+                        // supports Interactions API", #87 — deep-research
+                        // family). Exclude them so a picked model can't 400
+                        // every call.
+                        .filter { (it.name ?: "").contains("deep-research", ignoreCase = true).not() }
+                        .filter { (it.description ?: "").contains("Interactions API", ignoreCase = true).not() }
                         .map { info ->
                             val rawName = info.name ?: ""
                             val id = rawName.removePrefix("models/")

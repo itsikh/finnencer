@@ -622,6 +622,18 @@ class BundleSummarizer @Inject constructor(
                 throw ce
             } catch (t: Throwable) {
                 lastErr = t
+                // Permanent 4xx (invalid model, bad request, auth) fails
+                // identically on every attempt — retrying just hammers
+                // the endpoint 10x per pass (#87 did exactly that against
+                // a custom model that rejects generateContent). 408/429
+                // remain retryable.
+                val code = generateSequence(t) { cur -> cur.cause.takeIf { it !== cur } }
+                    .filterIsInstance<retrofit2.HttpException>()
+                    .firstOrNull()?.code()
+                if (code != null && code in 400..499 && code != 429 && code != 408) {
+                    AppLogger.w(TAG, "podcast script $passLabel: permanent HTTP $code — not retrying")
+                    break
+                }
                 if (attempt >= CONTINUATION_RETRIES) break
                 val backoffMs = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
                 AppLogger.w(TAG, "podcast script $passLabel attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s for network")

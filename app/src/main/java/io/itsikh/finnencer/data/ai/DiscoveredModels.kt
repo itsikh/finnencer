@@ -62,6 +62,12 @@ class DiscoveredModels @Inject constructor(
     private fun decode(raw: String): AiModelOption.Custom? {
         val parts = raw.split("|")
         if (parts.size != 4) return null
+        // Self-heal already-enabled entries from model families that
+        // reject generateContent at runtime despite advertising it in
+        // ListModels ("only supports Interactions API", #87). Dropping
+        // them here makes stored per-usage prefs resolve to the default
+        // model instead of 400ing on every call.
+        if (parts[0].contains("deep-research", ignoreCase = true)) return null
         val provider = runCatching { AiProvider.valueOf(parts[2]) }.getOrNull() ?: return null
         val tier = runCatching { AiTier.valueOf(parts[3]) }.getOrNull() ?: return null
         return AiModelOption.Custom(

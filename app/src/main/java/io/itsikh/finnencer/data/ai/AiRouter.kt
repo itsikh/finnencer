@@ -76,35 +76,67 @@ class AiRouter @Inject constructor(
                 }
             }
         }
-        // Emergency cross-provider fallback: every ranked model failed AND
-        // the failure class is "endpoint unreachable" (pure connectivity —
-        // no HTTP status ever came back). Networks can block one provider
-        // while the other works fine (#86 — api.anthropic.com was
-        // unreachable for over an hour while Google's endpoints worked),
-        // so try the OTHER provider once before failing a paid job. HTTP
-        // errors (auth, quota, bad request) never trigger this — those
-        // aren't fixed by switching providers... except quota, but the
-        // ranked list is the user-intent place for that.
-        val err = lastError
-        if (err != null && isConnectivityFailure(err)) {
-            crossProviderFallback(usage, ranked)?.let { fallback ->
-                AppLogger.w(
-                    TAG,
-                    "[$usage] all ranked model(s) unreachable; emergency cross-provider fallback to ${fallback.id}",
+        // Rescue chain — every ranked model failed, so before failing a
+        // paid job try, in order:
+        //  1. The usage's DEFAULT builtin (when the ranked list didn't
+        //     include it): heals a broken user selection, e.g. a custom
+        //     Gemini model that 400s every generateContent call because
+        //     it only supports a different API (#87).
+        //  2. Cross-provider fallback, ONLY for pure connectivity
+        //     failures (no HTTP status ever came back): networks can
+        //     block one provider while the other works (#86). HTTP
+        //     errors don't trigger this — switching providers doesn't
+        //     fix auth/quota/bad-request.
+        val attempted = ranked.mapTo(HashSet()) { it.id }
+        var rescues = 0
+        while (rescues++ < MAX_RESCUES) {
+            val next = nextRescue(usage, attempted, lastError) ?: break
+            attempted += next.id
+            AppLogger.w(TAG, "[$usage] all prior model(s) failed; rescue attempt with ${next.id}")
+            try {
+                return runOneWithTransientRetry(
+                    AiModelOption.Builtin(next), system, userMessage, maxTokens, temperature, cacheSystem,
                 )
-                try {
-                    return runOneWithTransientRetry(
-                        AiModelOption.Builtin(fallback), system, userMessage, maxTokens, temperature, cacheSystem,
-                    )
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    AppLogger.e(TAG, "[$usage] cross-provider fallback ${fallback.id} also failed", t)
-                    lastError = t
-                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                AppLogger.e(TAG, "[$usage] rescue model ${next.id} also failed", t)
+                lastError = t
             }
         }
         throw lastError ?: IllegalStateException("AiRouter: empty ranked list for $usage")
+    }
+
+    /**
+     * Next untried rescue model, re-evaluated after each failure:
+     *  1. The usage's DEFAULT builtin — heals broken selections of any
+     *     failure class (e.g. a custom model that 400s generateContent, #87).
+     *  2. When the latest failure is pure connectivity (no HTTP status —
+     *     the endpoint is unreachable, #86): a tier-matched builtin on
+     *     whichever configured provider hasn't been tried, since networks
+     *     can block one provider while the other works. Re-evaluating
+     *     between attempts also covers the compound case (broken custom
+     *     model AND the default's provider blocked).
+     * HTTP-level failures never trigger step 2 — switching providers
+     * doesn't fix auth, quota, or a bad request.
+     */
+    private fun nextRescue(usage: AiUsage, attempted: Set<String>, lastError: Throwable?): AiModel? {
+        val def = usage.defaultModel
+        if (def.id !in attempted && keyConfigured(def.provider)) return def
+        if (lastError != null && isConnectivityFailure(lastError)) {
+            val wantLarge = def.tier == AiTier.LARGE
+            val candidates = listOf(
+                if (wantLarge) AiModel.GEMINI_3_1_PRO else AiModel.GEMINI_3_6_FLASH,
+                if (wantLarge) AiModel.CLAUDE_OPUS_5 else AiModel.CLAUDE_SONNET_5,
+            )
+            return candidates.firstOrNull { it.id !in attempted && keyConfigured(it.provider) }
+        }
+        return null
+    }
+
+    private fun keyConfigured(provider: AiProvider): Boolean = when (provider) {
+        AiProvider.ANTHROPIC -> apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.ANTHROPIC)
+        AiProvider.GEMINI -> apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.GEMINI)
     }
 
     /** True when [t]'s cause chain is pure connectivity (connect/read
@@ -121,26 +153,6 @@ class AiRouter @Inject constructor(
         }
     }
 
-    /**
-     * A configured model on a provider the ranked list did NOT already
-     * try, tier-matched to the usage's default. Null when the other
-     * provider's key isn't configured or every provider was already tried.
-     */
-    private fun crossProviderFallback(usage: AiUsage, ranked: List<AiModelOption>): AiModel? {
-        val tried = ranked.mapTo(HashSet()) { it.provider }
-        val wantLarge = usage.defaultModel.tier == AiTier.LARGE
-        return when {
-            AiProvider.GEMINI !in tried &&
-                apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.GEMINI) ->
-                if (wantLarge) AiModel.GEMINI_3_1_PRO else AiModel.GEMINI_3_6_FLASH
-
-            AiProvider.ANTHROPIC !in tried &&
-                apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.ANTHROPIC) ->
-                if (wantLarge) AiModel.CLAUDE_OPUS_5 else AiModel.CLAUDE_SONNET_5
-
-            else -> null
-        }
-    }
 
     /**
      * [runOne] plus a small retry loop for TRANSIENT failures (socket
@@ -231,6 +243,9 @@ class AiRouter @Inject constructor(
          *  worker-level retry) sits above this. */
         const val TRANSIENT_ATTEMPTS = 3
         const val TRANSIENT_BACKOFF_STEP_MS = 8_000L
+        /** Rescue-model ceiling per call: default + at most both providers'
+         *  tier-matched builtins. Bounds worst-case total attempts. */
+        const val MAX_RESCUES = 3
     }
 }
 
