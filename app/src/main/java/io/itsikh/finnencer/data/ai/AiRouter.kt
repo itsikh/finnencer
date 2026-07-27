@@ -18,6 +18,7 @@ class AiRouter @Inject constructor(
     private val anthropic: ClaudeClient,
     private val gemini: GeminiTextClient,
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
+    private val apiKeys: io.itsikh.finnencer.data.repo.ApiKeysRepository,
 ) {
 
     suspend fun complete(
@@ -75,7 +76,70 @@ class AiRouter @Inject constructor(
                 }
             }
         }
+        // Emergency cross-provider fallback: every ranked model failed AND
+        // the failure class is "endpoint unreachable" (pure connectivity —
+        // no HTTP status ever came back). Networks can block one provider
+        // while the other works fine (#86 — api.anthropic.com was
+        // unreachable for over an hour while Google's endpoints worked),
+        // so try the OTHER provider once before failing a paid job. HTTP
+        // errors (auth, quota, bad request) never trigger this — those
+        // aren't fixed by switching providers... except quota, but the
+        // ranked list is the user-intent place for that.
+        val err = lastError
+        if (err != null && isConnectivityFailure(err)) {
+            crossProviderFallback(usage, ranked)?.let { fallback ->
+                AppLogger.w(
+                    TAG,
+                    "[$usage] all ranked model(s) unreachable; emergency cross-provider fallback to ${fallback.id}",
+                )
+                try {
+                    return runOneWithTransientRetry(
+                        AiModelOption.Builtin(fallback), system, userMessage, maxTokens, temperature, cacheSystem,
+                    )
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    AppLogger.e(TAG, "[$usage] cross-provider fallback ${fallback.id} also failed", t)
+                    lastError = t
+                }
+            }
+        }
         throw lastError ?: IllegalStateException("AiRouter: empty ranked list for $usage")
+    }
+
+    /** True when [t]'s cause chain is pure connectivity (connect/read
+     *  timeout, DNS, reset) with NO HTTP response — the server was never
+     *  reached, so a different provider may still be reachable. */
+    private fun isConnectivityFailure(t: Throwable): Boolean {
+        val causes = generateSequence(t) { cur -> cur.cause.takeIf { it !== cur } }.toList()
+        if (causes.any { it is retrofit2.HttpException }) return false
+        return causes.any {
+            it is java.net.SocketTimeoutException ||
+                it is java.net.ConnectException ||
+                it is java.net.UnknownHostException ||
+                it is java.io.IOException
+        }
+    }
+
+    /**
+     * A configured model on a provider the ranked list did NOT already
+     * try, tier-matched to the usage's default. Null when the other
+     * provider's key isn't configured or every provider was already tried.
+     */
+    private fun crossProviderFallback(usage: AiUsage, ranked: List<AiModelOption>): AiModel? {
+        val tried = ranked.mapTo(HashSet()) { it.provider }
+        val wantLarge = usage.defaultModel.tier == AiTier.LARGE
+        return when {
+            AiProvider.GEMINI !in tried &&
+                apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.GEMINI) ->
+                if (wantLarge) AiModel.GEMINI_3_1_PRO else AiModel.GEMINI_3_6_FLASH
+
+            AiProvider.ANTHROPIC !in tried &&
+                apiKeys.isConfigured(io.itsikh.finnencer.data.repo.ApiKey.ANTHROPIC) ->
+                if (wantLarge) AiModel.CLAUDE_OPUS_5 else AiModel.CLAUDE_SONNET_5
+
+            else -> null
+        }
     }
 
     /**

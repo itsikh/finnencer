@@ -107,20 +107,51 @@ internal object FirehoseCache {
      *  recovering quickly once the feed is reachable again. */
     private const val FAILURE_TTL_MS = 2 * 60 * 1000L
 
+    /** In-flight loads keyed by URL so concurrent callers (parallel sync
+     *  workers, brief + sync overlapping) share ONE fetch instead of each
+     *  paying the connect timeout — the #86 logs showed the same feed
+     *  fetched twice, seconds apart, both timing out. */
+    private val inFlight = HashMap<String, kotlinx.coroutines.CompletableDeferred<List<FeedParser.FeedItem>?>>()
+
     /** [loader] returns null on failure. */
     suspend fun get(
         url: String,
         loader: suspend (String) -> List<FeedParser.FeedItem>?,
     ): List<FeedParser.FeedItem> {
         val now = System.currentTimeMillis()
+        var join: kotlinx.coroutines.CompletableDeferred<List<FeedParser.FeedItem>?>? = null
+        var owned: kotlinx.coroutines.CompletableDeferred<List<FeedParser.FeedItem>?>? = null
         mutex.withLock {
             cache[url]?.let { entry ->
                 val ttl = if (entry.items == null) FAILURE_TTL_MS else TTL_MS
                 if (now - entry.atMillis < ttl) return entry.items ?: emptyList()
             }
+            val existing = inFlight[url]
+            if (existing != null) {
+                join = existing
+            } else {
+                owned = kotlinx.coroutines.CompletableDeferred<List<FeedParser.FeedItem>?>()
+                    .also { inFlight[url] = it }
+            }
         }
-        val fresh = loader(url)
-        mutex.withLock { cache[url] = Entry(fresh, now) }
+        join?.let { return it.await() ?: emptyList() }
+
+        val deferred = owned!!
+        var fresh: List<FeedParser.FeedItem>? = null
+        try {
+            fresh = loader(url)
+        } finally {
+            // NonCancellable: if the owning coroutine is cancelled
+            // mid-fetch, waiters must still be released (as a failure)
+            // or they'd hang on the deferred forever.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                mutex.withLock {
+                    cache[url] = Entry(fresh, System.currentTimeMillis())
+                    inFlight.remove(url)
+                }
+                deferred.complete(fresh)
+            }
+        }
         return fresh ?: emptyList()
     }
 }
