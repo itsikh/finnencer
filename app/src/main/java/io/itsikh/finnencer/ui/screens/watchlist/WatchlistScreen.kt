@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowOverflow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,9 +27,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EventNote
-import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -57,8 +57,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.Ticker
@@ -164,7 +170,7 @@ fun WatchlistScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(visibleTickers, key = { it.symbol }) { ticker ->
                     TickerCard(
@@ -175,7 +181,6 @@ fun WatchlistScreen(
                         highScoreNewsCount = highScoreNewsCounts[ticker.symbol] ?: 0,
                         onTap = { onOpenTickerFeed(ticker.symbol) },
                         onLongPress = { vm.openWhyMoving(ticker.symbol) },
-                        onSettingsTap = { vm.openSettings(ticker) },
                     )
                 }
                 item { Spacer(Modifier.height(80.dp)) } // FAB clearance
@@ -215,20 +220,24 @@ fun WatchlistScreen(
         else -> null
     }
     if (whySymbol != null) {
+        val whyTicker = tickers.firstOrNull { it.symbol == whySymbol }
         WhyMovingSheet(
             state = whyMovingState,
             quote = quotes[whySymbol.uppercase()],
             analystSnapshot = analystSnapshots[whySymbol],
-            daysUntilEarnings = nextEarnings[whySymbol]?.let { ev ->
-                val days = (ev.scheduledAtMillis - System.currentTimeMillis()) /
-                    (24L * 60 * 60 * 1000)
-                days.toInt()
+            daysUntilEarnings = daysUntilEarnings(nextEarnings[whySymbol]),
+            ticker = whyTicker,
+            highScoreNewsCount = highScoreNewsCounts[whySymbol] ?: 0,
+            onOpenSettings = {
+                vm.closeWhyMoving()
+                whyTicker?.let(vm::openSettings)
             },
             onDismiss = vm::closeWhyMoving,
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TickerCard(
     ticker: Ticker,
@@ -238,177 +247,302 @@ private fun TickerCard(
     highScoreNewsCount: Int,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
-    onSettingsTap: () -> Unit,
 ) {
-    // Two-tier card (#69): the old single-row layout crammed monogram,
-    // name, an intraday sparkline, price, threshold + mute + settings all
-    // on one line — the weight(1f) name column got starved, truncating
-    // company names mid-word ("CoreW…"), and the vertically-centered
-    // sparkline floated up into the symbol/price text. We dropped the
-    // sparkline entirely and split the content into:
-    //   • a header row: identity (left) ⇄ live quote (right) + settings
-    //   • a footer FlowRow: every status tag/pill, wrapping freely
-    // so nothing overlaps and the name has room to breathe.
-    GlassCard(onClick = onTap, onLongClick = onLongPress) {
-        Column(
+    // Dense two-line row: the two-tier card (#69) grew to ~150dp,
+    // so only ~5 tickers fit per screen and the watchlist was mostly
+    // scrolling. Everything now lives on two fixed lines:
+    //   • line 1: symbol (left) ⇄ price + day % (right)
+    //   • line 2: name + micro signal badges (left) ⇄ ext-hours/PT (right)
+    // Sector, alert threshold and mute state moved to the long-press
+    // Why-Moving sheet — they're set-once settings, not signals you scan
+    // daily. Line 2 never wraps: the right cluster keeps its intrinsic
+    // width, the badge FlowRow clips whole trailing badges (volume
+    // first), and the name ellipsizes — so every row keeps the same
+    // ~70dp height (~10 rows per screen on a Galaxy S23 Ultra).
+    val signals = computeTickerSignals(quote, daysUntilEarnings(nextEarnings))
+    val extendedAndPt = extendedAndPtText(quote, analystSnapshot)
+    val description = cardContentDescription(ticker, quote, signals, highScoreNewsCount)
+    GlassCard(
+        modifier = Modifier.semantics { contentDescription = description },
+        onClick = onTap,
+        onLongClick = onLongPress,
+        onClickLabel = "Open news feed",
+        onLongClickLabel = "Why is it moving",
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+            // Ticker monogram while we don't have logo URL data yet.
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(FinnencerColors.Violet.copy(alpha = 0.18f))
+                    .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.40f), CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-                // Ticker monogram while we don't have logo URL data yet.
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(FinnencerColors.Violet.copy(alpha = 0.18f))
-                        .border(1.dp, FinnencerColors.Violet.copy(alpha = 0.40f), CircleShape),
-                    contentAlignment = Alignment.Center,
+                Text(
+                    text = ticker.symbol.take(2),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = FinnencerColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.size(10.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                // Line 1: symbol ⇄ price + day %. The symbol owns the
+                // slack, so price/percent never truncate; a rare long
+                // symbol ellipsizes instead.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = ticker.symbol.take(2),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = FinnencerColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Spacer(Modifier.size(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    // Symbol + company name, each on its own line. With the
-                    // sparkline gone and pills moved to the footer, this
-                    // column now owns all the horizontal slack the row has
-                    // left of the quote — so full names like "CoreWeave,
-                    // Inc." fit instead of collapsing to an ellipsis.
-                    Text(
                         text = ticker.symbol,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = FinnencerColors.TextPrimary,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        text = ticker.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = FinnencerColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Spacer(Modifier.size(8.dp))
+                    if (quote == null) {
+                        Text(
+                            text = "—",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = FinnencerColors.TextTertiary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            text = "—",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = FinnencerColors.TextTertiary,
+                        )
+                    } else {
+                        val pct = quote.changePercent
+                        val pctColor = when {
+                            pct > 0.0 -> FinnencerColors.Mint
+                            pct < 0.0 -> FinnencerColors.Coral
+                            else -> FinnencerColors.TextTertiary
+                        }
+                        val sign = if (pct > 0.0) "+" else if (pct < 0.0) "−" else ""
+                        Text(
+                            text = String.format(java.util.Locale.US, "$%,.2f", quote.price),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = FinnencerColors.TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            text = String.format(
+                                java.util.Locale.US,
+                                "%s%.2f%%",
+                                sign,
+                                kotlin.math.abs(pct),
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = pctColor,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
                 }
-                Spacer(Modifier.size(12.dp))
-                QuoteWithAnalystColumn(quote = quote, analystSnapshot = analystSnapshot)
-                IconButton(onClick = onSettingsTap) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "Ticker settings",
-                        tint = FinnencerColors.TextSecondary,
-                        modifier = Modifier.size(20.dp),
-                    )
+                // Line 2: name + badges (left, shares the slack) ⇄
+                // ext-hours/PT text (right, intrinsic width). Inside the
+                // left cluster the badge FlowRow measures first, so the
+                // name yields before any badge is dropped.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = ticker.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        val hasBadges = signals.earningsSoon || highScoreNewsCount > 0 ||
+                            signals.nearHigh || signals.nearLow || signals.volSpike
+                        if (hasBadges) {
+                            Spacer(Modifier.size(6.dp))
+                            FlowRow(
+                                maxLines = 1,
+                                overflow = FlowRowOverflow.Clip,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                // Most-time-critical first — with maxLines = 1
+                                // trailing badges are sacrificed first on
+                                // narrow rows. Anything clipped stays one
+                                // long-press away in the Why-Moving sheet.
+                                if (signals.earningsSoon) {
+                                    EarningsPill(daysUntil = signals.daysUntilEarnings!!)
+                                }
+                                if (highScoreNewsCount > 0) {
+                                    FaintChip(
+                                        label = "🔥 $highScoreNewsCount",
+                                        color = FinnencerColors.Coral,
+                                    )
+                                }
+                                if (signals.nearHigh) {
+                                    FaintChip(label = "↑52w", color = FinnencerColors.Mint)
+                                } else if (signals.nearLow) {
+                                    FaintChip(label = "↓52w", color = FinnencerColors.Coral)
+                                }
+                                if (signals.volSpike) {
+                                    FaintChip(
+                                        label = String.format(
+                                            java.util.Locale.US,
+                                            "×%.1f",
+                                            signals.volRatio,
+                                        ),
+                                        color = FinnencerColors.Amber,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (extendedAndPt != null) {
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = extendedAndPt,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
-            // Footer: alert threshold + every "what's notable" signal +
-            // mute state, wrapping freely on a full-width FlowRow so chips
-            // never overlap the name or each other and never get cut.
-            TickerSignalFooter(
-                quote = quote,
-                sector = ticker.sector,
-                highScoreNewsCount = highScoreNewsCount,
-                daysUntilEarnings = daysUntilEarnings(nextEarnings),
-                threshold = ticker.notificationThreshold,
-                muted = ticker.mutedUntilMillis != null,
-            )
         }
     }
 }
-
-private const val FIFTY_TWO_WEEK_NEAR_THRESHOLD = 0.02
-private const val VOLUME_SPIKE_THRESHOLD = 2.0
 
 /**
- * Full-width footer row carrying everything that used to fight for space
- * on the right edge of the old single-line card: the live "what's
- * notable" signal chips, the alert threshold pill, and the muted icon.
- *
- * It's a [FlowRow] spanning the whole card, so chips wrap to a second
- * line instead of overlapping the name or getting clipped (#69). The
- * threshold pill always shows (it's the row's alert config), so the
- * footer renders for every ticker — that also gives the card a steady
- * visual rhythm rather than collapsing for quiet tickers.
- *
- * Reading order, most-urgent-first: earnings → high-importance news →
- * 52w hi/lo → volume spike → sector. The threshold pill and mute icon
- * trail at the end as "settings", visually separated from the signals.
+ * TalkBack summary for the whole ticker row — the visual layout packs
+ * signals into badges and colored text, so the merged description
+ * spells them out instead.
  */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TickerSignalFooter(
+private fun cardContentDescription(
+    ticker: Ticker,
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
-    sector: String?,
+    signals: TickerSignals,
     highScoreNewsCount: Int,
-    daysUntilEarnings: Int?,
-    threshold: Int,
-    muted: Boolean,
-) {
-    val price = quote?.price
-    val nearHigh = price != null && quote.fiftyTwoWeekHigh != null &&
-        quote.fiftyTwoWeekHigh > 0.0 &&
-        (quote.fiftyTwoWeekHigh - price) / quote.fiftyTwoWeekHigh <= FIFTY_TWO_WEEK_NEAR_THRESHOLD &&
-        price <= quote.fiftyTwoWeekHigh * 1.005
-    val nearLow = price != null && quote.fiftyTwoWeekLow != null &&
-        quote.fiftyTwoWeekLow > 0.0 &&
-        (price - quote.fiftyTwoWeekLow) / quote.fiftyTwoWeekLow <= FIFTY_TWO_WEEK_NEAR_THRESHOLD &&
-        price >= quote.fiftyTwoWeekLow * 0.995
-    val volRatio = quote?.volumeRatio
-    val volSpike = volRatio != null && volRatio >= VOLUME_SPIKE_THRESHOLD
-    val earningsSoon = daysUntilEarnings != null && daysUntilEarnings in 0..EARNINGS_SOON_DAYS
+): String = buildString {
+    append(ticker.symbol)
+    append(", ")
+    append(ticker.name)
+    if (quote == null) {
+        append(", quote pending")
+    } else {
+        append(String.format(java.util.Locale.US, ", $%,.2f", quote.price))
+        val pct = quote.changePercent
+        when {
+            pct > 0.0 -> append(String.format(java.util.Locale.US, ", up %.2f percent", pct))
+            pct < 0.0 -> append(String.format(java.util.Locale.US, ", down %.2f percent", -pct))
+            else -> append(", unchanged")
+        }
+    }
+    if (signals.earningsSoon) {
+        when (signals.daysUntilEarnings) {
+            0 -> append(", earnings today")
+            1 -> append(", earnings tomorrow")
+            else -> append(", earnings in ${signals.daysUntilEarnings} days")
+        }
+    }
+    if (highScoreNewsCount > 0) append(", $highScoreNewsCount high-importance news")
+    if (signals.nearHigh) append(", near 52-week high")
+    if (signals.nearLow) append(", near 52-week low")
+    if (signals.volSpike) {
+        append(String.format(java.util.Locale.US, ", volume %.1f times average", signals.volRatio))
+    }
+}
 
-    Spacer(Modifier.height(12.dp))
-    androidx.compose.foundation.layout.FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (earningsSoon) {
-            EarningsPill(daysUntil = daysUntilEarnings!!)
+/**
+ * Single-line right cluster of the row's second line: the
+ * extended-hours move and/or the analyst price-target delta, joined
+ * with a tertiary " · ". Null when neither applies so the composable
+ * is skipped entirely and the name/badges get the full width.
+ *
+ * Extended hours is not folded into the day % because conflating
+ * regular and extended moves would confuse the sort + threshold logic.
+ * The PT delta is the watchlist's "do the pros agree the stock has
+ * upside?" signal at a glance.
+ */
+private fun extendedAndPtText(
+    quote: io.itsikh.finnencer.data.repo.TickerQuote?,
+    analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
+): AnnotatedString? {
+    if (quote == null) return null
+    val segments = mutableListOf<Pair<String, Color>>()
+    val extPct = quote.extendedChangePercent
+    val extSession = quote.extendedSession
+    if (extPct != null && extSession != null) {
+        val extColor = when {
+            extPct > 0.0 -> FinnencerColors.Mint
+            extPct < 0.0 -> FinnencerColors.Coral
+            else -> FinnencerColors.TextTertiary
         }
-        if (highScoreNewsCount > 0) {
-            FaintChip(
-                label = "🔥 $highScoreNewsCount",
-                color = FinnencerColors.Coral,
-            )
+        val extSign = if (extPct > 0.0) "+" else if (extPct < 0.0) "−" else ""
+        val sessionLabel = when (extSession) {
+            io.itsikh.finnencer.data.repo.ExtendedSession.PRE -> "Pre"
+            io.itsikh.finnencer.data.repo.ExtendedSession.POST -> "After"
         }
-        if (nearHigh) {
-            FaintChip(label = "52w high", color = FinnencerColors.Mint)
-        } else if (nearLow) {
-            FaintChip(label = "52w low", color = FinnencerColors.Coral)
+        segments += String.format(
+            java.util.Locale.US,
+            "%s %s%.2f%%",
+            sessionLabel,
+            extSign,
+            kotlin.math.abs(extPct),
+        ) to extColor
+    }
+    val target = analystSnapshot?.targetMean
+    if (target != null && target > 0.0 && quote.price > 0.0) {
+        val targetDelta = ((target - quote.price) / quote.price) * 100.0
+        val targetColor = when {
+            targetDelta > 0.0 -> FinnencerColors.Mint
+            targetDelta < 0.0 -> FinnencerColors.Coral
+            else -> FinnencerColors.TextTertiary
         }
-        if (volSpike) {
-            FaintChip(
-                label = String.format(java.util.Locale.US, "Vol %.1f×", volRatio),
-                color = FinnencerColors.Amber,
-            )
+        val arrow = when {
+            targetDelta > 0.0 -> "▲"
+            targetDelta < 0.0 -> "▼"
+            else -> "·"
         }
-        if (!sector.isNullOrBlank()) {
-            FaintChip(label = sector, color = FinnencerColors.TextTertiary)
-        }
-        ThresholdPill(threshold)
-        if (muted) {
-            Icon(
-                Icons.Default.NotificationsOff,
-                contentDescription = "Muted",
-                tint = FinnencerColors.TextTertiary,
-                modifier = Modifier.size(18.dp),
-            )
+        segments += String.format(
+            java.util.Locale.US,
+            "PT %s%.0f%%",
+            arrow,
+            kotlin.math.abs(targetDelta),
+        ) to targetColor
+    }
+    if (segments.isEmpty()) return null
+    return buildAnnotatedString {
+        segments.forEachIndexed { index, (text, color) ->
+            if (index > 0) {
+                withStyle(SpanStyle(color = FinnencerColors.TextTertiary)) { append(" · ") }
+            }
+            withStyle(SpanStyle(color = color)) { append(text) }
         }
     }
 }
 
-/** Tiny rounded chip used by [SignalPillRow]. Same visual language
- *  as [EarningsPill] but without an icon — labels are short enough
- *  on their own. */
+/** Tiny rounded chip used by the row's badge strip. Same visual
+ *  language as [EarningsPill] but without an icon — labels are short
+ *  enough on their own. */
 @Composable
 private fun FaintChip(label: String, color: Color) {
     Box(
@@ -425,16 +559,6 @@ private fun FaintChip(label: String, color: Color) {
             fontWeight = FontWeight.SemiBold,
         )
     }
-}
-
-private const val EARNINGS_SOON_DAYS = 14
-
-/** Whole days until [event]'s scheduled time. Null if no event. */
-private fun daysUntilEarnings(event: io.itsikh.finnencer.data.entity.EarningsEvent?): Int? {
-    val ms = event?.scheduledAtMillis ?: return null
-    val deltaMs = ms - System.currentTimeMillis()
-    val days = (deltaMs / (24L * 60 * 60 * 1000)).toInt()
-    return days
 }
 
 /**
@@ -489,140 +613,6 @@ private fun EarningsPill(daysUntil: Int) {
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
- * Right-aligned price + percent-change + (optional) analyst PT delta
- * column. Renders an em-dash placeholder when we don't yet have a
- * Yahoo quote for this row. PCT is colored mint for up, coral for
- * down, and tertiary text for flat.
- *
- * When both a live quote AND an analyst snapshot are available, a
- * third line shows the consensus price target vs the current price as
- * a percentage delta (e.g. "PT +12%" if the mean target is 12% above
- * spot). This is the watchlist's "do the pros agree the stock has
- * upside?" signal at a glance.
- */
-@Composable
-private fun QuoteWithAnalystColumn(
-    quote: io.itsikh.finnencer.data.repo.TickerQuote?,
-    analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
-) {
-    Column(horizontalAlignment = Alignment.End) {
-        if (quote == null) {
-            Text(
-                text = "—",
-                style = MaterialTheme.typography.titleSmall,
-                color = FinnencerColors.TextTertiary,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = "—",
-                style = MaterialTheme.typography.labelMedium,
-                color = FinnencerColors.TextTertiary,
-            )
-        } else {
-            val priceText = String.format(java.util.Locale.US, "$%,.2f", quote.price)
-            val pct = quote.changePercent
-            val pctColor = when {
-                pct > 0.0 -> FinnencerColors.Mint
-                pct < 0.0 -> FinnencerColors.Coral
-                else -> FinnencerColors.TextTertiary
-            }
-            val sign = if (pct > 0.0) "+" else if (pct < 0.0) "−" else ""
-            val pctText = String.format(java.util.Locale.US, "%s%.2f%%", sign, kotlin.math.abs(pct))
-            Text(
-                text = priceText,
-                style = MaterialTheme.typography.titleSmall,
-                color = FinnencerColors.TextPrimary,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = pctText,
-                style = MaterialTheme.typography.labelMedium,
-                color = pctColor,
-                fontWeight = FontWeight.SemiBold,
-            )
-            // Extended-hours line — only when Yahoo's chart series
-            // shows a trade outside today's regular session. We don't
-            // fold this into the day % because conflating regular and
-            // extended moves would confuse the sort + threshold logic.
-            val extPct = quote.extendedChangePercent
-            val extSession = quote.extendedSession
-            if (extPct != null && extSession != null) {
-                val extColor = when {
-                    extPct > 0.0 -> FinnencerColors.Mint
-                    extPct < 0.0 -> FinnencerColors.Coral
-                    else -> FinnencerColors.TextTertiary
-                }
-                val extSign = if (extPct > 0.0) "+" else if (extPct < 0.0) "−" else ""
-                val sessionLabel = when (extSession) {
-                    io.itsikh.finnencer.data.repo.ExtendedSession.PRE -> "Pre"
-                    io.itsikh.finnencer.data.repo.ExtendedSession.POST -> "After"
-                }
-                Text(
-                    text = String.format(
-                        java.util.Locale.US,
-                        "%s %s%.2f%%",
-                        sessionLabel,
-                        extSign,
-                        kotlin.math.abs(extPct),
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = extColor,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            val target = analystSnapshot?.targetMean
-            if (target != null && target > 0.0 && quote.price > 0.0) {
-                val targetDelta = ((target - quote.price) / quote.price) * 100.0
-                val targetColor = when {
-                    targetDelta > 0.0 -> FinnencerColors.Mint
-                    targetDelta < 0.0 -> FinnencerColors.Coral
-                    else -> FinnencerColors.TextTertiary
-                }
-                val arrow = when {
-                    targetDelta > 0.0 -> "▲"
-                    targetDelta < 0.0 -> "▼"
-                    else -> "·"
-                }
-                Text(
-                    text = String.format(
-                        java.util.Locale.US,
-                        "PT %s%.0f%%",
-                        arrow,
-                        kotlin.math.abs(targetDelta),
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = targetColor,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThresholdPill(threshold: Int) {
-    val color = when {
-        threshold >= 8 -> FinnencerColors.Coral
-        threshold >= 6 -> FinnencerColors.Amber
-        else -> FinnencerColors.Violet
-    }
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.18f))
-            .border(1.dp, color.copy(alpha = 0.35f), CircleShape)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-    ) {
-        Text(
-            text = "≥$threshold",
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            fontWeight = FontWeight.SemiBold,
         )
     }
 }

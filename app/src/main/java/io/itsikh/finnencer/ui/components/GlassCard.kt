@@ -38,6 +38,8 @@ fun GlassCard(
     strong: Boolean = false,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
+    onLongClickLabel: String? = null,
     content: @Composable () -> Unit,
 ) {
     val shape: Shape = RoundedCornerShape(radius)
@@ -72,10 +74,12 @@ fun GlassCard(
 
     val withClick = when {
         onClick != null && onLongClick != null -> base.combinedClickable(
+            onClickLabel = onClickLabel,
+            onLongClickLabel = onLongClickLabel,
             onClick = onClick,
             onLongClick = onLongClick,
         )
-        onClick != null -> base.clickable(onClick = onClick)
+        onClick != null -> base.clickable(onClickLabel = onClickLabel, onClick = onClick)
         else -> base
     }
 

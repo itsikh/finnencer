@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,9 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -28,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 /**
@@ -50,6 +55,9 @@ fun WhyMovingSheet(
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
     daysUntilEarnings: Int?,
+    ticker: Ticker?,
+    highScoreNewsCount: Int,
+    onOpenSettings: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (state is WhyMovingState.Idle) return
@@ -73,14 +81,20 @@ fun WhyMovingSheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Header: symbol + day move
-            HeaderRow(symbol = symbol, quote = quote)
+            // Header: symbol + day move + gear into per-ticker settings
+            HeaderRow(symbol = symbol, quote = quote, onOpenSettings = onOpenSettings)
 
-            // Compact signal strip — analyst PT, extended hours, earnings
+            // Signal strip — analyst PT, extended hours, earnings, plus
+            // everything the dense watchlist row can't afford to show
+            // (news count, 52w proximity, volume, sector, alert
+            // threshold, mute state). This sheet is where the row's
+            // relocated/clipped detail lives, one long-press away.
             SignalsStrip(
                 quote = quote,
                 analystSnapshot = analystSnapshot,
                 daysUntilEarnings = daysUntilEarnings,
+                ticker = ticker,
+                highScoreNewsCount = highScoreNewsCount,
             )
 
             // AI synthesis section
@@ -93,6 +107,7 @@ fun WhyMovingSheet(
 private fun HeaderRow(
     symbol: String,
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
+    onOpenSettings: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -120,14 +135,27 @@ private fun HeaderRow(
                 fontWeight = FontWeight.SemiBold,
             )
         }
+        // Gear moved here from the watchlist row when it went dense —
+        // closes this sheet and opens the per-ticker settings sheet.
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = "Ticker settings",
+                tint = FinnencerColors.TextSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SignalsStrip(
     quote: io.itsikh.finnencer.data.repo.TickerQuote?,
     analystSnapshot: io.itsikh.finnencer.data.entity.TickerAnalystSnapshot?,
     daysUntilEarnings: Int?,
+    ticker: Ticker?,
+    highScoreNewsCount: Int,
 ) {
     val items = mutableListOf<Pair<String, Color>>()
     quote?.let { q ->
@@ -159,7 +187,7 @@ private fun SignalsStrip(
         }
         items += String.format(java.util.Locale.US, "Analyst PT %s%.0f%%", arrow, kotlin.math.abs(delta)) to color
     }
-    if (daysUntilEarnings != null && daysUntilEarnings in 0..14) {
+    if (daysUntilEarnings != null && daysUntilEarnings in 0..EARNINGS_SOON_DAYS) {
         val label = when (daysUntilEarnings) {
             0 -> "Earnings today"
             1 -> "Earnings tomorrow"
@@ -172,9 +200,39 @@ private fun SignalsStrip(
         }
         items += label to color
     }
+    // Detail relocated off the dense watchlist row: news count,
+    // 52w proximity, volume spike, sector, alert threshold, mute state.
+    val signals = computeTickerSignals(quote, daysUntilEarnings)
+    if (highScoreNewsCount > 0) {
+        items += "🔥 $highScoreNewsCount news" to FinnencerColors.Coral
+    }
+    if (signals.nearHigh) {
+        items += "Near 52w high" to FinnencerColors.Mint
+    } else if (signals.nearLow) {
+        items += "Near 52w low" to FinnencerColors.Coral
+    }
+    if (signals.volSpike) {
+        items += String.format(java.util.Locale.US, "Vol %.1f×", signals.volRatio) to
+            FinnencerColors.Amber
+    }
+    if (ticker != null) {
+        ticker.sector?.takeIf { it.isNotBlank() }?.let { sector ->
+            items += sector to FinnencerColors.TextTertiary
+        }
+        val thresholdColor = when {
+            ticker.notificationThreshold >= 8 -> FinnencerColors.Coral
+            ticker.notificationThreshold >= 6 -> FinnencerColors.Amber
+            else -> FinnencerColors.Violet
+        }
+        items += "Alerts ≥${ticker.notificationThreshold}" to thresholdColor
+        if (ticker.mutedUntilMillis != null) {
+            items += "Muted" to FinnencerColors.TextTertiary
+        }
+    }
     if (items.isEmpty()) return
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items.forEach { (label, color) ->
             Box(
