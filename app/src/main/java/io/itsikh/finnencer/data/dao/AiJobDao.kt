@@ -90,11 +90,18 @@ interface AiJobDao {
             completedAtMillis = NULL,
             resultKind = NULL,
             resultText = NULL,
-            resultModel = NULL
+            resultModel = NULL,
+            currentStage = NULL,
+            stageProgress = 0,
+            stageDetail = NULL
         WHERE id = :id
         """
     )
     suspend fun markQueued(id: String)
+
+    /** Startup-reconciliation query — see [io.itsikh.finnencer.core.work.AiJobRepair]. */
+    @Query("SELECT * FROM ai_jobs WHERE status IN (:statuses)")
+    suspend fun getByStatuses(statuses: List<String>): List<AiJob>
 
     /**
      * Persist the in-flight artifact id (e.g. a Podcast row id) as soon

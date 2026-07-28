@@ -243,6 +243,19 @@ class BundleSummarizer @Inject constructor(
         // (#39 — "spam bug"). Falls back to a fresh insert if the row no
         // longer exists.
         val existing = existingPodcastId?.let { podcastDao.get(it) }
+        // Stage-level resume: a prior run may have finished synthesis but
+        // died before the WORKER recorded completion (#88 audit, F-4/F-5).
+        // If the row is already READY with its audio on disk, return it
+        // as-is instead of resetting to PENDING and re-billing the full
+        // script + synthesis for work that already succeeded.
+        if (existing != null &&
+            existing.status == PodcastGenerationStatus.READY.name &&
+            existing.filePath?.let { File(it).exists() } == true
+        ) {
+            AppLogger.i(TAG, "podcast ${existing.id} already READY with audio on disk — skipping regeneration")
+            onPodcastIdAssigned(existing.id)
+            return existing.id
+        }
         // Preserve scriptText across retries — the dialogue was expensive
         // to produce and is deterministic from the same source, so the
         // TTS-stage retry can reuse it without re-billing the LLM.

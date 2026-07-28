@@ -75,6 +75,20 @@ class AiJobWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val jobId = inputData.getString(KEY_JOB_ID) ?: return Result.failure()
         val job = dao.get(jobId) ?: return Result.failure()
+        // WorkManager can replay a finished job: its own DB commits the
+        // SUCCEEDED state separately from ours, and a process death in
+        // between re-runs the worker. Without this guard the re-run flips
+        // COMPLETED back to RUNNING and re-bills the whole pipeline (#88
+        // audit, F-5). PENDING_REVIEW likewise waits on the USER — the
+        // resume path re-queues explicitly.
+        if (job.status == AiJobStatus.COMPLETED.name) {
+            AppLogger.i(TAG, "ai job $jobId already COMPLETED — ignoring stale re-run")
+            return Result.success()
+        }
+        if (job.status == AiJobStatus.PENDING_REVIEW.name) {
+            AppLogger.i(TAG, "ai job $jobId is PENDING_REVIEW — awaiting user decision")
+            return Result.success()
+        }
         val type = AiJobType.valueOf(job.type)
 
         return withContext(JobIdContext(jobId)) {
@@ -156,7 +170,16 @@ class AiJobWorker @AssistedInject constructor(
         }
     }
 
-    private suspend fun handleFailure(jobId: String, title: String, t: Throwable) {
+    private suspend fun handleFailure(
+        jobId: String,
+        title: String,
+        t: Throwable,
+    ): Unit = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+        // NonCancellable + per-write runCatching: handleFailure often runs
+        // BECAUSE the worker was stopped, and Room suspend calls throw
+        // immediately on a cancelled context — the row would then stay
+        // RUNNING forever with no retry affordance (#88 audit, F-3).
+        //
         // Validator-FAIL is a "needs human review" exit, not a real
         // failure. The Podcast row was already flipped to PENDING_REVIEW
         // by the validator phase; here we mirror that on the AiJob so
@@ -165,14 +188,17 @@ class AiJobWorker @AssistedInject constructor(
         if (t is io.itsikh.finnencer.data.ai.BundleSummarizer.ValidationReviewRequiredException) {
             AppLogger.i(TAG, "ai job $jobId: validator flagged podcast ${t.podcastId} for review")
             progressReporter.updateExplicit(jobId, AiJobStage.VALIDATING_SCRIPT, 100, "Validator flagged — open this task to review and choose")
-            dao.markFailed(jobId, AiJobStatus.PENDING_REVIEW.name, "Script flagged for human review", System.currentTimeMillis())
-            return
+            runCatching { dao.markFailed(jobId, AiJobStatus.PENDING_REVIEW.name, "Script flagged for human review", System.currentTimeMillis()) }
+                .onFailure { AppLogger.e(TAG, "ai job $jobId: PENDING_REVIEW write failed", it) }
+            return@withContext
         }
         val friendly = io.itsikh.finnencer.data.ai.FriendlyError.describe(t)
         AppLogger.e(TAG, "ai job $jobId failed: $friendly", t)
         progressReporter.updateExplicit(jobId, AiJobStage.FAILED, 0, friendly)
-        dao.markFailed(jobId, AiJobStatus.FAILED.name, friendly, System.currentTimeMillis())
-        notifier.notifyFailed(jobId, title, friendly)
+        runCatching { dao.markFailed(jobId, AiJobStatus.FAILED.name, friendly, System.currentTimeMillis()) }
+            .onFailure { AppLogger.e(TAG, "ai job $jobId: markFailed write failed", it) }
+        runCatching { notifier.notifyFailed(jobId, title, friendly) }
+            .onFailure { AppLogger.e(TAG, "ai job $jobId: failure notification failed", it) }
     }
 
     /**

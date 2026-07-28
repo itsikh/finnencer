@@ -380,7 +380,10 @@ private fun classifyStage(
     order: List<AiJobStage>,
 ): StageState {
     if (jobStatus == AiJobStatus.COMPLETED.name) {
-        return if (stage == AiJobStage.DONE) StageState.CURRENT else StageState.DONE
+        // Terminal success: EVERY stage is finished, including Done.
+        // Classifying Done as CURRENT rendered the in-progress circle
+        // forever on completed jobs — users read it as a hang (#88).
+        return StageState.DONE
     }
     if (jobStatus == AiJobStatus.FAILED.name) {
         if (stage == AiJobStage.FAILED) return StageState.FAILED

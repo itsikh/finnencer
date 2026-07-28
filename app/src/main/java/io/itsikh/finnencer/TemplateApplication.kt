@@ -53,6 +53,7 @@ class TemplateApplication : Application(), Configuration.Provider {
     @Inject lateinit var jobConcurrencyGate: JobConcurrencyGate
     @Inject lateinit var jobConcurrencyPrefs: JobConcurrencyPreferences
     @Inject lateinit var queueItemRepair: QueueItemRepair
+    @Inject lateinit var aiJobRepair: io.itsikh.finnencer.core.work.AiJobRepair
     @Inject lateinit var morningBriefScheduler: MorningBriefScheduler
     @Inject lateinit var preEarningsScheduler: PreEarningsBriefingScheduler
     @Inject lateinit var insiderAlertScheduler: InsiderAlertScheduler
@@ -88,6 +89,13 @@ class TemplateApplication : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { queueItemRepair.repairIfNeeded() }
                 .onFailure { AppLogger.e("App", "Queue-item repair failed", it) }
+        }
+        // Reconcile ai_jobs rows stranded in QUEUED/RUNNING with no live
+        // WorkManager work behind them (process death mid-write) — they'd
+        // otherwise spin in the Tasks screen forever with no Retry button.
+        appScope.launch {
+            runCatching { aiJobRepair.repairIfNeeded() }
+                .onFailure { AppLogger.e("App", "AiJob repair failed", it) }
         }
         // Ensure the morning-brief chain is alive (idempotent — when
         // disabled, this cancels any leftover scheduling; when enabled
