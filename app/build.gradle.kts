@@ -22,8 +22,8 @@ android {
         applicationId = "io.itsikh.finnencer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 114
-        versionName = "0.4.5"
+        versionCode = 115
+        versionName = "0.5.0"
     }
 
     signingConfigs {
