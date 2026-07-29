@@ -53,6 +53,7 @@ import io.itsikh.finnencer.data.providers.stripHtmlToText
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -591,7 +592,7 @@ private fun VersionsRow(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                FMT.format(java.time.Instant.ofEpochMilli(v.generatedAtMillis)),
+                                Timestamps.created(v.generatedAtMillis),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = FinnencerColors.TextPrimary,
                             )

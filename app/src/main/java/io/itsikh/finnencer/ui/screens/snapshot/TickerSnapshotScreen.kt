@@ -49,6 +49,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import io.itsikh.finnencer.data.entity.TickerMetrics
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -484,7 +485,7 @@ private fun AnalysisSheet(
                 Text(state.row.analysis, style = MaterialTheme.typography.bodyMedium, color = FinnencerColors.TextPrimary)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        state.row.model,
+                        "${state.row.model} · ${Timestamps.created(state.row.generatedAtMillis)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = FinnencerColors.TextTertiary,
                         modifier = Modifier.weight(1f),

@@ -53,6 +53,7 @@ import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -183,6 +184,11 @@ fun PodcastPlayerScreen(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "${p.voiceHost} · ${p.voiceAnalyst ?: "—"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
+                Text(
+                    Timestamps.generated(p.createdAtMillis),
                     style = MaterialTheme.typography.labelSmall,
                     color = FinnencerColors.TextTertiary,
                 )

@@ -67,6 +67,7 @@ import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueTogglePill
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -347,6 +348,7 @@ private fun JobRow(
                     val meta = buildString {
                         append(typeLabel(job.type))
                         job.tickerSymbol?.let { append(" · ").append(it) }
+                        append(" · ").append(Timestamps.created(job.createdAtMillis))
                         if (job.status == AiJobStatus.RUNNING.name && job.startedAtMillis != null) {
                             // Use the screen-level [nowMs] tick (1 Hz) so the
                             // counter actually advances while the user is

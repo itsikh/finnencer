@@ -56,6 +56,7 @@ import io.itsikh.finnencer.share.WavToM4a
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -393,6 +394,11 @@ private fun PodcastRow(
                         )
                     }
                 }
+                Text(
+                    Timestamps.created(podcast.createdAtMillis),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FinnencerColors.TextTertiary,
+                )
                 if (!isReady) {
                     Text(
                         podcast.status.lowercase(),

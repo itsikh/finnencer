@@ -54,6 +54,7 @@ import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -152,7 +153,8 @@ fun ReportViewerScreen(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "${r.tier} · ${io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model) ?: r.model}",
+                "${r.tier} · ${io.itsikh.finnencer.data.ai.friendlyModelLabel(r.model) ?: r.model} · " +
+                    Timestamps.generated(r.generatedAtMillis),
                 style = MaterialTheme.typography.labelMedium,
                 color = FinnencerColors.TextTertiary,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),

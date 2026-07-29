@@ -58,6 +58,7 @@ import io.itsikh.finnencer.data.entity.EarningsStatus
 import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -388,7 +389,7 @@ private fun ReportListCard(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        FMT.format(Instant.ofEpochMilli(report.generatedAtMillis)),
+                        Timestamps.created(report.generatedAtMillis),
                         style = MaterialTheme.typography.labelSmall,
                         color = FinnencerColors.TextTertiary,
                     )

@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import io.itsikh.finnencer.data.entity.MoveExplanation
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import kotlin.math.abs
 
 @Composable
@@ -142,7 +143,7 @@ private fun LoadedBody(row: MoveExplanation, onRegenerate: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            relativeAge(row.generatedAtMillis) + " · " + row.model,
+            Timestamps.createdWithAge(row.generatedAtMillis) + " · " + row.model,
             style = MaterialTheme.typography.labelSmall,
             color = FinnencerColors.TextTertiary,
             modifier = Modifier.weight(1f),
@@ -203,16 +204,5 @@ private fun AccentButton(label: String, onClick: () -> Unit) {
             color = FinnencerColors.Violet,
             fontWeight = FontWeight.SemiBold,
         )
-    }
-}
-
-private fun relativeAge(millis: Long): String {
-    val deltaMs = (System.currentTimeMillis() - millis).coerceAtLeast(0L)
-    val mins = deltaMs / 60_000L
-    return when {
-        mins < 1 -> "just now"
-        mins < 60 -> "${mins}m ago"
-        mins < 1440 -> "${mins / 60}h ago"
-        else -> "${mins / 1440}d ago"
     }
 }

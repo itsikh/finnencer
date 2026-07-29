@@ -63,6 +63,7 @@ import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.logging.AppLogger
 import io.itsikh.finnencer.ui.components.GlassCard
 import io.itsikh.finnencer.ui.theme.FinnencerColors
+import io.itsikh.finnencer.ui.components.Timestamps
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -213,6 +214,18 @@ fun TaskDetailScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     StatusPill(status = j.status)
+                    Text(
+                        // Created vs finished are different questions on a
+                        // job that queued behind others for an hour.
+                        buildString {
+                            append("Created ").append(Timestamps.createdWithAge(j.createdAtMillis))
+                            j.completedAtMillis?.let {
+                                append("  ·  finished ").append(Timestamps.created(it))
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FinnencerColors.TextTertiary,
+                    )
                     j.stageDetail?.takeIf { it.isNotBlank() }?.let { d ->
                         Text(d, style = MaterialTheme.typography.bodyMedium, color = FinnencerColors.TextSecondary)
                     }
