@@ -19,6 +19,8 @@ import io.itsikh.finnencer.core.net.EndpointReachability
 import io.itsikh.finnencer.core.notifications.AiJobNotifier
 import io.itsikh.finnencer.core.notifications.NotificationChannels
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastAutoSizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.repo.coercedFor
@@ -64,6 +66,7 @@ class AiJobWorker @AssistedInject constructor(
     private val notifier: AiJobNotifier,
     private val gson: Gson,
     private val reportGenerator: ReportGenerator,
+    private val autoSizer: PodcastAutoSizer,
     private val earningsDao: EarningsDao,
     private val concurrencyGate: JobConcurrencyGate,
     private val endpointReachability: EndpointReachability,
@@ -483,12 +486,10 @@ class AiJobWorker @AssistedInject constructor(
         ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel?,
     ) {
         val input = gson.fromJson(json, PodcastInput::class.java)
-        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
-            ?: BundleSummarizer.PodcastMinutes.FIVE
         val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
         val podcastId = bundle.summarizeToPodcast(
             articleIds = input.articleIds,
-            minutes = minutes,
+            duration = PodcastDuration.fromMinutesValue(input.minutesValue),
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
@@ -522,10 +523,19 @@ class AiJobWorker @AssistedInject constructor(
         val customPrompt: String?,
     )
 
-    /** See [SummaryInput] for why this uses `Int` rather than [BundleSummarizer.PodcastMinutes]. */
+    /**
+     * See [SummaryInput] for why this uses `Int` rather than
+     * [BundleSummarizer.PodcastMinutes].
+     *
+     * [minutesValue] is nullable because `null` means Auto — let the
+     * content decide the length. Gson omits nulls when writing, so an Auto
+     * payload simply has no `minutesValue` field, and every payload
+     * persisted before Auto existed carries a real number and keeps its
+     * fixed length on replay.
+     */
     data class PodcastInput(
         val articleIds: List<String>,
-        val minutesValue: Int,
+        val minutesValue: Int?,
         val customPrompt: String?,
     )
 
@@ -533,18 +543,19 @@ class AiJobWorker @AssistedInject constructor(
     data class SummaryAndPodcastInput(
         val articleIds: List<String>,
         val pagesTarget: Int,
-        val minutesValue: Int,
+        val minutesValue: Int?,
         val customPrompt: String?,
     )
 
     /**
-     * Per-stock earnings combo payload. The worker resolves an existing
-     * BRIEF report for [earningsEventId] (or generates one if missing) and
-     * then renders a podcast scripted from that report's markdown body.
+     * Per-stock earnings combo payload. The worker gathers sources for
+     * [earningsEventId], resolves (or generates) a report at the tier Auto
+     * picked — or BRIEF for a user-chosen duration — and then renders a
+     * podcast scripted from that report plus the verified facts sheet.
      */
     data class EarningsBriefAndPodcastInput(
         val earningsEventId: Long,
-        val minutesValue: Int,
+        val minutesValue: Int?,
         val customPrompt: String?,
     )
 
@@ -592,18 +603,51 @@ class AiJobWorker @AssistedInject constructor(
         ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel?,
     ) {
         val input = gson.fromJson(json, EarningsBriefAndPodcastInput::class.java)
-        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
-            ?: BundleSummarizer.PodcastMinutes.TEN
+        val duration = PodcastDuration.fromMinutesValue(input.minutesValue)
         val event = earningsDao.getEvent(input.earningsEventId)
             ?: error("EarningsEvent ${input.earningsEventId} not found")
-        // Look for an existing BRIEF report for this event; only generate a
-        // new one if there isn't one already, so re-runs don't burn tokens.
-        progressReporter.update(AiJobStage.GENERATING_REPORT, 0, "Resolving BRIEF report")
-        val existingBrief = earningsDao.observeReportsForTicker(event.tickerSymbol)
+
+        // Gather sources ONCE. In Auto mode the facts sheet is what decides
+        // the report tier, so it has to exist before we know which report
+        // to look for — and reusing the prepared context means the report
+        // generation that follows costs LLM tokens only, no refetching.
+        progressReporter.update(AiJobStage.GENERATING_REPORT, 0, "Gathering SEC filings, press release and market data")
+        val context = reportGenerator.prepare(event.id)
+
+        // Auto picks depth from how much substance the print actually has;
+        // a fixed duration keeps the old behaviour of a BRIEF report, which
+        // is the right pairing for a short episode.
+        val tier = when (duration) {
+            is PodcastDuration.Fixed -> ReportTier.BRIEF
+            PodcastDuration.Auto -> autoSizer.tierFor(autoSizer.contentPoints(context.facts.signals))
+        }
+        progressReporter.update(
+            AiJobStage.GENERATING_REPORT,
+            10,
+            "Resolving ${tier.name.lowercase()} report · ${context.facts.signals.metricCount} verified metrics",
+        )
+        // Reuse an existing report at this tier for this event; only
+        // generate a new one if there isn't one, so re-runs don't burn
+        // tokens.
+        val existingReport = earningsDao.observeReportsForTicker(event.tickerSymbol)
             .first()
-            .firstOrNull { it.earningsEventId == event.id && it.tier == ReportTier.BRIEF.name }
-        val reportId = existingBrief?.id ?: reportGenerator.generate(event.id, ReportTier.BRIEF)
+            .firstOrNull { it.earningsEventId == event.id && it.tier == tier.name }
+        val reportId = existingReport?.id ?: reportGenerator.generate(context, tier)
         val report = earningsDao.getReport(reportId) ?: error("freshly generated report $reportId missing")
+
+        // Episode length uses the report we ended up with: a tier that came
+        // back short has less to talk about than its name implies.
+        val decision = when (duration) {
+            is PodcastDuration.Fixed -> null
+            PodcastDuration.Auto -> autoSizer.decideForEarnings(
+                signals = context.facts.signals,
+                reportChars = report.contentMarkdown.length,
+            )
+        }
+        val minutes = when (duration) {
+            is PodcastDuration.Fixed -> duration.minutes
+            PodcastDuration.Auto -> decision!!.minutes
+        }
         val existingPodcastId = dao.get(jobId)?.resultRefId?.toLongOrNull()
         val podcastId = bundle.podcastFromEarningsReport(
             reportId = reportId,
@@ -612,6 +656,8 @@ class AiJobWorker @AssistedInject constructor(
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },
             ttsModelOverride = ttsModelOverride,
+            factsSheet = context.facts,
+            autoNote = decision?.explanation,
         )
         progressReporter.update(AiJobStage.FINALIZING, 95, "Saving podcast")
         dao.markCompleted(
@@ -623,7 +669,12 @@ class AiJobWorker @AssistedInject constructor(
             resultModel = report.model,
             nowMs = System.currentTimeMillis(),
         )
-        notifier.notifyCompleted(jobId, title, "Earnings podcast ready · open Tasks")
+        notifier.notifyCompleted(
+            jobId,
+            title,
+            decision?.let { "${it.minutes.minutes}-min earnings podcast ready (Auto) · open Tasks" }
+                ?: "Earnings podcast ready · open Tasks",
+        )
     }
 
     private suspend fun runSummaryAndPodcast(
@@ -635,8 +686,6 @@ class AiJobWorker @AssistedInject constructor(
         val input = gson.fromJson(json, SummaryAndPodcastInput::class.java)
         val pages = BundleSummarizer.Pages.entries.firstOrNull { it.target == input.pagesTarget }
             ?: BundleSummarizer.Pages.FIVE
-        val minutes = BundleSummarizer.PodcastMinutes.entries.firstOrNull { it.minutes == input.minutesValue }
-            ?: BundleSummarizer.PodcastMinutes.TEN
         // 1. Summary first — its text becomes both the inline result AND the
         //    podcast-script source material so the audio narrative aligns
         //    with what the user sees in the Tasks card.
@@ -647,7 +696,7 @@ class AiJobWorker @AssistedInject constructor(
         val podcastId = bundle.podcastFromSummary(
             articleIds = input.articleIds,
             summaryText = summary.text,
-            minutes = minutes,
+            duration = PodcastDuration.fromMinutesValue(input.minutesValue),
             customPrompt = input.customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = { id -> dao.setResultRefId(jobId, id.toString()) },

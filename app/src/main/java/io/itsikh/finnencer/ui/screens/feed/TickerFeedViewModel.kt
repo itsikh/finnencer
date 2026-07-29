@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.itsikh.finnencer.core.work.SyncScheduler
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
 import io.itsikh.finnencer.data.ai.ImportanceScorer
 import io.itsikh.finnencer.data.ai.MoveExplainer
 import io.itsikh.finnencer.data.entity.MoveExplanation
@@ -383,13 +384,14 @@ class TickerFeedViewModel @Inject constructor(
     }
 
     /**
-     * Enqueue the combo earnings job: BRIEF (auto-generated if missing) +
-     * a podcast scripted from it. Tasks badge shows progress.
+     * Enqueue the combo earnings job: an earnings report (resolved from
+     * cache or generated, at the depth Auto picked) plus a podcast scripted
+     * from it and the verified facts behind it. Tasks badge shows progress.
      */
     fun requestEarningsPodcast(
         eventId: Long,
         eventLabel: String,
-        minutes: BundleSummarizer.PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
     ) {
         viewModelScope.launch {
@@ -397,7 +399,7 @@ class TickerFeedViewModel @Inject constructor(
                 tickerSymbol = symbol,
                 earningsEventId = eventId,
                 eventLabel = eventLabel,
-                minutes = minutes,
+                duration = duration,
                 customPrompt = customPrompt,
             )
         }
@@ -452,7 +454,7 @@ class TickerFeedViewModel @Inject constructor(
      */
     fun summarizeBatchWithPodcast(
         pages: BundleSummarizer.Pages,
-        minutes: BundleSummarizer.PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
     ) {
         val ids = _selection.value.toList()
@@ -462,7 +464,7 @@ class TickerFeedViewModel @Inject constructor(
                 tickerSymbol = symbol,
                 articleIds = ids,
                 pages = pages,
-                minutes = minutes,
+                duration = duration,
                 customPrompt = customPrompt,
             )
             _batchSheet.value = BatchActionState()
@@ -544,14 +546,14 @@ class TickerFeedViewModel @Inject constructor(
         }
     }
 
-    fun summarizeBatchToPodcast(minutes: BundleSummarizer.PodcastMinutes, customPrompt: String?) {
+    fun summarizeBatchToPodcast(duration: PodcastDuration, customPrompt: String?) {
         val ids = _selection.value.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
             aiJobs.enqueueBatchPodcast(
                 tickerSymbol = symbol,
                 articleIds = ids,
-                minutes = minutes,
+                duration = duration,
                 customPrompt = customPrompt,
             )
             _batchSheet.value = BatchActionState()

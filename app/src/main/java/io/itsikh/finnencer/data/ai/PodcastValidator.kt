@@ -25,6 +25,10 @@ class PodcastValidator @Inject constructor(
         val script: String?,        // null when verdict == FAIL
         val notes: String,
         val model: String,
+        /** Ground-truth figures the script cites, or null when there was
+         *  no facts sheet to measure against (news-bundle podcasts). */
+        val citedFacts: Int? = null,
+        val totalFacts: Int? = null,
     )
 
     suspend fun validate(
@@ -33,17 +37,35 @@ class PodcastValidator @Inject constructor(
         targetChars: Int,
         minutes: Int,
         customPrompt: String?,
+        facts: EarningsFactsSheet? = null,
     ): Result {
         val system = promptPrefs.applyExtras(
             base = DefaultPrompts.forUsage(AiUsage.PODCAST_VALIDATION),
             extra = promptPrefs.get(AiUsage.PODCAST_VALIDATION),
             perCallCustom = customPrompt,
         )
+        // Density is measured in Kotlin, not asked of the model: "how many
+        // of these 31 figures appear in the script" is a counting problem,
+        // and a model asked to count will estimate. Digit-form matching
+        // only, so a script that says "forty-four billion" without digits
+        // under-counts — hence a hint, never a gate (see class docs).
+        val totalFacts = facts?.numericFacts?.size
+        val citedFacts = facts?.citedFactCount(script)
         val user = buildString {
             append("Requirements:\n")
             append("- Target duration: ").append(minutes).append(" minutes\n")
             append("- Target character count: ").append(targetChars).append('\n')
             append("- Analyst Reactions segment required: ").append(minutes >= 20).append('\n')
+            if (totalFacts != null && citedFacts != null) {
+                append("- Verified figures available in the source facts: ").append(totalFacts).append('\n')
+                append("- Of those, figures the script actually states (approximate digit match): ")
+                append(citedFacts).append('\n')
+                append(
+                    "  A low count usually means padded, adjective-heavy segments. That is a " +
+                        "tightening opportunity, NOT a failure — and remember the count misses " +
+                        "numbers spoken as words only.\n",
+                )
+            }
             append("\nSource bundle (ground truth for facts):\n")
             append(sourceBundle)
             append("\n\nScript to validate (length=").append(script.length).append(" chars):\n")
@@ -63,7 +85,19 @@ class PodcastValidator @Inject constructor(
             // pays cache-read rates on the shared prefix.
             cacheSystem = true,
         )
-        return parse(completion.text, modelId = completion.modelUsed.id, fallback = script)
+        val parsed = parse(completion.text, modelId = completion.modelUsed.id, fallback = script)
+        // Attach the density reading to whatever verdict came back —
+        // including the early-return paths inside parse() — so the number
+        // always reaches the podcast row and the player.
+        if (facts == null || totalFacts == null || citedFacts == null) return parsed
+        // Re-measure against the script we're actually shipping: a FIXED
+        // rewrite may cite more (or fewer) figures than the original.
+        val shippedCited = parsed.script?.let { facts.citedFactCount(it) } ?: citedFacts
+        return parsed.copy(
+            notes = "${parsed.notes} [Ground-truth figures cited: $shippedCited of $totalFacts.]",
+            citedFacts = shippedCited,
+            totalFacts = totalFacts,
+        )
     }
 
     private fun parse(raw: String, modelId: String, fallback: String): Result {

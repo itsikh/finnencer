@@ -39,6 +39,8 @@ class BundleSummarizer @Inject constructor(
     private val networkAvailability: io.itsikh.finnencer.core.net.NetworkAvailability,
     private val progressReporter: io.itsikh.finnencer.core.work.JobProgressReporter,
     private val podcastValidator: PodcastValidator,
+    private val reportGenerator: ReportGenerator,
+    private val autoSizer: PodcastAutoSizer,
 ) {
 
     /**
@@ -129,7 +131,7 @@ class BundleSummarizer @Inject constructor(
      */
     suspend fun summarizeToPodcast(
         articleIds: List<String>,
-        minutes: PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
@@ -137,8 +139,6 @@ class BundleSummarizer @Inject constructor(
     ): Long {
         require(articleIds.isNotEmpty()) { "selection must be non-empty" }
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
-        val titles = articles.take(3).joinToString(", ") { it.title.take(60) }
-        val title = "${articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"}  ·  ${minutes.minutes} min  ·  $titles"
         val source = buildString {
             articles.forEachIndexed { i, a ->
                 append("--- Article ").append(i + 1).append(" ---\n")
@@ -151,22 +151,66 @@ class BundleSummarizer @Inject constructor(
                 append('\n')
             }
         }
+        val sized = resolveBundleDuration(duration, articles.size, source.length)
+        val titles = articles.take(3).joinToString(", ") { it.title.take(60) }
+        val title = "${articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"}  ·  ${sized.label}  ·  $titles"
         return renderPodcast(
             title = title.take(120),
             sourceId = articleIds.joinToString(","),
             sourceMaterial = source,
-            minutes = minutes,
+            minutes = sized.minutes,
             customPrompt = customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
             ttsModelOverride = ttsModelOverride,
+            autoNote = sized.autoNote,
         )
     }
 
+    /** Resolved episode length plus the Auto explanation, if any. */
+    data class SizedDuration(
+        val minutes: PodcastMinutes,
+        val autoNote: String?,
+    ) {
+        /** Title fragment — marks Auto-chosen lengths so a listener can
+         *  tell a 30-minute episode they asked for from one Auto decided on. */
+        val label: String get() =
+            if (autoNote == null) "${minutes.minutes} min" else "Auto ${minutes.minutes} min"
+    }
+
     /**
-     * Render a podcast whose script-writer source is the markdown body of
-     * an [EarningsReport] (BRIEF / STANDARD / DEEP). Used by the per-stock
-     * "Make podcast" affordance on the past-earnings card.
+     * Resolve a news-bundle podcast's length. There's no facts sheet on
+     * this path, so Auto sizes off how many articles were selected and how
+     * much body text they carry.
+     */
+    fun resolveBundleDuration(
+        duration: PodcastDuration,
+        articleCount: Int,
+        sourceChars: Int,
+    ): SizedDuration = when (duration) {
+        is PodcastDuration.Fixed -> SizedDuration(duration.minutes, autoNote = null)
+        PodcastDuration.Auto -> autoSizer.decideForBundle(articleCount, sourceChars)
+            .let { SizedDuration(it.minutes, autoNote = it.explanation) }
+    }
+
+    /**
+     * Render a podcast whose script-writer source is an [EarningsReport]
+     * (BRIEF / STANDARD / DEEP) plus the verified facts sheet behind it.
+     * Used by the per-stock "Make podcast" affordance on the past-earnings
+     * card and by the earnings combo job.
+     *
+     * The report markdown alone is NOT enough source material: a BRIEF
+     * report is ~4k characters and a 20-minute episode needs ~16k, so a
+     * script writer handed only the prose had to invent the difference —
+     * which is exactly how earnings episodes ended up padded and
+     * number-free. The facts sheet supplies the substance the prose
+     * compressed away.
+     *
+     * @param factsSheet pass the already-built sheet when the caller just
+     *        generated the report (the combo job does) to avoid re-walking
+     *        EDGAR; null makes this method rebuild it.
+     * @param autoNote Auto-mode explanation to carry into the title, or
+     *        null for a user-chosen duration.
      */
     suspend fun podcastFromEarningsReport(
         reportId: Long,
@@ -175,11 +219,38 @@ class BundleSummarizer @Inject constructor(
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
         ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
+        factsSheet: EarningsFactsSheet? = null,
+        autoNote: String? = null,
     ): Long {
         val report = earningsDao.getReport(reportId)
             ?: error("EarningsReport $reportId not found")
+        // Rebuild path (standalone "make podcast from this report"): every
+        // underlying fetch is cached, so this is cheap when the report was
+        // generated recently and correct when it wasn't. A report with no
+        // linked event (hand-made or migrated row) has nothing to rebuild
+        // from — degrade to prose-only rather than fail the podcast.
+        val eventId = report.earningsEventId
+        val facts = factsSheet ?: eventId?.let { id ->
+            runCatching { reportGenerator.prepare(id).facts }
+                .onFailure {
+                    AppLogger.w(
+                        TAG,
+                        "could not rebuild facts sheet for report $reportId; " +
+                            "script will run on report prose only: ${it.message}",
+                    )
+                }
+                .getOrNull()
+        }
+        if (facts == null) {
+            AppLogger.w(
+                TAG,
+                "podcast for report $reportId has no facts sheet — the script will be " +
+                    "limited to what the report prose already says",
+            )
+        }
+        val lengthLabel = autoNote?.let { "Auto ${minutes.minutes} min" } ?: "${minutes.minutes} min"
         return renderPodcast(
-            title = "${report.tickerSymbol}  ·  ${minutes.minutes} min  ·  ${report.title.take(80)}",
+            title = "${report.tickerSymbol}  ·  $lengthLabel  ·  ${report.title.take(80)}",
             sourceId = "earnings_report:$reportId",
             sourceMaterial = report.contentMarkdown,
             minutes = minutes,
@@ -187,6 +258,9 @@ class BundleSummarizer @Inject constructor(
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
             ttsModelOverride = ttsModelOverride,
+            facts = facts,
+            usage = AiUsage.PODCAST_EARNINGS,
+            autoNote = autoNote,
         )
     }
 
@@ -200,7 +274,7 @@ class BundleSummarizer @Inject constructor(
     suspend fun podcastFromSummary(
         articleIds: List<String>,
         summaryText: String,
-        minutes: PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
@@ -209,16 +283,20 @@ class BundleSummarizer @Inject constructor(
         val articles = articleIds.mapNotNull { newsDao.getArticle(it) }
         val ticker = articles.firstOrNull()?.primaryTickerSymbol ?: "Custom"
         val titles = articles.take(3).joinToString(", ") { it.title.take(60) }
-        val title = "$ticker  ·  ${minutes.minutes} min  ·  $titles"
+        // Size off the summary the script will actually work from, not the
+        // raw articles — the summary IS the source material here.
+        val sized = resolveBundleDuration(duration, articles.size, summaryText.length)
+        val title = "$ticker  ·  ${sized.label}  ·  $titles"
         return renderPodcast(
             title = title.take(120),
             sourceId = articleIds.joinToString(","),
             sourceMaterial = summaryText,
-            minutes = minutes,
+            minutes = sized.minutes,
             customPrompt = customPrompt,
             existingPodcastId = existingPodcastId,
             onPodcastIdAssigned = onPodcastIdAssigned,
             ttsModelOverride = ttsModelOverride,
+            autoNote = sized.autoNote,
         )
     }
 
@@ -231,6 +309,11 @@ class BundleSummarizer @Inject constructor(
         existingPodcastId: Long? = null,
         onPodcastIdAssigned: suspend (Long) -> Unit = {},
         ttsModelOverride: io.itsikh.finnencer.data.repo.TtsModel? = null,
+        /** Verified numeric grounding — earnings podcasts only. */
+        facts: EarningsFactsSheet? = null,
+        /** Which prompt + model slot writes the script. */
+        usage: AiUsage = AiUsage.PODCAST_SCRIPT,
+        autoNote: String? = null,
     ): Long {
         // Read the user-configurable chars-per-minute ratio once up
         // front so the same number flows into the DB column, the
@@ -307,7 +390,7 @@ class BundleSummarizer @Inject constructor(
                 // prompt editor. A private copy here previously
                 // drifted: the Analyst Reactions long-form block only
                 // existed in DefaultPrompts and never reached runtime.
-                append(DefaultPrompts.forUsage(AiUsage.PODCAST_SCRIPT))
+                append(DefaultPrompts.forUsage(usage))
                 append("\n\nTarget duration: about ").append(minutes.minutes).append(" minutes when spoken aloud ")
                 append("(~").append(charBudget).append(" characters of dialogue). ")
                 append("A ").append(minutes.minutes).append("-minute podcast typically contains ")
@@ -317,15 +400,33 @@ class BundleSummarizer @Inject constructor(
                 append("LENGTH IS A HARD REQUIREMENT. You MUST produce at least ")
                 append((charBudget * TARGET_THRESHOLD).toInt()).append(" characters of dialogue. ")
                 append("Failing the minimum is unacceptable — count your characters as you go. ")
-                append("Do NOT wrap up early. If you feel the conversation is nearing an end ")
-                append("before reaching the target, instead introduce a new angle: ")
-                append("a competing analyst view, a historical analog, second-order effects, ")
-                append("competitive positioning, or what to watch in the next quarter. ")
-                append("End ONLY when you've covered the full duration.")
+                append("Do NOT wrap up early. ")
+                // Where the runway is filled from matters as much as that
+                // it gets filled. The old instruction here ("introduce a
+                // new angle: a historical analog, second-order effects…")
+                // told the model to SPECULATE when it ran short, which is
+                // how earnings episodes filled 16k characters without
+                // citing the numbers sitting right there in the source.
+                if (facts != null) {
+                    append("If you're approaching the end of your material before reaching the ")
+                    append("target, go DEEPER INTO THE FACTS you were given — an unmentioned ")
+                    append("figure from the facts block, a margin move you haven't unpacked, a ")
+                    append("segment you skimmed, a line from the press release you haven't ")
+                    append("quoted. There are ").append(facts.numericFacts.size)
+                    append(" verified figures available; a script that used only half of them ")
+                    append("has room to grow without inventing anything. Do NOT reach for ")
+                    append("speculation, hypotheticals or historical analogies to fill time.")
+                } else {
+                    append("If you feel the conversation is nearing an end ")
+                    append("before reaching the target, instead introduce a new angle: ")
+                    append("a competing analyst view, a historical analog, second-order effects, ")
+                    append("competitive positioning, or what to watch in the next quarter.")
+                }
+                append(" End ONLY when you've covered the full duration.")
             }
             val scriptSystem = promptPrefs.applyExtras(
                 base = baseScriptSystem,
-                extra = promptPrefs.get(AiUsage.PODCAST_SCRIPT),
+                extra = promptPrefs.get(usage),
                 perCallCustom = customPrompt,
             )
             // Sonnet 5's tokenizer runs ~2.7 chars/token on English
@@ -353,6 +454,14 @@ class BundleSummarizer @Inject constructor(
             val resolvedTtsModel = (ttsModelOverride ?: podcastPrefs.ttsModel.first())
                 .coercedFor(resolvedTtsProvider)
             val plannedTtsDisplay = "${resolvedTtsModel.displayName} · ${resolvedTtsProvider.displayName}"
+            // Facts first, prose second. The verified numbers lead the
+            // source so they're the first thing the writer reads, and the
+            // report (or article bundle) follows as the narrative layer.
+            val scriptSource = if (facts == null) sourceMaterial else buildString {
+                append(facts.markdown)
+                append("\n\n=== ANALYST REPORT on the same print (narrative context) ===\n")
+                append(sourceMaterial)
+            }
             // Phase 1: produce the script (skip if a prior failed attempt
             // already persisted one). Persisted to the row IMMEDIATELY so
             // a subsequent TTS-stage failure can reuse it without
@@ -369,13 +478,23 @@ class BundleSummarizer @Inject constructor(
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.GENERATING_SCRIPT,
                     0,
-                    "Asking Claude for a ${minutes.minutes}-minute dialogue · TTS: $plannedTtsDisplay",
+                    buildString {
+                        // Auto picked the length; say why right here so the
+                        // user can sanity-check the decision while the job
+                        // is still running rather than wondering after.
+                        autoNote?.let { append(it).append(" · ") }
+                        append("Asking Claude for a ${minutes.minutes}-minute dialogue")
+                        facts?.let { append(" from ${it.numericFacts.size} verified figures") }
+                        append(" · TTS: $plannedTtsDisplay")
+                    },
                 )
                 val freshScript = generateScript(
                     scriptSystem = scriptSystem,
-                    source = sourceMaterial,
+                    source = scriptSource,
                     maxTokens = maxTokens,
                     targetChars = charBudget,
+                    usage = usage,
+                    facts = facts,
                 )
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.PERSISTING_SCRIPT,
@@ -417,12 +536,17 @@ class BundleSummarizer @Inject constructor(
                 )
                 val v = podcastValidator.validate(
                     script = script,
-                    sourceBundle = sourceMaterial,
+                    sourceBundle = scriptSource,
                     targetChars = charBudget,
                     minutes = minutes.minutes,
                     customPrompt = customPrompt,
+                    facts = facts,
                 )
-                AppLogger.i(TAG, "podcast $id validation: verdict=${v.verdict} model=${v.model} notes=${v.notes.take(120)}…")
+                AppLogger.i(
+                    TAG,
+                    "podcast $id validation: verdict=${v.verdict} model=${v.model} " +
+                        "density=${v.citedFacts ?: "n/a"}/${v.totalFacts ?: "n/a"} notes=${v.notes.take(120)}…",
+                )
                 when (v.verdict) {
                     PodcastValidator.Verdict.PASS,
                     PodcastValidator.Verdict.FIXED -> {
@@ -533,8 +657,10 @@ class BundleSummarizer @Inject constructor(
         source: String,
         maxTokens: Int,
         targetChars: Int,
+        usage: AiUsage,
+        facts: EarningsFactsSheet?,
     ): String {
-        val initial = scriptCallWithRetry(scriptSystem, source, maxTokens, passLabel = "initial")
+        val initial = scriptCallWithRetry(scriptSystem, source, maxTokens, passLabel = "initial", usage = usage)
             ?: throw java.io.IOException("Podcast script call failed after $CONTINUATION_RETRIES retries")
         val combined = StringBuilder(initial.text.trim())
         var stop = initial.stopReason
@@ -566,17 +692,51 @@ class BundleSummarizer @Inject constructor(
                 append("- ANY meta-commentary about the conversation ('continuing our discussion', 'picking up where we left off')\n\n")
                 append("Your first character MUST be 'Host:' or 'Analyst:' starting an immediate next turn of dialogue. ")
                 append("Treat it like a natural conversational beat — the speakers are mid-sentence, mid-thought, mid-segment. ")
-                append("Keep going until you've covered the rest of the runway with new angles (segment-by-segment financials, technology deep-dives, competitive dynamics, the analyst-reactions block if 20-min+, then a wrap).")
+                if (facts != null) {
+                    append("Fill the remaining runway from the UNCOVERED FACTS list in the user message: ")
+                    append("each of those is a figure the episode has not stated yet, and every one is ")
+                    append("verified. Work through them in the order of the segment plan, then close with ")
+                    append("the analyst-reactions block if this is a 20-minute-plus episode and a wrap. ")
+                    append("Do NOT pad with speculation, hypotheticals or historical analogies — ")
+                    append("there are real numbers left to discuss.")
+                } else {
+                    append("Keep going until you've covered the rest of the runway with new angles (segment-by-segment financials, technology deep-dives, competitive dynamics, the analyst-reactions block if 20-min+, then a wrap).")
+                }
             }
             val anchorTail = combined.takeLast(CONTINUATION_ANCHOR_CHARS)
+            // Which verified figures the episode still hasn't stated. This
+            // is the whole reason continuations stopped drifting into
+            // speculation: the model is handed the specific unused
+            // material instead of being told to find "a new angle".
+            val uncovered = facts?.let { sheet ->
+                val soFar = combined.toString()
+                sheet.numericFacts.filter { fact ->
+                    fact.matchTokens.none { token ->
+                        Regex("(?<![\\d.])" + Regex.escape(token) + "(?![\\d])").containsMatchIn(soFar)
+                    }
+                }
+            }.orEmpty()
             val continuationUser = buildString {
                 append("Source material (reference only — do NOT re-introduce):\n").append(source)
+                if (uncovered.isNotEmpty()) {
+                    append("\n\n=== UNCOVERED FACTS — verified figures the episode has NOT stated yet ===\n")
+                    append("Work these into the remaining dialogue. They are ground truth; state them ")
+                    append("with their context.\n")
+                    uncovered.forEach { append(" - ").append(it.line).append('\n') }
+                }
                 append("\n\n=== SCRIPT SO FAR (do not repeat any line) ===\n").append(combined)
                 append("\n\n=== ANCHOR — your output must immediately follow this verbatim ===\n")
                 append(anchorTail)
                 append("\n\n=== YOUR NEXT OUTPUT ===\nBegin with 'Host:' or 'Analyst:' continuing the conversation directly. No preamble.")
             }
-            val next = scriptCallWithRetry(continuationSystem, continuationUser, maxTokens, passLabel = "cont ${rounds + 1}")
+            if (facts != null) {
+                AppLogger.i(
+                    TAG,
+                    "podcast script continuation ${rounds + 1}: ${uncovered.size} of " +
+                        "${facts.numericFacts.size} verified figures still uncited",
+                )
+            }
+            val next = scriptCallWithRetry(continuationSystem, continuationUser, maxTokens, passLabel = "cont ${rounds + 1}", usage = usage)
             if (next == null) {
                 AppLogger.w(TAG, "podcast script continuation ${rounds + 1} gave up after $CONTINUATION_RETRIES retries; using partial script (len=${combined.length}/$targetChars)")
                 break
@@ -618,12 +778,13 @@ class BundleSummarizer @Inject constructor(
         user: String,
         maxTokens: Int,
         passLabel: String,
+        usage: AiUsage,
     ): AiCompletion? {
         var lastErr: Throwable? = null
         for (attempt in 1..CONTINUATION_RETRIES) {
             try {
                 return router.complete(
-                    usage = AiUsage.PODCAST_SCRIPT,
+                    usage = usage,
                     system = system,
                     userMessage = user,
                     maxTokens = maxTokens,

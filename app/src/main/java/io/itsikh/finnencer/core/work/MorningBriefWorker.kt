@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.repo.AiJobsRepository
 import io.itsikh.finnencer.data.repo.WatchlistRepository
@@ -117,7 +118,11 @@ class MorningBriefWorker @AssistedInject constructor(
             tickerSymbol = null, // cross-watchlist, no single ticker tag
             articleIds = articleIds,
             pages = plan.pages,
-            minutes = plan.minutes,
+            // Morning Brief keeps an EXPLICIT length: it already sizes
+            // itself from the qualifying-story count above, and that
+            // tuning is deliberate. Auto would size off article text
+            // volume instead and override it.
+            duration = PodcastDuration.Fixed(plan.minutes),
             customPrompt = customPrompt,
         )
         Log.i(TAG, "queued daily brief job $jobId (~${plan.minutes.minutes}min) from $count big stories across ${symbols.size} tickers")

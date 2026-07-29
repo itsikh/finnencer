@@ -334,9 +334,9 @@ class PodcastPlayerViewModel @Inject constructor(
      * Re-run whichever AI job produced this podcast row, reusing the
      * same Podcast row id so v0.0.40's per-chunk cache + persisted
      * script kick in (#43). If no AI job rows reference this podcast
-     * (rare — e.g. produced via the legacy `podcast/from-report/{id}`
-     * direct-call path) surfaces an error so the user can navigate back
-     * to the source screen and tap Listen again.
+     * (only possible for rows created before every podcast path went
+     * through an enqueued job) surfaces an error so the user can navigate
+     * back to the source screen and make the podcast again.
      */
     fun retry() {
         viewModelScope.launch {

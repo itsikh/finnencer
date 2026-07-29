@@ -25,7 +25,6 @@ import io.itsikh.finnencer.ui.screens.article.ArticleDetailScreen
 import io.itsikh.finnencer.ui.screens.cost.CostMeterScreen
 import io.itsikh.finnencer.ui.screens.earnings.ReportViewerScreen
 import io.itsikh.finnencer.ui.screens.feed.TickerFeedScreen
-import io.itsikh.finnencer.ui.screens.podcast.PodcastFromReportScreen
 import io.itsikh.finnencer.ui.screens.podcast.PodcastPlayerScreen
 import io.itsikh.finnencer.ui.screens.reader.ReaderScreen
 import io.itsikh.finnencer.ui.screens.snapshot.TickerSnapshotScreen
@@ -97,7 +96,6 @@ fun AppNavHost(
             composable("report/{reportId}") {
                 ReportViewerScreen(
                     onBack = { navController.popBackStack() },
-                    onListen = { id -> navController.navigate("podcast/from-report/$id") },
                     onOpenReportId = { newId ->
                         // Replace the current report entry in the back stack
                         // with the newly-produced one (regenerate / upgrade)
@@ -108,16 +106,6 @@ fun AppNavHost(
                         }
                     },
                     onOpenReader = { navController.navigate("reader") },
-                )
-            }
-            composable("podcast/from-report/{reportId}") {
-                PodcastFromReportScreen(
-                    onReady = { podcastId ->
-                        navController.navigate("podcast/$podcastId") {
-                            popUpTo("podcast/from-report/{reportId}") { inclusive = true }
-                        }
-                    },
-                    onFailed = { navController.popBackStack() },
                 )
             }
             composable(

@@ -8,8 +8,10 @@ import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.dao.NewsDao
 import io.itsikh.finnencer.data.dao.TickerAnalystSnapshotDao
 import io.itsikh.finnencer.data.dao.TickerDao
+import io.itsikh.finnencer.data.entity.EarningsEvent
 import io.itsikh.finnencer.data.entity.EarningsReport
 import io.itsikh.finnencer.data.entity.ReportTier
+import io.itsikh.finnencer.data.entity.Ticker
 import io.itsikh.finnencer.data.entity.TickerAnalystSnapshot
 import io.itsikh.finnencer.data.entity.fiscalLabelOrNull
 import javax.inject.Inject
@@ -21,13 +23,13 @@ import javax.inject.Singleton
  * prompt template — per the design doc, "be brief" alone gives shallow
  * coverage of everything; we want deep coverage of what matters.
  *
- * Source mix per tier (without Finnhub Pro transcripts in MVP):
- *  - BRIEF:    consensus + actual numbers + last 5 SEC filings + last 3
- *              high-score news items + price-target snapshot
- *  - STANDARD: + last 10 news items + recommendation-trends history
- *              + filing snippets
- *  - DEEP:     + full last-quarter PT history + full filings list (titles
- *              only — no body extraction yet) + bull/bear framing
+ * The numeric backbone of every tier is [EarningsFactsSheet]: SEC XBRL
+ * actuals with margins, YoY/QoQ deltas, FCF and consensus surprise all
+ * computed in Kotlin, plus the 8-K Exhibit 99.1 press release (the only
+ * place guidance and segment revenue actually live) and the post-print
+ * price reaction. Tiers differ in how much news and analyst history they
+ * add on top, and in how much of the analysis they ask for — not in
+ * whether they get real numbers.
  */
 @Singleton
 class ReportGenerator @Inject constructor(
@@ -38,94 +40,74 @@ class ReportGenerator @Inject constructor(
     private val earningsDao: EarningsDao,
     private val analystSnapshotDao: TickerAnalystSnapshotDao,
     private val promptPrefs: PromptPreferences,
-    private val xbrl: io.itsikh.finnencer.data.providers.EdgarXbrlExtractor,
-    private val cikLookup: io.itsikh.finnencer.data.providers.EdgarCikLookup,
+    private val factsBuilder: EarningsFactsBuilder,
     private val gson: Gson,
 ) {
 
-    suspend fun generate(eventId: Long, tier: ReportTier): Long {
+    /**
+     * Everything gathered for an event before a tier is chosen. Exists so
+     * Auto mode can inspect the facts sheet to PICK the tier, then generate
+     * at that tier without re-fetching EDGAR, Yahoo and Finnhub.
+     */
+    data class ReportContext(
+        val event: EarningsEvent,
+        val ticker: Ticker,
+        val facts: EarningsFactsSheet,
+        val analystSnapshot: TickerAnalystSnapshot?,
+        val recommendations: List<FinnhubRecommendation>,
+    )
+
+    /**
+     * Gather sources for [eventId] without generating anything. The
+     * expensive network work (companyfacts, submissions + exhibit,
+     * daily chart, basic financials) happens here and is internally
+     * cached, so a subsequent [generate] with the returned context is
+     * LLM-cost only.
+     */
+    suspend fun prepare(eventId: Long): ReportContext {
         val event = earningsDao.getEvent(eventId)
             ?: error("EarningsEvent $eventId not found")
         val ticker = tickerDao.get(event.tickerSymbol)
             ?: error("Ticker ${event.tickerSymbol} no longer in watchlist")
+        val snap = analystSnapshot(ticker.symbol)
+        val recs = parseRecommendationTrends(snap?.recommendationTrendsJson)
+        // News count feeds Auto sizing; DEEP's larger news slice is read
+        // again at bundle-assembly time against the chosen tier.
+        val newsCount = newsDao.recentForTicker(ticker.symbol, NEWS_LIMIT_DEEP).size
+        val facts = factsBuilder.build(
+            event = event,
+            ticker = ticker,
+            newsCount = newsCount,
+            analystSnapshot = snap,
+            recommendations = recs,
+        )
+        return ReportContext(
+            event = event,
+            ticker = ticker,
+            facts = facts,
+            analystSnapshot = snap,
+            recommendations = recs,
+        )
+    }
+
+    /** Convenience entry point for callers that don't need Auto sizing. */
+    suspend fun generate(eventId: Long, tier: ReportTier): Long =
+        generate(prepare(eventId), tier)
+
+    suspend fun generate(context: ReportContext, tier: ReportTier): Long {
+        val (event, ticker, facts) = context
 
         // ───────── Source bundle ─────────
+        // The facts sheet leads: it's the verified numeric layer plus the
+        // press-release body. News and analyst history follow as
+        // interpretive context.
         val bundle = StringBuilder()
-        bundle.append("# ${ticker.symbol} — ${ticker.name}\n")
-        // Only state the fiscal period when it's confirmed; EDGAR's
-        // calendar-quarter guess is wrong for offset fiscal years (#70).
-        event.fiscalLabelOrNull()?.let { bundle.append("Fiscal $it\n") }
-        bundle.append("Scheduled: ${event.scheduledAtMillis}\n")
-        if (event.actualReportedAtMillis != null) {
-            bundle.append("Reported: ${event.actualReportedAtMillis}\n")
-        }
-        bundle.append("\n## Consensus (from Finnhub)\n")
-        bundle.append(" - EPS consensus: ${fmt(event.consensusEps)}\n")
-        bundle.append(" - Revenue consensus: ${fmt(event.consensusRevenue)}\n")
-
-        // ───── Actual results from SEC EDGAR XBRL ─────
-        // This is the authoritative source: the company's own
-        // mandatory-XBRL income statement, parsed by the SEC. Fetched
-        // synchronously per report so the LLM always has real numbers
-        // even when the periodic Finnhub numeric sync didn't (or
-        // couldn't) backfill the EarningsEvent row.
-        //
-        // If the Ticker row doesn't have a CIK yet (EDGAR sync failed
-        // earlier — e.g. while the User-Agent was still misconfigured —
-        // and the cached failure expired before the sync re-ran), look
-        // it up on-demand and persist so we don't refetch on every
-        // future report.
-        var cik = ticker.cik
-        if (cik == null) {
-            cik = runCatching { cikLookup.resolve(ticker.symbol) }
-                .onFailure { Log.w(TAG, "on-demand CIK lookup failed for ${ticker.symbol}: ${it.message}") }
-                .getOrNull()
-            if (cik != null) {
-                // Targeted UPDATE of the cik column only: a full-row
-                // update from the stale `ticker` snapshot (captured
-                // before the network lookup) would clobber settings the
-                // user changed meanwhile.
-                tickerDao.updateCik(ticker.symbol, cik)
-                Log.i(TAG, "resolved CIK $cik for ${ticker.symbol} on-demand")
-            } else {
-                Log.w(TAG, "${ticker.symbol} has no CIK; XBRL section will be empty. EDGAR sync hasn't resolved it — check API keys → EDGAR User-Agent.")
-            }
-        }
-        val xbrlQuarter = if (cik != null) {
-            val eventDate = java.time.Instant.ofEpochMilli(event.scheduledAtMillis)
-                .atZone(java.time.ZoneId.systemDefault())
-                .toLocalDate()
-            runCatching { xbrl.quarterNear(cik, eventDate, windowDays = 60) }
-                .onFailure { Log.w(TAG, "XBRL fetch failed for ${ticker.symbol}: ${it.message}") }
-                .getOrNull()
-        } else null
-
-        bundle.append("\n## Actual results (SEC EDGAR XBRL — authoritative)\n")
-        if (xbrlQuarter == null) {
-            bundle.append("(no XBRL filing found near this date; treat consensus block as ESTIMATE only)\n")
-            // Fall back to Finnhub-derived actuals if available — better
-            // than no numbers at all.
-            if (event.actualEps != null || event.actualRevenue != null) {
-                bundle.append(" - Fallback (Finnhub actuals): EPS=${fmt(event.actualEps)}, Revenue=${fmt(event.actualRevenue)}\n")
-            }
-        } else {
-            val spanLabel = when (xbrlQuarter.span) {
-                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.QUARTER -> "STANDALONE QUARTER"
-                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.ANNUAL -> "FULL FISCAL YEAR (annual aggregate — XBRL did not tag a standalone Q4)"
-                io.itsikh.finnencer.data.providers.XbrlQuarter.Span.YTD -> "YTD CUMULATIVE"
-            }
-            bundle.append(" - Period: ${xbrlQuarter.periodStart} to ${xbrlQuarter.periodEnd} (FY${xbrlQuarter.fiscalYear} ${xbrlQuarter.fiscalPeriod}, ${xbrlQuarter.form}) — $spanLabel\n")
-            xbrlQuarter.revenue?.let { bundle.append(" - Revenue: \$${humanMoney(it)} (raw: $it)\n") }
-            xbrlQuarter.grossProfit?.let { bundle.append(" - Gross profit: \$${humanMoney(it)} (raw: $it)\n") }
-            xbrlQuarter.netIncome?.let { bundle.append(" - Net income: \$${humanMoney(it)} (raw: $it)\n") }
-            xbrlQuarter.epsDiluted?.let { bundle.append(" - EPS diluted: \$$it\n") }
-            xbrlQuarter.epsBasic?.let { bundle.append(" - EPS basic: \$$it\n") }
-            xbrlQuarter.accn?.let { bundle.append(" - SEC accession: $it\n") }
-            Log.i(TAG, "XBRL: ${ticker.symbol} ${xbrlQuarter.fiscalPeriod} FY${xbrlQuarter.fiscalYear} ${xbrlQuarter.span} rev=${xbrlQuarter.revenue} eps=${xbrlQuarter.epsDiluted}")
-        }
+        bundle.append(facts.markdown)
 
         val newsLimit = when (tier) {
-            ReportTier.BRIEF -> 5; ReportTier.STANDARD -> 12; ReportTier.DEEP -> 25
+            ReportTier.BRIEF -> NEWS_LIMIT_BRIEF
+            ReportTier.STANDARD -> NEWS_LIMIT_STANDARD
+            ReportTier.DEEP -> NEWS_LIMIT_DEEP
         }
         val recent = newsDao.recentForTicker(ticker.symbol, newsLimit)
         bundle.append("\n## Recent news titles\n")
@@ -140,39 +122,34 @@ class ReportGenerator @Inject constructor(
             }
         }
 
-        // Analyst layer — read from the daily-cached snapshot so a
-        // regenerate (or running 3 tiers back-to-back) doesn't burn 6
-        // Finnhub calls on data that changes once a day at most.
-        val snap = analystSnapshot(ticker.symbol)
-        bundle.append("\n## Analyst price target\n")
-        bundle.append(
-            " - mean ${fmt(snap?.targetMean)} high ${fmt(snap?.targetHigh)} low ${fmt(snap?.targetLow)} " +
-                "(as of ${snap?.lastUpdated ?: "?"})\n"
-        )
-        val recs = parseRecommendationTrends(snap?.recommendationTrendsJson)
-        if (recs.isNotEmpty()) {
+        if (context.recommendations.isNotEmpty()) {
             bundle.append("\n## Recommendation trends (latest first)\n")
             val take = when (tier) { ReportTier.BRIEF -> 1; ReportTier.STANDARD -> 3; ReportTier.DEEP -> 6 }
-            recs.take(take).forEach { r ->
+            context.recommendations.take(take).forEach { r ->
                 bundle.append(" - ${r.period}: strongBuy=${r.strongBuy} buy=${r.buy} hold=${r.hold} sell=${r.sell} strongSell=${r.strongSell}\n")
             }
         }
 
         // ───────── Prompt template ─────────
-        // Caps sized for Sonnet 5 / Opus 5: Sonnet 5's tokenizer emits
-        // ~30% more tokens for the same text than 4.6 did, so the old
-        // caps (1500/3500/6500) would truncate equivalent-length reports.
+        // Caps sized for Sonnet 5 / Opus 5 (~30% more tokens per unit of
+        // text than 4.6) AND for the richer bundle: with segment data,
+        // guidance and a margin trend now in play there is materially
+        // more to write about, and the old caps truncated mid-table.
         val (usage, baseSystem, maxTokens) = when (tier) {
-            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, BRIEF_PROMPT, 2000)
-            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, STANDARD_PROMPT, 4600)
-            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DEEP_PROMPT, 8500)
+            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, DefaultPrompts.forUsage(AiUsage.REPORT_BRIEF), 2600)
+            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, DefaultPrompts.forUsage(AiUsage.REPORT_STANDARD), 6000)
+            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DefaultPrompts.forUsage(AiUsage.REPORT_DEEP), 12000)
         }
         val system = promptPrefs.applyExtras(
             base = baseSystem,
             extra = promptPrefs.get(usage),
         )
 
-        Log.i(TAG, "generating ${tier.name} report for ${ticker.symbol}")
+        Log.i(
+            TAG,
+            "generating ${tier.name} report for ${ticker.symbol} " +
+                "(facts=${facts.signals.metricCount} metrics, bundle=${bundle.length} chars)",
+        )
         val completion = router.complete(
             usage = usage,
             system = system,
@@ -206,11 +183,18 @@ class ReportGenerator @Inject constructor(
                 model = completion.modelUsed.id,
                 inputTokens = 0, // tracked in ApiUsage by the client
                 outputTokens = 0,
-                sourcesUsedJson = "[]",
+                sourcesUsedJson = gson.toJson(sourceRefs(facts)),
                 generatedAtMillis = System.currentTimeMillis(),
             )
         )
         return id
+    }
+
+    /** Traceable source identifiers for the report row — the SEC filings
+     *  the numbers came from, so a reader can verify them. */
+    private fun sourceRefs(facts: EarningsFactsSheet): List<String> = buildList {
+        facts.pressRelease?.sourceUrl?.let { add(it) }
+        facts.accession?.let { add("sec-accession:$it") }
     }
 
     /**
@@ -266,17 +250,6 @@ class ReportGenerator @Inject constructor(
         }
     }
 
-    private fun fmt(d: Double?): String = if (d == null) "—" else "%.4f".format(d).trimEnd('0').trimEnd('.')
-
-    /** Format a large dollar amount as "39.33B" / "1.245B" / "456.7M" so
-     *  the LLM gets a human-readable hint alongside the raw value. */
-    private fun humanMoney(d: Double): String = when {
-        d >= 1_000_000_000_000.0 -> "%.2fT".format(d / 1_000_000_000_000.0)
-        d >= 1_000_000_000.0 -> "%.2fB".format(d / 1_000_000_000.0)
-        d >= 1_000_000.0 -> "%.1fM".format(d / 1_000_000.0)
-        else -> "%.0f".format(d)
-    }
-
     private companion object {
         const val TAG = "ReportGenerator"
         /** How long the analyst snapshot is considered fresh. Daily
@@ -284,167 +257,8 @@ class ReportGenerator @Inject constructor(
          *  most a few times per week per ticker. */
         const val ANALYST_TTL_MS = 24L * 60 * 60 * 1000
 
-        /**
-         * Common persona/reader framing shared by all three earnings-report
-         * tiers. The user (a high-tech professional + investor) wants
-         * the AI to skip the "explain technology" warm-up and go
-         * straight to how product/strategy choices translate to
-         * financial outcomes.
-         */
-        private const val PERSONA = """
-Act as an expert financial analyst and technology strategist.
-
-The reader is a high-tech professional and investor with a strong
-understanding of technology, software, and industry dynamics, so do NOT
-water down technical concepts. The reader is analyzing this company to
-make informed investment decisions, and wants to understand how
-technological execution translates to financial success (or failure).
-
-The source data block below contains the company name, fiscal period,
-authoritative SEC/EDGAR XBRL numbers, consensus, recent news, and
-analyst-coverage snapshots. Use it as the sole grounding for your
-analysis — do not invent figures, and call out when a section's data
-is sparse rather than speculating."""
-
-        const val BRIEF_PROMPT = """$PERSONA
-
-Write a TWO-PAGE executive brief in Markdown with EXACTLY these sections,
-each kept tight (~3-4 sentences):
-
-1. Executive Summary — headline numbers (Revenue, EPS, operating margins)
-   vs Wall Street expectations (beat/miss), plus forward-looking guidance.
-2. The Good (Bullish Signals) — what went well: revenue drivers,
-   successful launches, margin expansions, AI/cloud monetization
-   tailwinds. One paragraph.
-3. The Bad (Bearish Signals) — what went wrong: missed targets,
-   shrinking margins, declining segments, rising R&D-without-ROI,
-   supply-chain or competitive-moat issues. One paragraph.
-4. Tech & Strategy Quick Take — one paragraph on capital allocation
-   to R&D / CapEx and whether management articulated a credible ROI
-   path during the call.
-5. Investor Takeaway — actionable thesis in two sentences PLUS a
-   bullet list of the 2-3 critical KPIs to monitor next quarter.
-
-Length budget: 400-600 words total. No fluff, no preamble, no
-disclaimers — start directly with section 1."""
-
-        const val STANDARD_PROMPT = """$PERSONA
-
-Write a FIVE-PAGE comprehensive analysis in Markdown with EXACTLY these
-sections. Use prose paragraphs except where a table is requested.
-
-1. Executive Summary
-   - Headline numbers (Revenue, EPS, Operating Margins) vs Wall Street
-     consensus (beat/miss with the actual delta).
-   - The company's forward-looking guidance for next quarter and full
-     year, including any explicit raises or cuts vs prior guide.
-
-2. The Good (Bullish Signals)
-   - What went well: revenue growth drivers, successful product
-     launches, margin expansions.
-   - Strong technological tailwinds — successful AI monetization, cloud
-     infrastructure growth, increasing market share in key tech
-     verticals.
-
-3. The Bad (Bearish Signals)
-   - What went wrong: missed targets, shrinking margins, declining
-     business segments.
-   - Technological or execution headwinds — rising R&D costs without
-     clear ROI, supply chain constraints, loss of competitive moat,
-     cannibalization of existing products.
-
-4. Tech & Strategy Deep Dive
-   - Analyze capital allocation toward R&D and CapEx. Are they
-     investing heavily in future tech, and does leadership clearly
-     articulate the path to ROI on those investments?
-   - Summarize management tone during the Q&A regarding the product
-     roadmap. If the source data lacks transcript content, say so and
-     reason from prepared-remarks signals + analyst-report language.
-
-5. Investor Takeaway
-   - Synthesize into an actionable thesis (constructive / cautious /
-     bearish + one-sentence rationale).
-   - As an investor, what are the 3-5 most critical KPIs to monitor
-     over the next 2-3 quarters to see if the strategy is working?
-     Bullet list with the KPI name AND why it matters in one line.
-
-Length budget: 1000-1500 words. Numbers go inline as prose; a single
-markdown table at the top of section 1 for Revenue/EPS/margins vs
-consensus is welcome but optional. Cite source rows by the bracketed
-[sourceName] tag when referencing news items."""
-
-        const val DEEP_PROMPT = """$PERSONA
-
-You are writing a TEN-PAGE deep-dive earnings analysis in Markdown.
-The reader already knows the company — skip generic background and
-get to specifics quickly. Use the structure below verbatim.
-
-1. Executive Summary
-   - Headline numbers (Revenue, EPS, Operating Margins, FCF) vs Wall
-     Street consensus, with explicit delta percentages.
-   - Forward-looking guidance for next quarter and full year, plus
-     any cuts/raises vs prior guide and what management framed as
-     the cause.
-   - One-sentence bull/bear framing.
-
-2. Numbers vs Consensus (Markdown table)
-   - Revenue, EPS (GAAP + non-GAAP if available), gross margin,
-     operating margin, FCF, key segment splits — actual / consensus
-     / surprise / YoY delta.
-
-3. The Good (Bullish Signals)
-   - Revenue growth drivers segment by segment.
-   - Successful product launches, design wins, customer expansions.
-   - Margin expansion mechanics — where the operating leverage came
-     from (mix, pricing, scale).
-   - Tech tailwinds: AI monetization KPIs (tokens served, paid AI seats,
-     ARR from AI products), cloud infra growth, share gains in
-     strategic verticals.
-
-4. The Bad (Bearish Signals)
-   - Missed targets, shrinking margins, declining segments.
-   - Tech/execution headwinds: rising R&D without articulated ROI,
-     supply-chain constraints, eroding competitive moat, product
-     cannibalization, technical debt that's slowing roadmap velocity.
-
-5. Tech & Strategy Deep Dive
-   - Capital allocation: dollar amounts and % of revenue going to R&D
-     vs CapEx vs buybacks/dividends. Compare to prior quarters.
-   - Path to ROI on the big bets — is leadership specific about the
-     timeline and customer adoption metrics, or vague?
-   - Management tone during Q&A (or prepared remarks, if the source
-     data omits transcripts). Look for hedging language, deflection,
-     or contradictions between segments. Cite specific quotes when
-     available.
-   - Competitive positioning: who is gaining/losing share in their
-     core markets, and what's the technical reason (architecture
-     advantage, distribution, ecosystem lock-in, talent density)?
-
-6. Analyst Reaction
-   - Synthesize the recommendation-trend data and price-target
-     movement. Note magnitude and dispersion (is the Street tightly
-     converged or split?).
-
-7. Bull Case
-   - 3-5 bullets, each one full sentence, with the linchpin
-     assumption named so the reader knows what to falsify.
-
-8. Bear Case
-   - Same shape as Bull Case.
-
-9. Risk Factors (5-7 bullets, severity inline as [LOW/MED/HIGH])
-
-10. Comparables / Read-throughs
-    - What the print implies for direct peers and adjacent tech names
-      (suppliers, customers, competitors).
-
-11. Investor Takeaway — KPIs to Monitor
-    - Actionable thesis (one paragraph).
-    - 5-8 specific KPIs to watch over the next 2-3 quarters, each
-      with: KPI name · current value (if known) · threshold that
-      would change the thesis · why it matters.
-
-Length budget: 2500-4000 words. Be specific. Cite source rows from the
-input by [sourceName] when referencing news items."""
+        const val NEWS_LIMIT_BRIEF = 5
+        const val NEWS_LIMIT_STANDARD = 12
+        const val NEWS_LIMIT_DEEP = 25
     }
 }

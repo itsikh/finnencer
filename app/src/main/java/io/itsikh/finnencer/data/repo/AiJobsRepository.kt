@@ -11,6 +11,9 @@ import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.itsikh.finnencer.core.work.AiJobWorker
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
+import io.itsikh.finnencer.data.ai.titleLabel
+import io.itsikh.finnencer.data.ai.toMinutesValue
 import io.itsikh.finnencer.data.dao.AiJobDao
 import io.itsikh.finnencer.data.entity.AiJob
 import io.itsikh.finnencer.data.entity.AiJobStatus
@@ -65,13 +68,13 @@ class AiJobsRepository @Inject constructor(
     suspend fun enqueueBatchPodcast(
         tickerSymbol: String?,
         articleIds: List<String>,
-        minutes: BundleSummarizer.PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
     ): String {
         val id = UUID.randomUUID().toString()
-        val title = "Podcast · ${articleIds.size} articles · ${minutes.minutes} min"
+        val title = "Podcast · ${articleIds.size} articles · ${duration.titleLabel()}"
         val subtitle = customPrompt?.takeIf { it.isNotBlank() }
-        val input = AiJobWorker.PodcastInput(articleIds, minutes.minutes, customPrompt)
+        val input = AiJobWorker.PodcastInput(articleIds, duration.toMinutesValue(), customPrompt)
         return insertAndEnqueue(
             id = id,
             type = AiJobType.PODCAST_BATCH,
@@ -120,15 +123,15 @@ class AiJobsRepository @Inject constructor(
         tickerSymbol: String,
         earningsEventId: Long,
         eventLabel: String,
-        minutes: BundleSummarizer.PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
     ): String {
         val id = UUID.randomUUID().toString()
-        val title = "$tickerSymbol earnings · $eventLabel · ${minutes.minutes}-min podcast"
+        val title = "$tickerSymbol earnings · $eventLabel · ${duration.titleLabel()} podcast"
         val subtitle = customPrompt?.takeIf { it.isNotBlank() }
         val input = AiJobWorker.EarningsBriefAndPodcastInput(
             earningsEventId = earningsEventId,
-            minutesValue = minutes.minutes,
+            minutesValue = duration.toMinutesValue(),
             customPrompt = customPrompt,
         )
         return insertAndEnqueue(
@@ -145,16 +148,16 @@ class AiJobsRepository @Inject constructor(
         tickerSymbol: String?,
         articleIds: List<String>,
         pages: BundleSummarizer.Pages,
-        minutes: BundleSummarizer.PodcastMinutes,
+        duration: PodcastDuration,
         customPrompt: String?,
     ): String {
         val id = UUID.randomUUID().toString()
-        val title = "Summary + Podcast · ${articleIds.size} articles · ${pages.target}-pg · ${minutes.minutes} min"
+        val title = "Summary + Podcast · ${articleIds.size} articles · ${pages.target}-pg · ${duration.titleLabel()}"
         val subtitle = customPrompt?.takeIf { it.isNotBlank() }
         val input = AiJobWorker.SummaryAndPodcastInput(
             articleIds = articleIds,
             pagesTarget = pages.target,
-            minutesValue = minutes.minutes,
+            minutesValue = duration.toMinutesValue(),
             customPrompt = customPrompt,
         )
         return insertAndEnqueue(

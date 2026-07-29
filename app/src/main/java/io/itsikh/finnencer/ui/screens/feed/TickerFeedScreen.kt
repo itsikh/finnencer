@@ -61,6 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.LaunchedEffect
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
+import io.itsikh.finnencer.data.ai.chipLabel
+import io.itsikh.finnencer.data.ai.podcastDurationOptions
 import io.itsikh.finnencer.data.dao.ScoredArticleRow
 import io.itsikh.finnencer.data.entity.ArticleCategory
 import io.itsikh.finnencer.data.entity.EarningsEvent
@@ -353,8 +356,9 @@ fun TickerFeedScreen(
             state = batchSheet,
             selectionSize = selection.size,
             onClose = vm::closeBatchSheet,
-            onGenerate = { pages, minutes, prompt ->
-                if (minutes != null) vm.summarizeBatchWithPodcast(pages, minutes, prompt)
+            // A null duration means the podcast toggle was off — summary only.
+            onGenerate = { pages, duration, prompt ->
+                if (duration != null) vm.summarizeBatchWithPodcast(pages, duration, prompt)
                 else vm.summarizeBatch(pages, prompt)
             },
         )
@@ -382,11 +386,11 @@ fun TickerFeedScreen(
             ?: EARN_FMT.format(Instant.ofEpochMilli(target.scheduledAtMillis))
         EarningsPodcastDialog(
             quarter = targetLabel,
-            onPick = { minutes ->
+            onPick = { duration ->
                 vm.requestEarningsPodcast(
                     eventId = target.id,
                     eventLabel = targetLabel,
-                    minutes = minutes,
+                    duration = duration,
                     customPrompt = null,
                 )
                 earningsPodcastTarget = null
@@ -399,7 +403,7 @@ fun TickerFeedScreen(
 @Composable
 private fun EarningsPodcastDialog(
     quarter: String,
-    onPick: (BundleSummarizer.PodcastMinutes) -> Unit,
+    onPick: (PodcastDuration) -> Unit,
     onDismiss: () -> Unit,
 ) {
     androidx.compose.material3.AlertDialog(
@@ -408,29 +412,44 @@ private fun EarningsPodcastDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Generates a 1-page highlights summary (if one isn't cached yet) and a multi-voice podcast scripted from it. Watch progress in Tasks.",
+                    "Reads the SEC filing, the earnings press release and the market reaction, " +
+                        "writes a report, then narrates it as a multi-voice podcast. " +
+                        "Watch progress in Tasks.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FinnencerColors.TextSecondary,
+                )
+                Text(
+                    "Auto sizes both the report depth and the episode length to how much " +
+                        "substance the quarter actually has.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FinnencerColors.TextTertiary,
                 )
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                    podcastDurationOptions.forEach { option ->
+                        // Auto reads as the recommended path, so it gets the
+                        // solid treatment and the fixed presets stay quieter.
+                        val isAuto = option == PodcastDuration.Auto
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(FinnencerColors.Amber.copy(alpha = 0.18f))
-                                .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-                                .clickable { onPick(m) }
+                                .background(FinnencerColors.Amber.copy(alpha = if (isAuto) 0.34f else 0.18f))
+                                .border(
+                                    1.dp,
+                                    FinnencerColors.Amber.copy(alpha = if (isAuto) 0.85f else 0.45f),
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .clickable { onPick(option) }
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                "${m.minutes} min",
+                                option.chipLabel(),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = FinnencerColors.Amber,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = if (isAuto) FontWeight.Bold else FontWeight.SemiBold,
                             )
                         }
                     }

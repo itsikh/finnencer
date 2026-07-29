@@ -35,4 +35,15 @@ interface SecEdgarService {
     /** Ticker→CIK lookup table. ~1MB JSON; caller should cache. */
     @GET("https://www.sec.gov/files/company_tickers.json")
     suspend fun tickerCikMap(): String
+
+    /**
+     * Fetch an arbitrary EDGAR document by absolute URL as raw text.
+     * Used by [io.itsikh.finnencer.data.providers.EdgarPressReleaseProvider]
+     * to walk a filing's `index.json` directory listing and then pull the
+     * Exhibit 99.1 earnings press release out of
+     * `www.sec.gov/Archives/...`. Separate from [companyAtom] only for
+     * readability at call sites — both are plain absolute-URL GETs.
+     */
+    @GET
+    suspend fun document(@Url url: String): String
 }

@@ -40,6 +40,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
+import io.itsikh.finnencer.data.ai.chipLabel
+import io.itsikh.finnencer.data.ai.podcastDurationOptions
 import io.itsikh.finnencer.ui.theme.FinnencerColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,13 +51,13 @@ fun BatchActionSheet(
     state: BatchActionState,
     selectionSize: Int,
     onClose: () -> Unit,
-    onGenerate: (BundleSummarizer.Pages, BundleSummarizer.PodcastMinutes?, String?) -> Unit,
+    onGenerate: (BundleSummarizer.Pages, PodcastDuration?, String?) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var customPrompt by remember { mutableStateOf("") }
     var selectedPages by remember { mutableStateOf(BundleSummarizer.Pages.FIVE) }
     var podcastEnabled by remember { mutableStateOf(false) }
-    var selectedMinutes by remember { mutableStateOf(BundleSummarizer.PodcastMinutes.TEN) }
+    var selectedDuration by remember { mutableStateOf<PodcastDuration>(PodcastDuration.Auto) }
 
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -173,14 +176,21 @@ fun BatchActionSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                        podcastDurationOptions.forEach { option ->
                             SelectableChip(
-                                label = "${m.minutes} min",
+                                label = option.chipLabel(),
                                 accent = FinnencerColors.Amber,
-                                selected = m == selectedMinutes,
-                                onClick = { selectedMinutes = m },
+                                selected = option == selectedDuration,
+                                onClick = { selectedDuration = option },
                             )
                         }
+                    }
+                    if (selectedDuration == PodcastDuration.Auto) {
+                        Text(
+                            "Auto sets the length from how much the selected articles actually cover.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FinnencerColors.TextTertiary,
+                        )
                     }
                 }
 
@@ -188,7 +198,7 @@ fun BatchActionSheet(
                     onClick = {
                         onGenerate(
                             selectedPages,
-                            if (podcastEnabled) selectedMinutes else null,
+                            if (podcastEnabled) selectedDuration else null,
                             customPrompt.ifBlank { null },
                         )
                     },

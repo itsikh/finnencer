@@ -47,7 +47,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
+import io.itsikh.finnencer.data.ai.chipLabel
+import io.itsikh.finnencer.data.ai.podcastDurationOptions
 import io.itsikh.finnencer.data.entity.QueueItemKind
 import io.itsikh.finnencer.data.entity.ReportTier
 import io.itsikh.finnencer.ui.components.QueueToggleIconButton
@@ -57,7 +59,6 @@ import io.itsikh.finnencer.ui.theme.FinnencerColors
 @Composable
 fun ReportViewerScreen(
     onBack: () -> Unit,
-    onListen: (reportId: Long) -> Unit,
     onOpenReportId: (Long) -> Unit = {},
     onOpenReader: () -> Unit = {},
 ) {
@@ -72,7 +73,7 @@ fun ReportViewerScreen(
     // a multi-minute paid job.
     var listenConfirmFor by remember { mutableStateOf<Long?>(null) }
     val costHints: TierCostHintsViewModel = hiltViewModel()
-    val podcastCostHint by costHints.podcastHint.collectAsState()
+    val podcastCostHint by costHints.earningsPodcastHint.collectAsState()
 
     // Navigate to the newly-produced report when a regenerate/upgrade
     // completes, so the user lands on the fresh version automatically.
@@ -114,7 +115,7 @@ fun ReportViewerScreen(
                         IconButton(onClick = { listenConfirmFor = r.id }) {
                             Icon(
                                 Icons.Default.Headphones,
-                                contentDescription = "Listen now",
+                                contentDescription = "Make podcast",
                                 tint = FinnencerColors.Violet,
                             )
                         }
@@ -207,32 +208,43 @@ fun ReportViewerScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Renders a multi-voice podcast scripted from this report's text. Progress in Tasks.",
+                        "Renders a multi-voice podcast from this report plus the verified SEC " +
+                            "figures behind it. Progress in Tasks.",
                         style = MaterialTheme.typography.bodySmall,
                         color = FinnencerColors.TextSecondary,
+                    )
+                    Text(
+                        "Auto sizes the episode to how much substance the quarter has.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FinnencerColors.TextTertiary,
                     )
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        BundleSummarizer.PodcastMinutes.entries.forEach { m ->
+                        podcastDurationOptions.forEach { option ->
+                            val isAuto = option == PodcastDuration.Auto
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(FinnencerColors.Amber.copy(alpha = 0.18f))
-                                    .border(1.dp, FinnencerColors.Amber.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                                    .background(FinnencerColors.Amber.copy(alpha = if (isAuto) 0.34f else 0.18f))
+                                    .border(
+                                        1.dp,
+                                        FinnencerColors.Amber.copy(alpha = if (isAuto) 0.85f else 0.45f),
+                                        RoundedCornerShape(10.dp),
+                                    )
                                     .clickable {
-                                        vm.makePodcast(m)
+                                        vm.makePodcast(option)
                                         podcastPickerOpen = false
                                     }
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "${m.minutes} min",
+                                    option.chipLabel(),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = FinnencerColors.Amber,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = if (isAuto) FontWeight.Bold else FontWeight.SemiBold,
                                 )
                             }
                         }
@@ -270,7 +282,7 @@ fun ReportViewerScreen(
         )
     }
 
-    listenConfirmFor?.let { reportId ->
+    listenConfirmFor?.let { _ ->
         AlertDialog(
             onDismissRequest = { listenConfirmFor = null },
             title = { Text("Generate podcast?") },
@@ -291,10 +303,15 @@ fun ReportViewerScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    onListen(reportId)
+                    // Both podcast affordances on this screen now land on
+                    // the same enqueued job. The old toolbar path called
+                    // PodcastGenerator directly from a viewModelScope,
+                    // which meant no validation, no continuation passes, no
+                    // facts sheet, no retry — and death on navigation.
                     listenConfirmFor = null
+                    podcastPickerOpen = true
                 }) {
-                    Text("Generate", color = FinnencerColors.Violet, fontWeight = FontWeight.SemiBold)
+                    Text("Choose length", color = FinnencerColors.Violet, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {

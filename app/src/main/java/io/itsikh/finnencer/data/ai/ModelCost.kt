@@ -51,11 +51,20 @@ object ModelCost {
         // SCORING/MOVE_EXPLAIN run on Haiku 4.5 (old tokenizer) — left as-is.
         AiUsage.SCORING -> TokenProfile(input = 800, output = 600)
         AiUsage.SUMMARY -> TokenProfile(input = 2000, output = 800)
-        AiUsage.REPORT_BRIEF -> TokenProfile(input = 6500, output = 2000)
-        AiUsage.REPORT_STANDARD -> TokenProfile(input = 13000, output = 4600)
-        AiUsage.REPORT_DEEP -> TokenProfile(input = 19500, output = 8500)
+        // Report inputs grew substantially: the bundle now carries a
+        // computed facts sheet, a multi-quarter trend table and the 8-K
+        // Exhibit 99.1 press-release body (up to 60k chars ≈ 17k tokens).
+        AiUsage.REPORT_BRIEF -> TokenProfile(input = 20000, output = 2600)
+        AiUsage.REPORT_STANDARD -> TokenProfile(input = 27000, output = 6000)
+        AiUsage.REPORT_DEEP -> TokenProfile(input = 34000, output = 12000)
         AiUsage.PODCAST_SCRIPT -> TokenProfile(input = 10500, output = 6000)
-        AiUsage.PODCAST_VALIDATION -> TokenProfile(input = 8000, output = 6000)
+        // Earnings scripts carry the facts sheet on the initial pass AND
+        // on each continuation, so input is billed several times over.
+        AiUsage.PODCAST_EARNINGS -> TokenProfile(input = 40000, output = 9000)
+        // The validator reads the whole source bundle plus the script. On
+        // the earnings path that bundle now includes the facts sheet and
+        // the press-release body, so input dwarfs the old estimate.
+        AiUsage.PODCAST_VALIDATION -> TokenProfile(input = 20000, output = 6000)
         AiUsage.MOVE_EXPLAIN -> TokenProfile(input = 1500, output = 400)
         AiUsage.METRICS_ANALYZE -> TokenProfile(input = 2000, output = 800)
     }

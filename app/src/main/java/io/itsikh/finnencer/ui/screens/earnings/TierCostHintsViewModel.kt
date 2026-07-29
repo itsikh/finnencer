@@ -33,18 +33,30 @@ class TierCostHintsViewModel @Inject constructor(
     val standardHint: StateFlow<String> = hintFlow(aiPrefs, AiUsage.REPORT_STANDARD)
     val deepHint: StateFlow<String> = hintFlow(aiPrefs, AiUsage.REPORT_DEEP)
 
-    /** Combined "script + validation + TTS" estimate for a single
+    /** Combined "script + validation + TTS" estimate for a news-bundle
      *  podcast generation. TTS dollars are approximate — the
      *  multi-speaker preview tier charges by audio output tokens which
      *  the app can't measure ahead of time; a small flat allowance is
      *  added so the dialog doesn't under-quote the user. */
-    val podcastHint: StateFlow<String> = combine(
-        aiPrefs.observeRanked(AiUsage.PODCAST_SCRIPT),
+    val podcastHint: StateFlow<String> = podcastHintFlow(aiPrefs, AiUsage.PODCAST_SCRIPT)
+
+    /**
+     * Same shape as [podcastHint] but for the earnings episode, which runs
+     * on its own usage slot with a much bigger token profile: the script
+     * carries a verified facts sheet plus the press-release body, re-sent
+     * on every continuation pass. Quoting it with PODCAST_SCRIPT's profile
+     * understates the real cost by several times over, and an under-quote
+     * on a paid action is worse than no quote.
+     */
+    val earningsPodcastHint: StateFlow<String> = podcastHintFlow(aiPrefs, AiUsage.PODCAST_EARNINGS)
+
+    private fun podcastHintFlow(aiPrefs: AiPreferences, scriptUsage: AiUsage): StateFlow<String> = combine(
+        aiPrefs.observeRanked(scriptUsage),
         aiPrefs.observeRanked(AiUsage.PODCAST_VALIDATION),
     ) { script, validation ->
         val scriptModelId = script.firstOrNull()?.id
         val validationModelId = validation.firstOrNull()?.id
-        val scriptProfile = ModelCost.typicalProfile(AiUsage.PODCAST_SCRIPT)
+        val scriptProfile = ModelCost.typicalProfile(scriptUsage)
         val validationProfile = ModelCost.typicalProfile(AiUsage.PODCAST_VALIDATION)
         val scriptCost = scriptModelId
             ?.let { ModelCost.estimateUsd(it, scriptProfile.input, scriptProfile.output) }

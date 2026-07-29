@@ -4,7 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.itsikh.finnencer.data.ai.BundleSummarizer
+import io.itsikh.finnencer.data.ai.PodcastDuration
 import io.itsikh.finnencer.data.ai.ReportGenerator
 import io.itsikh.finnencer.data.dao.EarningsDao
 import io.itsikh.finnencer.data.entity.EarningsReport
@@ -145,7 +145,7 @@ class ReportViewerViewModel @Inject constructor(
     }
 
     /** Enqueue the combo earnings-podcast job for this report's event. */
-    fun makePodcast(minutes: BundleSummarizer.PodcastMinutes) {
+    fun makePodcast(duration: PodcastDuration) {
         val current = report.value ?: return
         val eventId = current.earningsEventId ?: run {
             _action.value = _action.value.copy(error = "Report isn't linked to an earnings event.")
@@ -158,7 +158,7 @@ class ReportViewerViewModel @Inject constructor(
                     tickerSymbol = current.tickerSymbol,
                     earningsEventId = eventId,
                     eventLabel = current.title.substringAfter("·", current.title).trim(),
-                    minutes = minutes,
+                    duration = duration,
                     customPrompt = null,
                 )
             }

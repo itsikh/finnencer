@@ -60,6 +60,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -69,26 +70,20 @@ class PromptEditorViewModel @Inject constructor(
     private val prefs: PromptPreferences,
 ) : ViewModel() {
 
-    /** Per-usage saved extras, observed reactively. */
+    /**
+     * Per-usage saved extras, observed reactively.
+     *
+     * Driven off [AiUsage.entries] rather than a hand-written combine:
+     * the previous version listed six usages explicitly, so the extras
+     * the user saved for MOVE_EXPLAIN, METRICS_ANALYZE and
+     * PODCAST_VALIDATION were persisted but never displayed back — the
+     * editor showed an empty box over a non-empty preference. Enumerating
+     * the enum also means a new usage can't be forgotten here again.
+     */
     val saved: StateFlow<Map<AiUsage, String>> = combine(
-        prefs.observe(AiUsage.SCORING),
-        prefs.observe(AiUsage.SUMMARY),
-        prefs.observe(AiUsage.REPORT_BRIEF),
-        prefs.observe(AiUsage.REPORT_STANDARD),
-        combine(
-            prefs.observe(AiUsage.REPORT_DEEP),
-            prefs.observe(AiUsage.PODCAST_SCRIPT),
-        ) { d, p -> d to p },
-    ) { sc, su, b, s, (d, p) ->
-        mapOf(
-            AiUsage.SCORING to sc,
-            AiUsage.SUMMARY to su,
-            AiUsage.REPORT_BRIEF to b,
-            AiUsage.REPORT_STANDARD to s,
-            AiUsage.REPORT_DEEP to d,
-            AiUsage.PODCAST_SCRIPT to p,
-        )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+        AiUsage.entries.map { usage -> prefs.observe(usage).map { usage to it } },
+    ) { pairs -> pairs.toMap() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _justSaved = MutableStateFlow<AiUsage?>(null)
     /** Briefly non-null after a save so the UI can flash a confirmation. */
@@ -237,6 +232,7 @@ private fun PromptCard(
                         when (usage) {
                             AiUsage.REPORT_BRIEF -> "e.g. keep it to under 250 words; lead with a one-line bull/bear take."
                             AiUsage.PODCAST_SCRIPT -> "e.g. exactly 3 turns per minute; bias toward the Host asking pointed questions."
+                            AiUsage.PODCAST_EARNINGS -> "e.g. always open on the guidance rather than the print; spend the segment walk on the data-center line."
                             AiUsage.SUMMARY -> "e.g. always end with one explicit next-catalyst line in italics."
                             else -> "Plain English; appended verbatim to the built-in prompt above."
                         },

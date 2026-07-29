@@ -28,7 +28,11 @@ enum class AiUsage(val displayName: String, val description: String) {
     ),
     PODCAST_SCRIPT(
         displayName = "Podcast dialogue script",
-        description = "Converts a report or article-bundle into a Host/Analyst dialogue script before TTS renders it.",
+        description = "Converts an article-bundle or summary into a Host/Analyst dialogue script before TTS renders it.",
+    ),
+    PODCAST_EARNINGS(
+        displayName = "Earnings podcast script",
+        description = "Writes the Host/Analyst script for a quarterly-results episode. Gets its own prompt and model slot because it works from a verified facts sheet (SEC actuals, margins, guidance, segments) and follows a fixed segment plan with a numeric-density floor — a general dialogue prompt pads instead of citing.",
     ),
     MOVE_EXPLAIN(
         displayName = "Why-is-it-moving?",
@@ -131,6 +135,10 @@ val AiUsage.defaultModel: AiModel
         // Users who already picked Opus in Settings → AI keep their
         // choice; this only affects fresh installs / unconfigured slots.
         AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_5
+        // Same reasoning as PODCAST_SCRIPT: the earnings script runs with
+        // continuation passes inside WorkManager's 10-minute window, so
+        // Sonnet's latency matters more here than Opus's extra depth.
+        AiUsage.PODCAST_EARNINGS -> AiModel.CLAUDE_SONNET_5
         AiUsage.MOVE_EXPLAIN -> AiModel.CLAUDE_HAIKU_4_5
         AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_5
         // Validator runs against the script-writer's output — using a

@@ -120,7 +120,16 @@ data class YahooChartIndicators(
     @SerializedName("quote") val quote: List<YahooQuoteSeries>? = null,
 )
 
-/** One per indicators.quote entry. We only need the close array. */
+/**
+ * One per indicators.quote entry. The watchlist poller only needs
+ * [close]; [open] and [volume] are read by
+ * [io.itsikh.finnencer.data.providers.PostEarningsReactionProvider] off
+ * the daily-interval series to measure the reaction to an earnings
+ * print. All nullable — Yahoo emits nulls for halted or not-yet-traded
+ * buckets.
+ */
 data class YahooQuoteSeries(
     @SerializedName("close") val close: List<Double?>? = null,
+    @SerializedName("open") val open: List<Double?>? = null,
+    @SerializedName("volume") val volume: List<Long?>? = null,
 )
