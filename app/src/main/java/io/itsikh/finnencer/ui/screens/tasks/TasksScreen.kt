@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package io.itsikh.finnencer.ui.screens.tasks
 
 import androidx.compose.foundation.background
@@ -6,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -428,7 +430,18 @@ private fun JobRow(
                     Column {
                         // Action chips up top so they're reachable without
                         // having to scroll past the entire prose blob.
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        //
+                        // FlowRow, not Row: three chips ("Read mode",
+                        // "Open podcast", "Queue") overflow the card width
+                        // on a phone, and a plain Row hands the last child
+                        // only the leftover space — which crushed the
+                        // Queue pill into a one-letter-per-line vertical
+                        // sliver and inflated the row height (#89). These
+                        // now wrap to a second line at any width.
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(10.dp))
@@ -449,6 +462,8 @@ private fun JobRow(
                             ) {
                                 Text(
                                     "Read mode",
+                                    maxLines = 1,
+                                    softWrap = false,
                                     style = MaterialTheme.typography.labelLarge,
                                     color = FinnencerColors.Violet,
                                     fontWeight = FontWeight.SemiBold,
@@ -466,6 +481,8 @@ private fun JobRow(
                                 ) {
                                     Text(
                                         "▶  Open podcast",
+                                        maxLines = 1,
+                                        softWrap = false,
                                         style = MaterialTheme.typography.labelLarge,
                                         color = FinnencerColors.Amber,
                                         fontWeight = FontWeight.SemiBold,

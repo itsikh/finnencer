@@ -107,6 +107,13 @@ fun QueueTogglePill(
             style = MaterialTheme.typography.labelMedium,
             color = color,
             fontWeight = FontWeight.SemiBold,
+            // Never let the label wrap. Squeezed into a narrow slot by a
+            // parent Row that ran out of width, "Queue" otherwise breaks
+            // to one letter per line and renders as a tall vertical
+            // sliver (#89). Clipping is the honest failure here; callers
+            // in tight rows should use FlowRow or the icon-only variant.
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
