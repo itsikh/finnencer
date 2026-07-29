@@ -59,3 +59,4 @@ internal fun computeTickerSignals(
         earningsSoon = earningsSoon,
     )
 }
+
