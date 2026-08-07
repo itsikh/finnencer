@@ -72,8 +72,13 @@ class PodcastValidator @Inject constructor(
             append(script)
         }
         // ~3.5 chars/token. Output budget = original script + headroom
-        // for the validator to lengthen if needed.
-        val maxTokens = ((targetChars * 1.2) / 2.5).toInt().coerceIn(3000, 16000)
+        // for the validator to lengthen if needed, PLUS a reserve for
+        // reasoning tokens: this cap covers thinking and response text
+        // together, and the validator runs on a model whose thinking is
+        // always on and can't be turned off. Under-reserving here shows
+        // up as a rewritten script truncated mid-dialogue.
+        val maxTokens = (((targetChars * 1.2) / 2.5).toInt() + THINKING_HEADROOM_TOKENS)
+            .coerceIn(MIN_VALIDATOR_TOKENS, MAX_VALIDATOR_TOKENS)
         val completion = router.complete(
             usage = AiUsage.PODCAST_VALIDATION,
             system = system,
@@ -85,7 +90,12 @@ class PodcastValidator @Inject constructor(
             // pays cache-read rates on the shared prefix.
             cacheSystem = true,
         )
-        val parsed = parse(completion.text, modelId = completion.modelUsed.id, fallback = script)
+        val parsed = parse(
+            completion.text,
+            modelId = completion.modelUsed.id,
+            fallback = script,
+            stopReason = completion.stopReason,
+        )
         // Attach the density reading to whatever verdict came back —
         // including the early-return paths inside parse() — so the number
         // always reaches the podcast row and the player.
@@ -100,7 +110,7 @@ class PodcastValidator @Inject constructor(
         )
     }
 
-    private fun parse(raw: String, modelId: String, fallback: String): Result {
+    private fun parse(raw: String, modelId: String, fallback: String, stopReason: String?): Result {
         val verdictMatch = VERDICT_RE.find(raw)
         val notesMatch = NOTES_RE.find(raw)
         val scriptSplit = raw.split(SCRIPT_DELIMITER, limit = 2)
@@ -133,6 +143,20 @@ class PodcastValidator @Inject constructor(
             Verdict.PASS -> fallback
             Verdict.FIXED -> {
                 val body = scriptSplit.getOrNull(1)?.trim()
+                // A rewrite that ran into the output cap is truncated
+                // mid-dialogue. The existing guard below only catches a
+                // MISSING body; a present-but-cut-off one used to be
+                // shipped straight to TTS, so the listener heard the
+                // episode stop mid-sentence. The original script is
+                // already known-good — prefer it over a partial rewrite.
+                if (stopReason == "max_tokens") {
+                    return Result(
+                        verdict = Verdict.PASS,
+                        script = fallback,
+                        notes = "$notes (validator's rewrite hit the output limit and was truncated; shipping the original script)",
+                        model = modelId,
+                    )
+                }
                 if (body.isNullOrBlank()) {
                     // FIXED verdict but no script body — fall back to
                     // the original. The validator claimed it fixed
@@ -186,6 +210,17 @@ class PodcastValidator @Inject constructor(
     }
 
     private companion object {
+        /**
+         * Reserve for reasoning tokens, which share the `max_tokens` cap
+         * with the rewritten script. Larger than the writer's reserve
+         * because the validator reads the whole source bundle plus the
+         * script before deciding, and its default model reasons at length
+         * with no way to disable it.
+         */
+        const val THINKING_HEADROOM_TOKENS = 6_000
+        const val MIN_VALIDATOR_TOKENS = 8_000
+        const val MAX_VALIDATOR_TOKENS = 24_000
+
         val VERDICT_RE = Regex("(?m)^VERDICT:\\s*(PASS|FIXED|FAIL)\\b", RegexOption.IGNORE_CASE)
         val NOTES_RE = Regex(
             "(?ms)^NOTES:\\s*(.+?)(?=^---SCRIPT---|\\Z)",

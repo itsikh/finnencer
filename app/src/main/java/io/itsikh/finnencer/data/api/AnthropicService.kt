@@ -18,11 +18,19 @@ interface AnthropicService {
      *        Opus 4.x ("context-1m-2025-08-07"); a null value tells
      *        Retrofit to omit the header so standard 200K-context calls
      *        aren't affected.
+     * @param deadlineSeconds read timeout for THIS call, consumed and
+     *        stripped by
+     *        [io.itsikh.finnencer.core.net.DeadlineInterceptor] — it never
+     *        reaches Anthropic. Sized from the request's `max_tokens` and
+     *        the remaining job budget, because these calls are
+     *        non-streaming and a 900-token completion shouldn't share a
+     *        timeout with a 24k-token one. Null keeps the client default.
      */
     @POST("v1/messages")
     suspend fun messages(
         @Body request: AnthropicRequest,
         @Header("anthropic-beta") beta: String? = null,
+        @Header(io.itsikh.finnencer.core.net.DeadlineInterceptor.HEADER) deadlineSeconds: String? = null,
     ): AnthropicResponse
 }
 
@@ -46,13 +54,30 @@ data class AnthropicRequest(
     val messages: List<AnthropicMessage>,
     val temperature: Double? = null,
     /**
-     * Thinking config. On Opus 5 / Sonnet 5, OMITTING this field runs
-     * adaptive thinking by default — and max_tokens then caps thinking
-     * PLUS response text, so tightly-sized budgets truncate mid-answer.
-     * ClaudeClient sends {"type":"disabled"} on those models to keep
-     * pre-migration behavior and cost. Null = field absent on the wire.
+     * Thinking config, e.g. `{"type": "adaptive"}`. Null = field absent
+     * on the wire, which is what Fable 5 requires (thinking is always on
+     * there and cannot be configured) and what unknown/legacy models get.
+     *
+     * Note `max_tokens` caps thinking PLUS response text together, so any
+     * budget sized for the visible answer alone will truncate once
+     * thinking is on — see the token budgets in ReportGenerator and
+     * BundleSummarizer, which reserve headroom for exactly this.
      */
     val thinking: Map<String, String>? = null,
+    /**
+     * Reasoning-depth and output controls. Only `effort` is used today.
+     * Rejected by pre-5 Anthropic models, so [AiModel.supportsEffort]
+     * gates whether it's sent at all.
+     */
+    @SerializedName("output_config") val outputConfig: AnthropicOutputConfig? = null,
+)
+
+/**
+ * `output_config` on the Messages API. Effort is nested here, NOT a
+ * top-level request field — a top-level `effort` is silently ignored.
+ */
+data class AnthropicOutputConfig(
+    val effort: String? = null,
 )
 
 /**

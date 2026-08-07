@@ -147,25 +147,68 @@ object NetworkModule {
         HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
 
     /**
-     * AI text-generation calls (Claude messages, Gemini generateContent) can
-     * easily take 60-120s when the user asks for a 5-page summary or a 10-min
-     * podcast transcript. OkHttp's defaults (10s read, 10s write, no call
-     * timeout) cause `SocketTimeoutException` mid-stream and the UI showed
-     * "Summary failed" almost immediately. These limits leave plenty of room
-     * for slow models without making genuinely-stuck calls hang forever.
+     * Timeouts for the AUDIO path (Gemini TTS, Vertex TTS).
+     *
+     * Bumped from 180s/240s → 300s/600s in v0.0.77 (#53). Gemini's TTS
+     * preview models can take 3-5 minutes to render a full chunk of
+     * multi-speaker dialogue on lower-tier keys — they accept the
+     * request, render in the background, and only stream the audio
+     * at the very end. The shorter timeouts caused callTimeout to
+     * fire BEFORE the model finished, with the user seeing
+     * SocketTimeoutException on every chunk.
+     *
+     * These values are tuned against real TTS behaviour and a bounded
+     * per-chunk workload — leave them alone. Text generation used to
+     * share them and now has its own profile below, because its call
+     * durations vary by an order of magnitude with `max_tokens`.
      */
-    private fun longLivedTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
+    private fun ttsTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
         .connectTimeout(20, TimeUnit.SECONDS)
-        // Bumped from 180s/240s → 300s/600s in v0.0.77 (#53). Gemini's TTS
-        // preview models can take 3-5 minutes to render a full chunk of
-        // multi-speaker dialogue on lower-tier keys — they accept the
-        // request, render in the background, and only stream the audio
-        // at the very end. The shorter timeouts caused callTimeout to
-        // fire BEFORE the model finished, with the user seeing
-        // SocketTimeoutException on every chunk.
         .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .callTimeout(600, TimeUnit.SECONDS)
+
+    /**
+     * Timeouts for TEXT GENERATION (Claude messages, Gemini
+     * generateContent).
+     *
+     * These calls are non-streaming, so nothing arrives on the socket
+     * until the model has finished generating: `readTimeout` has to
+     * exceed *total* generation time rather than detecting an idle
+     * connection. A move-explanation finishes in seconds; a 24k-token
+     * deep-dive report on Opus with adaptive thinking can run into the
+     * tens of minutes. One client-wide value can't serve both.
+     *
+     * So the read timeout here is only a backstop: [DeadlineInterceptor]
+     * overrides it per request from that request's own token budget and
+     * the remaining job budget. `callTimeout` can't be set per call from
+     * an interceptor, so it's sized to the interceptor's ceiling plus
+     * connect/write overhead.
+     */
+    private fun textGenTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(DeadlineInterceptor.MAX_SECONDS, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(DeadlineInterceptor.MAX_SECONDS + 120, TimeUnit.SECONDS)
+
+    /**
+     * Gemini's `generateContent` endpoint serves BOTH text generation
+     * (GeminiTextClient) and multi-speaker TTS (GeminiTts) through one
+     * Retrofit instance, so its client has to satisfy both.
+     *
+     * Resolution: keep the TTS read timeout as the default, so audio
+     * calls — which never set the deadline header — behave exactly as
+     * they did before, and raise only `callTimeout` to the text ceiling
+     * so a long text call isn't cut off by the outer guard before its
+     * per-request read timeout applies. TTS's effective bound is still
+     * the 300s read timeout plus its own retry policy and the job budget;
+     * only the secondary callTimeout guard loosens.
+     */
+    private fun geminiSharedTimeouts(b: OkHttpClient.Builder): OkHttpClient.Builder = b
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(DeadlineInterceptor.MAX_SECONDS + 120, TimeUnit.SECONDS)
 
     @Provides @Singleton
     fun provideBaseOkHttp(): OkHttpClient =
@@ -200,7 +243,8 @@ object NetworkModule {
 
     @Provides @Singleton @AnthropicRetrofit
     fun provideAnthropicRetrofit(gson: Gson, repo: ApiKeysRepository): Retrofit {
-        val client = longLivedTimeouts(OkHttpClient.Builder())
+        val client = textGenTimeouts(OkHttpClient.Builder())
+            .addInterceptor(DeadlineInterceptor())
             .addInterceptor(
                 AuthHeaderInterceptor(repo, ApiKey.ANTHROPIC) { token ->
                     "x-api-key" to token
@@ -235,7 +279,8 @@ object NetworkModule {
         repo: ApiKeysRepository,
         signingInfo: AppSigningInfo,
     ): Retrofit {
-        val client = longLivedTimeouts(OkHttpClient.Builder())
+        val client = geminiSharedTimeouts(OkHttpClient.Builder())
+            .addInterceptor(DeadlineInterceptor())
             .addInterceptor(
                 AuthHeaderInterceptor(repo, ApiKey.GEMINI) { token ->
                     "x-goog-api-key" to token
@@ -271,7 +316,7 @@ object NetworkModule {
         gson: Gson,
         auth: VertexAuthManager,
     ): Retrofit {
-        val client = longLivedTimeouts(OkHttpClient.Builder())
+        val client = ttsTimeouts(OkHttpClient.Builder())
             .addInterceptor { chain ->
                 val token = runCatching { runBlocking { auth.getAccessToken() } }
                     .getOrElse { err ->

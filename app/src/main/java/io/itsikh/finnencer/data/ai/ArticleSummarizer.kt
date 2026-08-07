@@ -81,11 +81,16 @@ class ArticleSummarizer @Inject constructor(
             extra = promptPrefs.get(AiUsage.SUMMARY),
             perCallCustom = customPrompt,
         )
+        // Budgets include headroom for reasoning tokens, which share the
+        // max_tokens cap with the answer now that adaptive thinking is on.
+        // The short case was the dangerous one: 600 tokens covered the
+        // summary and nothing else, so a low-effort thinking pass would
+        // eat most of it and truncate mid-sentence.
         val maxTokens = when {
-            pagesTarget == null -> 600
-            pagesTarget <= 2 -> 2_000
-            pagesTarget <= 5 -> 4_500
-            else -> 9_000
+            pagesTarget == null -> 1_500
+            pagesTarget <= 2 -> 3_500
+            pagesTarget <= 5 -> 7_000
+            else -> 13_000
         }
         val completion = router.complete(
             usage = AiUsage.SUMMARY,

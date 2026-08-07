@@ -43,6 +43,17 @@ object FriendlyError {
     private fun matchFrame(frame: Throwable): String? {
         val message = frame.message.orEmpty()
 
+        // Job budget: distinct from a network timeout — the work was
+        // progressing, it just ran out of wall-clock. Matched FIRST
+        // because the phrase "budget ... exhausted" would otherwise fall
+        // through to a less accurate category, and because the advice
+        // differs: retrying resumes from the cached script/chunks rather
+        // than starting over.
+        if (frame is io.itsikh.finnencer.core.work.JobBudgetExceededException) {
+            return "This job hit its ${frame.budgetMs / 60_000}-minute time limit during ${frame.stage}. " +
+                "Retry to resume from where it stopped — the script and any rendered audio are kept."
+        }
+
         // Network: no DNS / no internet — catch by type, by the JVM
         // wrapper's "Unable to resolve host" message, AND by the native
         // GaiException's EAI_NODATA payload (#41).

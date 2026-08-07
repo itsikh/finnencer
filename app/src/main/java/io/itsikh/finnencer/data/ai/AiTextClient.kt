@@ -16,6 +16,10 @@ interface AiTextClient {
      *        from a warm cache at ~10% of input-token cost. No-op for
      *        Gemini and for system prompts below the per-model cache
      *        threshold.
+     * @param effort reasoning-depth hint for the workload. Applied only
+     *        by [AiProvider.ANTHROPIC] models that advertise
+     *        [AiModel.supportsEffort]; ignored elsewhere (Gemini has no
+     *        equivalent knob on generateContent).
      */
     suspend fun complete(
         model: String,
@@ -24,6 +28,7 @@ interface AiTextClient {
         maxTokens: Int,
         temperature: Double? = null,
         cacheSystem: Boolean = false,
+        effort: AiEffort? = null,
     ): TextResult
 
     /**

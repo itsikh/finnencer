@@ -65,7 +65,7 @@ class MoveExplainer @Inject constructor(
             usage = AiUsage.MOVE_EXPLAIN,
             system = system,
             userMessage = prompt,
-            maxTokens = 220,
+            maxTokens = 900,
             temperature = 0.3,
         )
         val text = completion.text.trim()

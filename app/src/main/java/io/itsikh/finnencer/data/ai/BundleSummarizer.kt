@@ -60,8 +60,10 @@ class BundleSummarizer @Inject constructor(
     // maxTokens sized for Sonnet 5, whose tokenizer emits ~30% more
     // tokens for the same text than Sonnet 4.6 — the old caps
     // (2000/4500/9000) would truncate equivalent-length summaries.
+    // Raised again for adaptive thinking: the cap covers reasoning AND
+    // the summary text, so a budget sized for the prose alone truncates.
     enum class Pages(val target: Int, val maxTokens: Int) {
-        TWO(2, 2_600), FIVE(5, 6_000), TEN(10, 12_000)
+        TWO(2, 5_000), FIVE(5, 10_000), TEN(10, 18_000)
     }
 
     enum class PodcastMinutes(val minutes: Int) {
@@ -74,6 +76,12 @@ class BundleSummarizer @Inject constructor(
          * wpm). Lower values produce shorter, tighter podcasts that
          * occasionally undershoot the requested duration; higher
          * values produce roomier scripts that may overshoot.
+         *
+         * Note the budget is measured against the script as WRITTEN,
+         * which includes the bracketed digit annotations ("[43.8B]")
+         * that GeminiTts strips before synthesis. That biases episodes
+         * ~1-2% short of the target — well inside the existing
+         * over/undershoot band, but worth knowing if you retune this.
          */
         fun charBudget(charsPerMinute: Int): Int = minutes * charsPerMinute
     }
@@ -429,12 +437,28 @@ class BundleSummarizer @Inject constructor(
                 extra = promptPrefs.get(usage),
                 perCallCustom = customPrompt,
             )
+            // Output budget for the script pass.
+            //
             // Sonnet 5's tokenizer runs ~2.7 chars/token on English
             // dialogue (~30% more tokens than 4.6). /2.0 leaves headroom
             // so the model isn't truncated by maxTokens at the target
-            // length (#34/#35); the cap stays low enough that a single
-            // non-streaming call finishes inside the 600s callTimeout.
-            val maxTokens = (charBudget / 2.0).toInt().coerceIn(2600, 14000)
+            // length (#34/#35).
+            //
+            // THINKING_HEADROOM_TOKENS is on top of that: with adaptive
+            // thinking enabled, max_tokens caps thinking AND response
+            // text together, so a budget sized for the text alone gets
+            // eaten by reasoning and truncates — which triggers exactly
+            // the continuation passes this is trying to avoid. Each
+            // avoided continuation removes a full round trip and its
+            // entire retry subtree, so headroom here is the cheapest
+            // latency win in the pipeline.
+            //
+            // The ceiling is no longer tied to a fixed callTimeout: the
+            // per-request deadline (see DeadlineInterceptor) is derived
+            // from this number, so a bigger budget buys a longer timeout
+            // instead of colliding with one.
+            val maxTokens = ((charBudget / 2.0).toInt() + THINKING_HEADROOM_TOKENS)
+                .coerceIn(MIN_SCRIPT_TOKENS, MAX_SCRIPT_TOKENS)
             // Resolve the TTS model NOW so the script-stage status detail
             // names which engine will render the audio. Lets users verify
             // their Settings choice persisted before the (expensive)
@@ -528,20 +552,54 @@ class BundleSummarizer @Inject constructor(
                     "force_accept_script set" else "validation disabled in preferences"
                 AppLogger.i(TAG, "podcast $id: skipping validation ($why)")
                 script
-            } else {
+            } else run {
                 progressReporter.update(
                     io.itsikh.finnencer.data.entity.AiJobStage.VALIDATING_SCRIPT,
                     0,
                     "Asking the validator to check the script",
                 )
-                val v = podcastValidator.validate(
-                    script = script,
-                    sourceBundle = scriptSource,
-                    targetChars = charBudget,
-                    minutes = minutes.minutes,
-                    customPrompt = customPrompt,
-                    facts = facts,
-                )
+                // Validation is a QUALITY GATE, not a prerequisite. By
+                // this point a complete script is written and persisted;
+                // if the validator itself can't run, shipping the
+                // unvalidated script is strictly better than throwing
+                // away paid work. This matters more now that the
+                // validator runs on Fable 5, which can decline a request
+                // outright (AiRefusalException) and returns 400 on every
+                // call if the Anthropic org is set to zero data retention.
+                //
+                // Only the validator CALL is guarded — a FAIL verdict
+                // still raises ValidationReviewRequiredException below,
+                // and cancellation and budget exhaustion still propagate.
+                val v = try {
+                    podcastValidator.validate(
+                        script = script,
+                        sourceBundle = scriptSource,
+                        targetChars = charBudget,
+                        minutes = minutes.minutes,
+                        customPrompt = customPrompt,
+                        facts = facts,
+                    )
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (be: io.itsikh.finnencer.core.work.JobBudgetExceededException) {
+                    throw be
+                } catch (t: Throwable) {
+                    AppLogger.w(TAG, "podcast $id: validator unavailable (${t.javaClass.simpleName}: ${t.message}); shipping the unvalidated script")
+                    null
+                }
+                if (v == null) {
+                    val note = "Validation skipped — the validator model was unavailable. " +
+                        "This script has not been checked against the source facts."
+                    runCatching {
+                        podcastDao.update(requirePodcastRow(id).copy(validationNotes = note))
+                    }
+                    progressReporter.update(
+                        io.itsikh.finnencer.data.entity.AiJobStage.VALIDATING_SCRIPT,
+                        100,
+                        "Validator unavailable — continuing with the unvalidated script",
+                    )
+                    return@run script
+                }
                 AppLogger.i(
                     TAG,
                     "podcast $id validation: verdict=${v.verdict} model=${v.model} " +
@@ -641,16 +699,22 @@ class BundleSummarizer @Inject constructor(
     /**
      * Drive the dialogue model toward [targetChars] of script. Both the
      * initial pass AND each continuation pass run through the same
-     * 10-attempt linear-backoff retry helper, so a single transient
-     * network drop on the *very first* request no longer fails the
-     * whole podcast (#41 follow-up). Up to [MAX_CONTINUATIONS]
-     * continuation passes are run whenever the accumulated length is
-     * under [TARGET_THRESHOLD] × target.
+     * [CONTINUATION_RETRIES]-attempt linear-backoff retry helper, so a
+     * single transient network drop on the *very first* request no
+     * longer fails the whole podcast (#41 follow-up). Up to
+     * [MAX_CONTINUATIONS] continuation passes are run whenever the
+     * accumulated length is under [TARGET_THRESHOLD] × target.
      *
-     * Total worst-case wait per pass: 5+10+…+50 = 275s. An initial-pass
-     * failure that exhausts all retries throws and the surrounding
-     * runCatching in renderPodcast marks the row FAILED with the
-     * friendly error message.
+     * Note continuations are driven by LENGTH, not by the stop reason —
+     * a short-but-complete pass triggers one just as a truncated pass
+     * does. That's why the output budget reserves thinking headroom:
+     * a cap that truncates the initial pass costs a whole extra round
+     * trip and its retry subtree, not just some tokens.
+     *
+     * An initial-pass failure that exhausts all retries throws and the
+     * surrounding runCatching in renderPodcast marks the row FAILED with
+     * the friendly error message. Both this layer and the router beneath
+     * it are bounded by the job's [io.itsikh.finnencer.core.work.JobDeadline].
      */
     private suspend fun generateScript(
         scriptSystem: String,
@@ -683,15 +747,19 @@ class BundleSummarizer @Inject constructor(
                 append("\n\n=== CONTINUATION MODE ===\n")
                 append(reason).append('\n')
                 append("Your output is the NEXT LINE of an in-progress dialogue. It will be concatenated directly to the script so far.\n\n")
-                append("ABSOLUTELY FORBIDDEN openings (the listener has been listening for ~15 minutes — these would sound like the podcast is restarting):\n")
-                append("- 'Welcome back', 'Welcome to', 'Hi everyone', 'Hello and welcome'\n")
-                append("- 'Today we're looking at', 'Today we're talking about', 'Let me introduce'\n")
-                append("- 'So, to recap', 'To summarize so far', 'Just to set the stage'\n")
-                append("- ANY company re-introduction ('XYZ Corp, the maker of...')\n")
-                append("- ANY quarter/period re-introduction\n")
-                append("- ANY meta-commentary about the conversation ('continuing our discussion', 'picking up where we left off')\n\n")
-                append("Your first character MUST be 'Host:' or 'Analyst:' starting an immediate next turn of dialogue. ")
-                append("Treat it like a natural conversational beat — the speakers are mid-sentence, mid-thought, mid-segment. ")
+                // The constraint is real and was verified in #35 — a
+                // continuation that opens like a fresh episode sounds to
+                // the listener as though the podcast restarted a quarter
+                // of the way through. What changed is the volume: this
+                // was a shouted six-bullet prohibition list written when
+                // models needed overcoming. Current models follow the
+                // system prompt closely, and that much emphasis
+                // over-triggers, so state the situation and the reason
+                // once and let the model reason from it.
+                append("The listener has been listening for ~15 minutes and hears this joined seamlessly to what came before. ")
+                append("So no re-openings: nothing that welcomes the listener, re-introduces the company or the quarter, ")
+                append("recaps what was already said, or comments on the conversation itself ('picking up where we left off'). ")
+                append("Start on the next line of dialogue with 'Host:' or 'Analyst:' — the speakers are mid-thought, mid-segment. ")
                 if (facts != null) {
                     append("Fill the remaining runway from the UNCOVERED FACTS list in the user message: ")
                     append("each of those is a figure the episode has not stated yet, and every one is ")
@@ -782,6 +850,7 @@ class BundleSummarizer @Inject constructor(
     ): AiCompletion? {
         var lastErr: Throwable? = null
         for (attempt in 1..CONTINUATION_RETRIES) {
+            io.itsikh.finnencer.core.work.ensureJobBudget("podcast script $passLabel")
             try {
                 return router.complete(
                     usage = usage,
@@ -794,6 +863,11 @@ class BundleSummarizer @Inject constructor(
                 // Cooperative cancellation — let the outer job handle it
                 // rather than silently swallowing.
                 throw ce
+            } catch (be: io.itsikh.finnencer.core.work.JobBudgetExceededException) {
+                // The job is out of wall-clock. Propagate rather than
+                // returning null: null means "couldn't write a script"
+                // and the caller would go on to try continuations.
+                throw be
             } catch (t: Throwable) {
                 lastErr = t
                 // Permanent 4xx (invalid model, bad request, auth) fails
@@ -809,7 +883,8 @@ class BundleSummarizer @Inject constructor(
                     break
                 }
                 if (attempt >= CONTINUATION_RETRIES) break
-                val backoffMs = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
+                val planned = attempt * CONTINUATION_BACKOFF_STEP_MS // 5s, 10s, 15s, ...
+                val backoffMs = io.itsikh.finnencer.core.work.backoffWithinBudget(planned) ?: break
                 AppLogger.w(TAG, "podcast script $passLabel attempt $attempt/$CONTINUATION_RETRIES failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s for network")
                 // Wake the retry the instant connectivity returns rather
                 // than sleeping the full backoff window blind (#42).
@@ -845,8 +920,39 @@ class BundleSummarizer @Inject constructor(
         const val TAG = "BundleSummarizer"
         const val MAX_CONTINUATIONS = 3
         const val TARGET_THRESHOLD = 0.90
-        const val CONTINUATION_RETRIES = 10
+        /**
+         * Attempts at THIS layer only. Was 10, which multiplied against
+         * everything underneath: AiRouter already retries each model up
+         * to 3 times and then walks up to 6 models (ranked + rescue), so
+         * 10 here meant up to 180 HTTP calls per script pass — four times
+         * over, counting continuations. Two is enough to cover a single
+         * dropped request that the router's own layers somehow missed;
+         * anything more durable than that is a model or network problem
+         * the router is better placed to route around.
+         */
+        const val CONTINUATION_RETRIES = 2
         const val CONTINUATION_BACKOFF_STEP_MS = 5_000L
+
+        /**
+         * Extra output budget reserved for adaptive thinking, which shares
+         * the `max_tokens` cap with the response text. Sized for a
+         * long-form dialogue at high effort; under-reserving here shows up
+         * as a truncated script and an extra continuation pass, which is
+         * far more expensive than the reserved tokens.
+         */
+        const val THINKING_HEADROOM_TOKENS = 4_000
+
+        /** Floor for very short episodes — still needs thinking headroom. */
+        const val MIN_SCRIPT_TOKENS = 6_000
+
+        /**
+         * Ceiling for one script pass. Raised from 14k: the old value was
+         * chosen to keep a non-streaming call inside a fixed 600s
+         * callTimeout, but the per-request deadline is now derived from
+         * this number rather than fighting it. A 30-minute episode should
+         * complete in ONE pass.
+         */
+        const val MAX_SCRIPT_TOKENS = 24_000
         private val SENTENCE_TERMINATORS = setOf('.', '!', '?', '"', '\'', ')', ']')
 
         const val BASE_SUMMARY_SYSTEM = """

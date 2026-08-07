@@ -136,9 +136,9 @@ class ReportGenerator @Inject constructor(
         // guidance and a margin trend now in play there is materially
         // more to write about, and the old caps truncated mid-table.
         val (usage, baseSystem, maxTokens) = when (tier) {
-            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, DefaultPrompts.forUsage(AiUsage.REPORT_BRIEF), 2600)
-            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, DefaultPrompts.forUsage(AiUsage.REPORT_STANDARD), 6000)
-            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DefaultPrompts.forUsage(AiUsage.REPORT_DEEP), 12000)
+            ReportTier.BRIEF -> Triple(AiUsage.REPORT_BRIEF, DefaultPrompts.forUsage(AiUsage.REPORT_BRIEF), 5000)
+            ReportTier.STANDARD -> Triple(AiUsage.REPORT_STANDARD, DefaultPrompts.forUsage(AiUsage.REPORT_STANDARD), 12000)
+            ReportTier.DEEP -> Triple(AiUsage.REPORT_DEEP, DefaultPrompts.forUsage(AiUsage.REPORT_DEEP), 24000)
         }
         val system = promptPrefs.applyExtras(
             base = baseSystem,

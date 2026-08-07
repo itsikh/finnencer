@@ -68,25 +68,126 @@ enum class AiModel(
      * model where this is false.
      */
     val supportsTemperature: Boolean = true,
+    /**
+     * Whether the model accepts `output_config.effort`. Anthropic's
+     * pre-5 models (Haiku 4.5, Sonnet 4.5) return HTTP 400 when it's
+     * present, so this is opt-IN: unknown ids default to false and
+     * simply don't get an effort hint.
+     */
+    val supportsEffort: Boolean = false,
+    /** How this model expects the `thinking` field to be sent. */
+    val thinking: AiThinkingMode = AiThinkingMode.OMIT,
 ) {
-    // Haiku 4.5 is still the newest Haiku as of 2026-07.
-    CLAUDE_HAIKU_4_5("claude-haiku-4-5-20251001", "Claude Haiku 4.5", AiProvider.ANTHROPIC, 200_000, false, AiTier.FAST_CHEAP),
-    // Sonnet 5: adaptive thinking on by default (ClaudeClient sends
-    // thinking=disabled to keep behavior/cost parity) and non-default
-    // sampling params are rejected — hence supportsTemperature=false.
+    // Sonnet 5: adaptive thinking, non-default sampling params rejected.
     // New tokenizer: ~30% more tokens for the same text than 4.6.
-    CLAUDE_SONNET_5("claude-sonnet-5", "Claude Sonnet 5", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.BALANCED, supportsTemperature = false),
-    // Opus 5: drop-in for Opus 4.7 at the same $5/$25 pricing; 1M ctx
-    // is the default (no beta header needed). Same thinking caveat as
-    // Sonnet 5.
-    CLAUDE_OPUS_5("claude-opus-5", "Claude Opus 5 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE, supportsTemperature = false),
+    CLAUDE_SONNET_5(
+        "claude-sonnet-5", "Claude Sonnet 5", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.BALANCED,
+        supportsTemperature = false, supportsEffort = true, thinking = AiThinkingMode.ADAPTIVE,
+    ),
+    // Opus 5: $5/$25, 1M ctx by default (no beta header). Thinking is on
+    // by default; we send it explicitly so the intent is visible on the
+    // wire. `disabled` would be valid only at effort <= high, which is
+    // one more reason not to rely on it.
+    CLAUDE_OPUS_5(
+        "claude-opus-5", "Claude Opus 5 (1M ctx)", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE,
+        supportsTemperature = false, supportsEffort = true, thinking = AiThinkingMode.ADAPTIVE,
+    ),
+    // Fable 5: most capable, $10/$50, 1M ctx, 128K output. Thinking is
+    // ALWAYS on and cannot be configured — sending any `thinking` value
+    // (including "adaptive") risks a 400, so the field is omitted
+    // entirely. Requires 30-day data retention: under a zero-retention
+    // org setting EVERY request fails with 400, which is worth checking
+    // before making it a default anywhere.
+    CLAUDE_FABLE_5(
+        "claude-fable-5", "Claude Fable 5", AiProvider.ANTHROPIC, 1_000_000, true, AiTier.LARGE,
+        supportsTemperature = false, supportsEffort = true, thinking = AiThinkingMode.ALWAYS_ON,
+    ),
     GEMINI_3_6_FLASH("gemini-3.6-flash", "Gemini 3.6 Flash", AiProvider.GEMINI, 1_000_000, true, AiTier.FAST_CHEAP),
-    GEMINI_3_1_PRO("gemini-3.1-pro", "Gemini 3.1 Pro", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE);
+    GEMINI_3_1_PRO("gemini-3.1-pro", "Gemini 3.1 Pro", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE),
+
+    /**
+     * SENTINEL — resolved to a concrete id by [GeminiModelCatalog] just
+     * before each call, from Google's ListModels endpoint. This [id] is
+     * never sent on the wire.
+     *
+     * Exists so a fallback slot tracks Google's catalog instead of aging
+     * into an older model the way a pinned id does. Prefer this over
+     * [GEMINI_3_1_PRO] wherever the point is "a good Gemini Pro" rather
+     * than "this exact release".
+     */
+    GEMINI_PRO_LATEST(
+        "gemini-pro-latest", "Gemini Pro (latest)", AiProvider.GEMINI, 2_000_000, true, AiTier.LARGE,
+    );
+
+    /** True for ids that must be resolved before use. */
+    val isSymbolic: Boolean get() = this == GEMINI_PRO_LATEST
 
     companion object {
         fun byId(id: String?): AiModel? = entries.firstOrNull { it.id == id }
     }
 }
+
+/**
+ * How a model wants the Anthropic `thinking` request field handled.
+ *
+ * [OMIT] and [ALWAYS_ON] both send nothing, but for opposite reasons —
+ * kept distinct so the catalog documents intent rather than a
+ * coincidence of wire format.
+ */
+enum class AiThinkingMode {
+    /** Unknown/legacy model: don't send the field. */
+    OMIT,
+    /** Send `{"type": "adaptive"}` — Opus 5, Sonnet 5. */
+    ADAPTIVE,
+    /** Thinking can't be configured; sending the field risks a 400. */
+    ALWAYS_ON,
+}
+
+/**
+ * Reasoning depth hint (`output_config.effort`). Higher settings think
+ * longer and spend more output tokens; thinking tokens bill at the
+ * output rate and share the `max_tokens` cap with the response text, so
+ * raising effort means raising the token budget too.
+ */
+enum class AiEffort(val wire: String) {
+    LOW("low"),
+    MEDIUM("medium"),
+    HIGH("high"),
+    XHIGH("xhigh"),
+}
+
+/**
+ * Reasoning depth per workload. Set against what the task actually
+ * needs, not uniformly: analysis and adversarial review earn deep
+ * reasoning, classification and one-paragraph explanations don't, and
+ * effort is the main lever on both latency and cost now that thinking
+ * is enabled everywhere.
+ */
+val AiUsage.effort: AiEffort
+    get() = when (this) {
+        // Structured classification against a fixed rubric — the work is
+        // recall, not reasoning.
+        AiUsage.SCORING -> AiEffort.LOW
+        // Summaries span one article to a ten-page multi-article
+        // synthesis. The long end is genuine cross-source analysis —
+        // working out why a set of articles belongs together — which LOW
+        // under-serves; the short end costs little either way.
+        AiUsage.SUMMARY -> AiEffort.MEDIUM
+        AiUsage.MOVE_EXPLAIN -> AiEffort.LOW
+        AiUsage.METRICS_ANALYZE -> AiEffort.LOW
+        // Reports scale with how much synthesis the tier asks for.
+        AiUsage.REPORT_BRIEF -> AiEffort.MEDIUM
+        AiUsage.REPORT_STANDARD -> AiEffort.HIGH
+        AiUsage.REPORT_DEEP -> AiEffort.XHIGH
+        // Podcast is the app's headline feature and the earnings script
+        // has to hold numeric fidelity against the facts sheet across a
+        // long generation — the documented failure mode is padding
+        // instead of citing, which is exactly what reasoning fixes.
+        AiUsage.PODCAST_SCRIPT -> AiEffort.HIGH
+        AiUsage.PODCAST_EARNINGS -> AiEffort.HIGH
+        // Adversarial read of someone else's script against ground truth.
+        AiUsage.PODCAST_VALIDATION -> AiEffort.HIGH
+    }
 
 enum class AiProvider { ANTHROPIC, GEMINI }
 
@@ -120,30 +221,62 @@ sealed class AiModelOption {
     ) : AiModelOption()
 }
 
-/** Initial default model per usage. */
-val AiUsage.defaultModel: AiModel
+/**
+ * Initial default model per usage.
+ *
+ * Haiku was retired from the catalog: scoring and move-explanation are
+ * judgement calls dressed as classification, and at batch sizes of ~10
+ * articles the difference is fractions of a cent per batch. One
+ * consequence to be aware of — Sonnet 5 rejects non-default sampling
+ * params, so the `temperature = 0.0` that scoring used for run-to-run
+ * stability is now stripped by the router; stability rests on the
+ * strict-JSON prompt contract and LOW effort instead.
+ *
+ * Saved preferences pointing at the removed Haiku id resolve to null in
+ * [AiPreferences.resolve] and fall back to these defaults — no migration
+ * needed.
+ */
+val AiUsage.defaultModel: AiModel get() = defaultRanked.first()
+
+/**
+ * Default RANKED model list per usage: position 0 is the primary, the
+ * rest are tried in order on failure (same semantics as a user's saved
+ * ranking in [AiPreferences]).
+ *
+ * Most usages have a single entry — the router's rescue chain already
+ * covers generic failures. A usage declares a longer chain here only
+ * when a specific fallback is meaningfully better than the generic one.
+ */
+val AiUsage.defaultRanked: List<AiModel>
     get() = when (this) {
-        AiUsage.SCORING -> AiModel.CLAUDE_HAIKU_4_5
-        AiUsage.SUMMARY -> AiModel.CLAUDE_SONNET_5
-        AiUsage.REPORT_BRIEF -> AiModel.CLAUDE_SONNET_5
-        AiUsage.REPORT_STANDARD -> AiModel.CLAUDE_SONNET_5
-        AiUsage.REPORT_DEEP -> AiModel.CLAUDE_OPUS_5
-        // Podcast script doesn't need Opus-tier 1M context — Sonnet
-        // responds 2-3x faster and costs ~40% less per token, which cuts
-        // total worker runtime well clear of WorkManager's 10-min cap
-        // even with continuation passes (#42 — "rewire & optimize").
-        // Users who already picked Opus in Settings → AI keep their
-        // choice; this only affects fresh installs / unconfigured slots.
-        AiUsage.PODCAST_SCRIPT -> AiModel.CLAUDE_SONNET_5
-        // Same reasoning as PODCAST_SCRIPT: the earnings script runs with
-        // continuation passes inside WorkManager's 10-minute window, so
-        // Sonnet's latency matters more here than Opus's extra depth.
-        AiUsage.PODCAST_EARNINGS -> AiModel.CLAUDE_SONNET_5
-        AiUsage.MOVE_EXPLAIN -> AiModel.CLAUDE_HAIKU_4_5
-        AiUsage.METRICS_ANALYZE -> AiModel.CLAUDE_SONNET_5
-        // Validator runs against the script-writer's output — using a
-        // stronger model gives a meaningful second opinion. If the
-        // validator is the same model as the writer it risks endorsing
-        // its own mistakes.
-        AiUsage.PODCAST_VALIDATION -> AiModel.CLAUDE_OPUS_5
+        AiUsage.SCORING -> listOf(AiModel.CLAUDE_SONNET_5)
+        AiUsage.SUMMARY -> listOf(AiModel.CLAUDE_SONNET_5)
+        AiUsage.MOVE_EXPLAIN -> listOf(AiModel.CLAUDE_SONNET_5)
+        AiUsage.METRICS_ANALYZE -> listOf(AiModel.CLAUDE_SONNET_5)
+        AiUsage.REPORT_BRIEF -> listOf(AiModel.CLAUDE_SONNET_5)
+        AiUsage.REPORT_STANDARD -> listOf(AiModel.CLAUDE_OPUS_5)
+        AiUsage.REPORT_DEEP -> listOf(AiModel.CLAUDE_OPUS_5)
+        // Podcast is the headline feature, so it runs on Opus at HIGH
+        // effort. This reverses the Sonnet default from #42, which was a
+        // latency decision made against WorkManager's 10-minute
+        // single-run cap — a cap the worker no longer lives under, since
+        // it promotes itself to foreground immediately. The job budget
+        // (JobDeadline) is the ceiling now, not the OS.
+        AiUsage.PODCAST_SCRIPT -> listOf(AiModel.CLAUDE_OPUS_5)
+        AiUsage.PODCAST_EARNINGS -> listOf(AiModel.CLAUDE_OPUS_5)
+        // Validation only means something if the validator is genuinely
+        // independent of the writer — a model reviewing its own output
+        // tends to endorse its own mistakes. With the writer on Opus 5,
+        // the validator moves UP to Fable 5 rather than sideways.
+        //
+        // Gemini Pro is the declared fallback rather than another Claude
+        // model for two reasons. First, Fable has failure modes no Claude
+        // fallback avoids: it can decline a request outright, and it
+        // returns 400 on EVERY call if the Anthropic org is set to zero
+        // data retention. Second, a different PROVIDER is the strongest
+        // form of the independence the validator exists to provide — and
+        // it keeps working when the network blocks Anthropic entirely
+        // (#86). Podcast users already hold a Gemini key for TTS, so this
+        // fallback is configured in practice.
+        AiUsage.PODCAST_VALIDATION -> listOf(AiModel.CLAUDE_FABLE_5, AiModel.GEMINI_PRO_LATEST)
     }

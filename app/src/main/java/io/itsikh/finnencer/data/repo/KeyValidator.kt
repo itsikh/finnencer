@@ -64,8 +64,12 @@ class KeyValidator @Inject constructor(
     }
 
     private fun validateClaude(token: String): KeyTestResult {
+        // Auth-only ping (1 token). Uses a catalog model rather than a
+        // hardcoded id so key validation can't start failing against a
+        // model the app no longer ships — the cost difference on a
+        // single token is nil.
         val body = mapOf(
-            "model" to "claude-haiku-4-5-20251001",
+            "model" to io.itsikh.finnencer.data.ai.ClaudeModels.SONNET,
             "max_tokens" to 1,
             "messages" to listOf(mapOf("role" to "user", "content" to "hi")),
         )

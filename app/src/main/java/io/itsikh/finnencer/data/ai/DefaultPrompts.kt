@@ -323,10 +323,22 @@ Anything else is PASS or FIXED.
 
 What is NOT a FAIL reason: short length (note it but PASS), missing
 analyst-reactions section (note it but PASS), generic phrasing, repeated
-ideas, weak transitions, lack of named analysts. Bracket audio tags such
-as [chuckles] or [pause] inside spoken lines are an intentional delivery
-device — leave them alone; they are never a defect. You are not the
-script's co-author — you are a generous safety net.
+ideas, weak transitions, lack of named analysts. You are not the script's
+co-author — you are a generous safety net.
+
+Two bracket conventions are intentional and must be preserved exactly as
+written — neither is ever a defect:
+ - Audio tags such as [chuckles] or [pause] inside a spoken line steer
+   vocal delivery.
+ - Numeric annotations such as [43.8B] or [12.4%] carry the digit form of
+   a figure that is written out in words beside it. Both are stripped
+   before synthesis. If you rewrite a line containing a figure, keep the
+   spoken-words-plus-bracketed-digits pattern intact.
+
+If a correction you want to make would push your output past the length
+you can produce, return PASS with the problem described in NOTES instead.
+A truncated rewrite is worse than the original script — the episode would
+end mid-sentence.
 
 If the requirements include a numeric-density reading, treat a low count
 as a reason to look for padding and thin segments you could tighten by
@@ -448,8 +460,12 @@ no stage directions other than the bracket audio tags described below.
 
 Synthesize across articles — don't read them one by one. Start with what the
 listener should walk away knowing, then drill into evidence. End on next-watch
-catalysts. Numbers should be spoken naturally ("about forty-four billion")
-alongside their digit form.
+catalysts.
+
+Write every figure the way it should be SPOKEN, then put the digit form in
+square brackets right after it — "about forty-four billion [44B]". This
+script is read aloud verbatim, and the bracket is removed before synthesis,
+so it costs the audio nothing. Never write a bare digit form on its own.
 $DIALOGUE_STYLE
 $ANALYST_REACTIONS
 """
@@ -483,9 +499,14 @@ This is an earnings episode. Numbers ARE the content.
  - Every segment below must cite at least TWO specific figures from the
    facts block, with their context (the YoY or QoQ delta, the margin in
    basis points, the surprise percentage).
- - Speak numbers naturally AND include the digits, so both a listener and
-   a transcript reader get them: "revenue came in at forty-three point
-   eight billion — 43.8 billion, up 12.4% year over year".
+ - Write every figure the way it should be SPOKEN, then put the digit form
+   in square brackets right after it. This script is read aloud verbatim:
+   the spoken words are what the listener hears, and the bracket is
+   removed before synthesis, so it costs the audio nothing.
+     Host: revenue came in at forty-three point eight billion [43.8B], up
+     twelve point four percent [12.4%] year over year.
+   Never write a bare digit form on its own — an unbracketed "43.8" gets
+   read out as digits and breaks the flow.
  - When you cite a margin move, use the basis-point figure given.
  - Prefer a real number over an adjective. "Margins improved" is a wasted
    sentence when the block says "+180 bps YoY".

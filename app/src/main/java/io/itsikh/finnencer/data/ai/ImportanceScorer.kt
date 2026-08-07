@@ -32,6 +32,10 @@ class ImportanceScorer @Inject constructor(
         val batches: Int,
         val parseErrors: Int,
         val newScores: List<ArticleScore>,
+        /** True when the run stopped early on the sync budget rather than
+         *  because there was nothing left to score. Distinguishes "done"
+         *  from "partial" in the sync log. */
+        val stoppedOnBudget: Boolean = false,
     )
 
     suspend fun scoreUnscored(maxArticles: Int = 50): ScorerStats {
@@ -44,7 +48,19 @@ class ImportanceScorer @Inject constructor(
         // after this window instead of riding along until retention prunes it.
         val fetchedSince = System.currentTimeMillis() - SCORING_WINDOW_MS
         var remaining = maxArticles
+        var budgetStopped = false
         while (remaining > 0) {
+            // Checked WITHOUT throwing: the runCatching below would
+            // swallow a JobBudgetExceededException and the loop would
+            // then miscount it as a parse error, reporting a scoring
+            // failure when the truth is "ran out of time, will resume
+            // next sync". Scores from completed batches are already
+            // persisted, so stopping here loses nothing.
+            if (io.itsikh.finnencer.core.work.jobBudgetExhausted()) {
+                budgetStopped = true
+                Log.i(TAG, "scoring stopped at the sync budget after $batches batch(es); ${collected.size} article(s) scored, rest roll into the next sync")
+                break
+            }
             val batchSize = minOf(BATCH_SIZE, remaining)
             val articles = newsDao.unscoredJoined(batchSize, fetchedSince)
             if (articles.isEmpty()) break
@@ -71,6 +87,7 @@ class ImportanceScorer @Inject constructor(
             batches = batches,
             parseErrors = parseErrors,
             newScores = collected,
+            stoppedOnBudget = budgetStopped,
         )
     }
 
@@ -100,7 +117,7 @@ class ImportanceScorer @Inject constructor(
                 extra = promptPrefs.get(AiUsage.SCORING),
             ),
             userMessage = USER_PREAMBLE + payload + USER_POSTAMBLE,
-            maxTokens = 600,
+            maxTokens = 1500,
             temperature = 0.0,
         )
         val json = router.extractJson(completion.text) ?: return emptyList()
@@ -157,7 +174,7 @@ class ImportanceScorer @Inject constructor(
             // causing Haiku to truncate mid-array and the parser to drop
             // the whole batch. 2400 leaves comfortable headroom; Haiku
             // output tokens are cheap so the cost difference is noise.
-            maxTokens = 2400,
+            maxTokens = 3600,
             temperature = 0.0,
         )
         val raw = completion.text

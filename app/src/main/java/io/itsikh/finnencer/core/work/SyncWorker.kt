@@ -17,6 +17,7 @@ import io.itsikh.finnencer.data.repo.RetentionPreferences
 import io.itsikh.finnencer.data.sync.EarningsCalendarSync
 import io.itsikh.finnencer.data.sync.EarningsNumericSync
 import io.itsikh.finnencer.data.sync.NewsSyncEngine
+import kotlinx.coroutines.withContext
 
 /**
  * Periodic background worker that runs one news-sync cycle. Triggered by
@@ -86,13 +87,29 @@ class SyncWorker @AssistedInject constructor(
             Log.i(TAG, "Finnhub earnings numbers: $numericUpdated rows updated")
         }
 
-        // Stage 2 — score newly-ingested articles with Claude Haiku. Skipped
-        // entirely if the user hasn't pasted an Anthropic key yet. The
-        // retention sweep must NOT hide behind this gate: a
-        // news-provider-only setup still ingests 4 feeds every 15 min,
-        // and skipping the prune here let the DB grow unboundedly.
+        // Stage 2 — score newly-ingested articles. Skipped entirely if the
+        // user hasn't pasted an Anthropic key yet. The retention sweep
+        // must NOT hide behind this gate: a news-provider-only setup
+        // still ingests 4 feeds every 15 min, and skipping the prune here
+        // let the DB grow unboundedly.
         if (apiKeys.isConfigured(ApiKey.ANTHROPIC)) {
-            val scorerStats = scorer.scoreUnscored()
+            // Unlike AiJobWorker, this worker does NOT promote itself to
+            // the foreground, so it still lives under the OS's ~10-minute
+            // single-run cap. Scoring is the only LLM work here and it got
+            // materially slower when it moved off Haiku onto a
+            // thinking-enabled model: up to five sequential batches, each
+            // of which can also walk the router's fallback chain.
+            //
+            // The budget keeps the whole stage clear of that cap. Hitting
+            // it is not a failure — unscored articles simply roll into the
+            // next sync, which is exactly how scoreUnscored's own
+            // maxArticles cap already behaves.
+            // scoreUnscored checks the budget itself and returns partial
+            // stats rather than throwing, so whatever it managed to score
+            // still reaches the fanout below.
+            val scorerStats = withContext(JobDeadline(JobDeadline.SCORING_BUDGET_MS)) {
+                scorer.scoreUnscored()
+            }
             Log.i(TAG, "scoring done: $scorerStats")
 
             // Stage 3 — fan notifications out for any newly-scored items

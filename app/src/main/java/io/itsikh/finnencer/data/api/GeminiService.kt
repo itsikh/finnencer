@@ -11,15 +11,32 @@ import retrofit2.http.Path
  */
 interface GeminiService {
 
+    /**
+     * Serves both text generation (GeminiTextClient) and multi-speaker
+     * TTS (GeminiTts).
+     *
+     * @param deadlineSeconds read timeout for THIS call, consumed and
+     *        stripped by
+     *        [io.itsikh.finnencer.core.net.DeadlineInterceptor]. Text
+     *        callers size it from `max_tokens` and the remaining job
+     *        budget; TTS leaves it null and keeps the client's
+     *        TTS-tuned default.
+     */
     @POST("v1beta/models/{model}:generateContent")
     suspend fun generateContent(
         @Path("model") model: String,
         @Body request: GeminiGenerateRequest,
+        @retrofit2.http.Header(io.itsikh.finnencer.core.net.DeadlineInterceptor.HEADER)
+        deadlineSeconds: String? = null,
     ): GeminiGenerateResponse
 
-    /** Cheap auth-only call; used by KeyValidator to verify the API key. */
+    /** Cheap auth-only call; used by KeyValidator to verify the API key
+     *  and by GeminiModelCatalog to resolve the newest Pro model. */
     @retrofit2.http.GET("v1beta/models")
-    suspend fun listModels(): GeminiModelsResponse
+    suspend fun listModels(
+        @retrofit2.http.Header(io.itsikh.finnencer.core.net.DeadlineInterceptor.HEADER)
+        deadlineSeconds: String? = null,
+    ): GeminiModelsResponse
 }
 
 data class GeminiModelsResponse(
@@ -86,6 +103,21 @@ data class GeminiPrebuiltVoice(val voiceName: String)
 
 data class GeminiGenerateResponse(
     val candidates: List<GeminiCandidate> = emptyList(),
+    /** Authoritative token counts. Absent on some error/partial responses,
+     *  so callers must keep a fallback path. */
+    val usageMetadata: GeminiUsageMetadata? = null,
+)
+
+/**
+ * Token accounting reported by generateContent. Replaces the previous
+ * `text.length / 4` guess, which mis-stated the cost meter — that ratio
+ * is wrong for the current tokenizers and ignored the system prompt
+ * folded into the user message.
+ */
+data class GeminiUsageMetadata(
+    @SerializedName("promptTokenCount") val promptTokenCount: Int = 0,
+    @SerializedName("candidatesTokenCount") val candidatesTokenCount: Int = 0,
+    @SerializedName("totalTokenCount") val totalTokenCount: Int = 0,
 )
 
 data class GeminiCandidate(

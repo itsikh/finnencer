@@ -22,6 +22,7 @@ import javax.inject.Singleton
 class GeminiTextClient @Inject constructor(
     private val service: GeminiService,
     private val apiUsageDao: ApiUsageDao,
+    private val catalog: GeminiModelCatalog,
 ) : AiTextClient {
 
     override suspend fun complete(
@@ -33,6 +34,9 @@ class GeminiTextClient @Inject constructor(
         // Caching is currently Anthropic-only; Gemini accepts the
         // parameter for interface symmetry and ignores it.
         cacheSystem: Boolean,
+        // Likewise: generateContent has no reasoning-depth knob, so the
+        // per-usage effort hint is accepted and ignored here.
+        effort: AiEffort?,
     ): AiTextClient.TextResult {
         val merged = buildString {
             if (!system.isNullOrBlank()) {
@@ -42,20 +46,38 @@ class GeminiTextClient @Inject constructor(
             }
             append(userMessage)
         }
+        // Clamp to the model's own output ceiling when discovery told us
+        // what it is. Budgets here are sized for Anthropic models — the
+        // podcast validator asks for up to 24k — and Gemini rejects a
+        // maxOutputTokens above the model's limit outright. Left
+        // unclamped, a cross-provider fallback would 400 on every call
+        // and quietly never work, which is the worst kind of fallback.
+        // Unknown model = send the caller's budget unchanged rather than
+        // guess a ceiling.
+        val limit = catalog.outputLimitFor(model)
+        val effectiveMaxTokens = limit?.let { minOf(maxTokens, it) } ?: maxTokens
+        if (limit != null && effectiveMaxTokens < maxTokens) {
+            AppLogger.i(TAG, "clamped maxOutputTokens $maxTokens -> $effectiveMaxTokens for $model")
+        }
         val request = GeminiGenerateRequest(
             contents = listOf(GeminiContent(role = "user", parts = listOf(GeminiPart(text = merged)))),
             generationConfig = GeminiGenerationConfig(
                 temperature = temperature,
                 // Gemini's text generation honors maxOutputTokens here; not
                 // related to the responseModalities (audio) used by TTS.
-                maxOutputTokens = maxTokens,
+                maxOutputTokens = effectiveMaxTokens,
                 responseModalities = null,
                 speechConfig = null,
             ),
         )
+        // Per-request read timeout sized from the output budget and the
+        // remaining job budget — see ClaudeClient for the reasoning. TTS
+        // shares this Retrofit client but passes no header, so it keeps
+        // the client's TTS-tuned default.
+        val deadlineSeconds = io.itsikh.finnencer.core.work.textCallDeadlineSeconds(maxTokens)
         val startedAt = System.currentTimeMillis()
         val resp = try {
-            service.generateContent(model, request)
+            service.generateContent(model, request, deadlineSeconds.toString())
         } catch (he: retrofit2.HttpException) {
             // Strip Retrofit's loss-of-detail default message and
             // attach Google's actual error body excerpt — same
@@ -92,8 +114,13 @@ class GeminiTextClient @Inject constructor(
             recordUsage(model, merged.length / 4, 0, startedAt, ok = false, error = message)
             error(message)
         }
-        val inputTokens = merged.length / 4
-        val outputTokens = text.length / 4
+        // Prefer the API's own accounting; the chars/4 estimate is only a
+        // fallback for responses that omit usageMetadata. The estimate was
+        // previously the ONLY path and materially mis-stated the cost
+        // meter — the ratio doesn't hold for current tokenizers.
+        val usage = resp.usageMetadata
+        val inputTokens = usage?.promptTokenCount?.takeIf { it > 0 } ?: (merged.length / 4)
+        val outputTokens = usage?.candidatesTokenCount?.takeIf { it > 0 } ?: (text.length / 4)
         recordUsage(model, inputTokens, outputTokens, startedAt, ok = true, error = null)
         // Normalize Gemini's finish reason to the same vocabulary
         // Anthropic uses, so callers don't need to branch by provider.
@@ -114,14 +141,9 @@ class GeminiTextClient @Inject constructor(
         ok: Boolean,
         error: String?,
     ) {
-        // Approximate Gemini text pricing (mid-2026 rates): 3.x Flash
-        // ~$0.30/M in, $2.50/M out; 3.1 Pro $2/M in, $12/M out. Keep in
-        // sync with ModelCost.pricePerMillion so the pre-tap hint and
-        // the actuals meter agree.
-        val (inPerM, outPerM) = when {
-            model.contains("pro") -> 2.0 to 12.0
-            else -> 0.30 to 2.50
-        }
+        // Single shared price table — the pre-tap estimate and the
+        // actuals meter can no longer drift apart.
+        val (inPerM, outPerM) = ModelCost.pricePerMillion(model)
         val cents = (inputTokens / 1_000_000.0) * inPerM * 100 +
                 (outputTokens / 1_000_000.0) * outPerM * 100
         apiUsageDao.insert(

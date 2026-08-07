@@ -205,7 +205,18 @@ class GeminiTts @Inject constructor(
         // Bracket audio tags ([chuckles], [pause], …) are only honored
         // by Gemini 3.1 TTS. The 2.5 models don't understand them and
         // may read them aloud verbatim — strip before chunking.
-        val renderScript = if (supportsAudioTags(resolvedModel)) script else stripAudioTags(script)
+        // Two different bracket conventions, stripped under different
+        // rules:
+        //  - Numeric annotations ("[43.8B]") are ALWAYS stripped. The
+        //    script writer emits every figure in spoken form followed by
+        //    the digits so EarningsFactsSheet.citedFactCount can measure
+        //    numeric density by digit match. Left in, TTS reads both and
+        //    the listener hears every number twice.
+        //  - Audio tags ("[pause]") are stripped only on models that
+        //    don't understand them, since 3.1+ uses them for delivery.
+        val withoutNumerics = stripNumericAnnotations(script)
+        val renderScript =
+            if (supportsAudioTags(resolvedModel)) withoutNumerics else stripAudioTags(withoutNumerics)
         val chunks = chunkAtSpeakerBoundaries(renderScript, maxCharsPerChunk)
         if (chunks.isEmpty()) error("Empty script")
 
@@ -339,6 +350,21 @@ class GeminiTts @Inject constructor(
      * (e.g. a "[sourceName]" citation the script LLM leaked through)
      * is never silently deleted from spoken audio.
      */
+    /**
+     * Remove bracketed numeric annotations ("[43.8B]", "[12.4%]",
+     * "[+180bps]") along with the whitespace that precedes them, so
+     * "forty-three point eight billion [43.8B], up" renders as
+     * "forty-three point eight billion, up" rather than leaving a
+     * stray gap before the comma.
+     *
+     * Matches any bracketed run CONTAINING A DIGIT, which cleanly
+     * separates these from the audio tags — every tag in the permitted
+     * set ([chuckles], [pause], …) is alphabetic. Anchored to a single
+     * line so an unclosed bracket can't swallow the rest of the script.
+     */
+    private fun stripNumericAnnotations(script: String): String =
+        script.replace(Regex("""[ \t]*\[[^\]\n]*\d[^\]\n]*]"""), "")
+
     private fun stripAudioTags(script: String): String =
         script.replace(
             Regex(
@@ -410,6 +436,12 @@ class GeminiTts @Inject constructor(
         var refreshedAuth = false
         var attempt = 0
         while (attempt < RETRY_ATTEMPTS) {
+            // The retry policy below is deliberately generous (10 attempts
+            // plus up to 6 Retry-After waits that don't consume one), which
+            // is right for a single chunk but unbounded across a whole
+            // render. The job budget is the ceiling; chunks already
+            // rendered stay on disk, so stopping here resumes cleanly.
+            io.itsikh.finnencer.core.work.ensureJobBudget("tts chunk ${chunkIdx + 1}/$chunkTotal")
             try {
                 val resp = dispatchGenerateContent(provider, model, req)
                 val candidate = resp.candidates.firstOrNull()
@@ -437,6 +469,8 @@ class GeminiTts @Inject constructor(
                 return Base64.decode(inline!!.data, Base64.DEFAULT)
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
+            } catch (be: io.itsikh.finnencer.core.work.JobBudgetExceededException) {
+                throw be
             } catch (t: Throwable) {
                 lastErr = t
                 // Permanent 4xx (bad model id, revoked key, malformed
@@ -476,13 +510,19 @@ class GeminiTts @Inject constructor(
                 if (retryAfterMs != null && rateLimitWaits < MAX_RATE_LIMIT_WAITS) {
                     rateLimitWaits++
                     val capped = retryAfterMs.coerceAtMost(RETRY_AFTER_CAP_MS)
-                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal hit rate limit; honoring Retry-After=${capped / 1000}s (rate-limit wait #$rateLimitWaits/$MAX_RATE_LIMIT_WAITS, attempt $attempt/$RETRY_ATTEMPTS preserved)")
-                    kotlinx.coroutines.delay(capped)
+                    // Don't sleep past the job budget: waiting out a rate
+                    // limit we can't act on afterwards just delays the
+                    // failure and wastes the remaining window.
+                    val within = io.itsikh.finnencer.core.work.backoffWithinBudget(capped)
+                        ?: throw t
+                    Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal hit rate limit; honoring Retry-After=${within / 1000}s (rate-limit wait #$rateLimitWaits/$MAX_RATE_LIMIT_WAITS, attempt $attempt/$RETRY_ATTEMPTS preserved)")
+                    kotlinx.coroutines.delay(within)
                     continue
                 }
                 attempt++
                 if (attempt >= RETRY_ATTEMPTS) break
-                val backoffMs = exponentialBackoffMs(attempt)
+                val planned = exponentialBackoffMs(attempt)
+                val backoffMs = io.itsikh.finnencer.core.work.backoffWithinBudget(planned) ?: break
                 Log.w(TAG, "tts chunk ${chunkIdx + 1}/$chunkTotal attempt $attempt/$RETRY_ATTEMPTS failed (${t.javaClass.simpleName}: ${t.message}); waiting up to ${backoffMs / 1000}s")
                 networkAvailability.awaitNetwork(backoffMs)
             }

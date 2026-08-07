@@ -71,7 +71,7 @@ class AiPreferences @Inject constructor(
         customs: List<AiModelOption.Custom>,
         usage: AiUsage,
     ): List<AiModelOption> {
-        if (saved.isNullOrBlank()) return listOf(AiModelOption.Builtin(usage.defaultModel))
+        if (saved.isNullOrBlank()) return usage.defaultRanked.map { AiModelOption.Builtin(it) }
         val resolved = saved.split(SEPARATOR)
             .asSequence()
             .map { it.trim() }
@@ -83,7 +83,9 @@ class AiPreferences @Inject constructor(
             }
             .take(MAX_RANK)
             .toList()
-        return resolved.ifEmpty { listOf(AiModelOption.Builtin(usage.defaultModel)) }
+        // Every saved id became unknown (e.g. a model retired from the
+        // catalog) — fall back to the shipped ranking, not just its head.
+        return resolved.ifEmpty { usage.defaultRanked.map { AiModelOption.Builtin(it) } }
     }
 
     companion object {

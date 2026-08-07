@@ -48,7 +48,7 @@ class SnapshotAnalyzer @Inject constructor(
             usage = AiUsage.METRICS_ANALYZE,
             system = system,
             userMessage = prompt,
-            maxTokens = 400,
+            maxTokens = 1200,
             temperature = 0.3,
         )
         val row = TickerMetricsAnalysis(

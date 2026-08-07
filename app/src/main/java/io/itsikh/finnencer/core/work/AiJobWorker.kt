@@ -144,13 +144,29 @@ class AiJobWorker @AssistedInject constructor(
                     dao.markRunning(job.id, AiJobStatus.RUNNING.name, System.currentTimeMillis())
                     AppLogger.i(TAG, "running ${job.type} ${job.id} (${job.title})")
                     progressReporter.update(AiJobStage.GENERATING_SCRIPT, 0, "Starting work")
+                    // The wall-clock ceiling for the pipeline. Every retry
+                    // loop below (script passes, model fallback, per-chunk
+                    // TTS) checks it, which is what bounds the otherwise
+                    // multiplicative nesting of those policies.
+                    //
+                    // The clock starts HERE, not at doWork(), so it
+                    // measures work rather than waiting. Both things above
+                    // it are legitimately unbounded waits: the
+                    // WAITING_FOR_NETWORK loop is designed to outlive a
+                    // wifi outage (#43), and the concurrency gate can hold
+                    // a job behind another podcast for many minutes (#54).
+                    // Counting either against the budget would fail jobs
+                    // that hadn't started yet.
+                    val deadline = JobDeadline(budgetFor(type))
                     runCatching {
-                        when (type) {
-                            AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
-                            AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson, resolvedTtsModel)
-                            AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
-                            AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
-                            AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
+                        withContext(deadline) {
+                            when (type) {
+                                AiJobType.SUMMARY_BATCH -> runSummary(job.id, job.tickerSymbol, job.inputJson, job.title)
+                                AiJobType.PODCAST_BATCH -> runPodcast(job.id, job.inputJson, resolvedTtsModel)
+                                AiJobType.SUMMARY_AND_PODCAST_BATCH -> runSummaryAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
+                                AiJobType.EARNINGS_BRIEF_AND_PODCAST -> runEarningsBriefAndPodcast(job.id, job.inputJson, job.title, resolvedTtsModel)
+                                AiJobType.REPORT_EARNINGS -> runEarningsReport(job.id, job.inputJson, job.title)
+                            }
                         }
                     }.fold(
                         onSuccess = {
@@ -171,6 +187,19 @@ class AiJobWorker @AssistedInject constructor(
                 Result.failure()
             }
         }
+    }
+
+    /**
+     * Wall-clock allowance per job type. Podcast gets the most because it
+     * chains a script pass, an optional validation pass and a multi-chunk
+     * TTS render; reports are a single LLM call plus source gathering.
+     */
+    private fun budgetFor(type: AiJobType): Long = when (type) {
+        AiJobType.PODCAST_BATCH,
+        AiJobType.SUMMARY_AND_PODCAST_BATCH,
+        AiJobType.EARNINGS_BRIEF_AND_PODCAST -> JobDeadline.PODCAST_BUDGET_MS
+        AiJobType.REPORT_EARNINGS -> JobDeadline.REPORT_BUDGET_MS
+        AiJobType.SUMMARY_BATCH -> JobDeadline.SUMMARY_BUDGET_MS
     }
 
     private suspend fun handleFailure(
