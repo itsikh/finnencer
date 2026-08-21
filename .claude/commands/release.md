@@ -68,7 +68,7 @@ short — just pin worker count to the box's actual core count and skip
 tasks that don't belong in a release ship.
 
 ```bash
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
 CPUS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 8)
 ./gradlew assembleRelease \
   --max-workers="$CPUS" \
